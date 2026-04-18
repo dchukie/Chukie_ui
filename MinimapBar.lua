@@ -129,6 +129,17 @@ local MICRO_BUTTON_FALLBACK_NAMES = {
   "MainMenuMicroButton",
 }
 
+--- Botones del micromenú de Blizzard (sufijo «MicroButton»). No deben tratarse como iconos LibDBIcon del minimapa.
+local function isBlizzardMicroMenuButtonName(name)
+  if type(name) ~= "string" or name == "" then
+    return false
+  end
+  if name:find("^LibDBIcon10_", 1, true) then
+    return false
+  end
+  return name:match("MicroButton$") ~= nil
+end
+
 function MB:GetMicroMenuButtonFrames()
   local out, seen = {}, {}
   local function pushFrame(f)
@@ -236,9 +247,9 @@ function MB:LayoutMicroMenuEmbedded()
     return
   end
   local mm = self.miniMenuBar
-  local cell, pad = self:GetCell(), self:GetPad()
-  local targetH = math.max(22, mm:GetHeight() - 4)
-  local x = pad
+  mm:SetHeight(self:GetMiniMenuBarHeight())
+  local targetH = math.max(40, mm:GetHeight() - 4)
+  local x = 0
   self.microMenuDetached = self.microMenuDetached or {}
   local known = {}
   for _, b in ipairs(self.microMenuDetached) do
@@ -258,17 +269,17 @@ function MB:LayoutMicroMenuEmbedded()
     btn:SetParent(mm)
     btn.chukieMicroChukieOwned = true
     btn:SetScale(1)
-    local h = btn:GetHeight()
-    if h and h > 1 then
-      local sc = math.min(targetH / h, 1.15)
-      btn:SetScale(sc * (btn.chukieMicroSavedScale or 1))
-    end
+    local h0 = btn:GetHeight() or 58
+    local base = btn.chukieMicroSavedScale or 1
+    --- Encajar en altura sin aplastar en una fila tan baja como la de addons (conserva proporción estrecha).
+    local sc = math.min(1.05, targetH / math.max(h0, 20))
+    btn:SetScale(sc * base)
     btn:ClearAllPoints()
     btn:SetPoint("LEFT", mm, "LEFT", x, 0)
-    local w = btn:GetWidth() or 28
-    x = x + w + math.max(1, pad - 1)
+    local step = (btn:GetWidth() or 28) + 1
+    x = x + step
   end
-  mm:SetWidth(math.max(x + pad, 48))
+  mm:SetWidth(math.max(x + 2, 48))
 end
 
 function MB:ProfileRotateMinimap()
@@ -338,6 +349,9 @@ function MB:IsAddonPolicyName(n)
   if not n or n == "" or STRIP_FRAMES[n] or NAME_BLACKLIST[n] or n:find("^ChukieUi_", 1, true) then
     return false
   end
+  if isBlizzardMicroMenuButtonName(n) then
+    return false
+  end
   if n:match("^LibDBIcon10_") then
     return true
   end
@@ -372,6 +386,12 @@ function MB:GetPad()
   local v = barOpts() and tonumber(barOpts().pad)
   v = v or 4
   return math.max(0, math.min(16, math.floor(v + 0.5)))
+end
+
+--- Altura dedicada de la fila del micromenú (más alta que la de addons cuadrados, proporción tipo Blizzard).
+function MB:GetMiniMenuBarHeight()
+  local cell, pad = self:GetCell(), self:GetPad()
+  return math.max(46, math.min(58, cell + pad * 2 + 16))
 end
 
 local function packPoints(f)
@@ -446,6 +466,9 @@ function MB:ShouldNeverCapture(f)
     return true
   end
   local n = f:GetName() or ""
+  if isBlizzardMicroMenuButtonName(n) then
+    return true
+  end
   if NAME_BLACKLIST[n] or n:find("^ChukieUi_", 1, true) then
     return true
   end
@@ -506,6 +529,22 @@ end
 
 function MB:UpdateDiscoveredOrder()
   local order = barOpts().discoveredOrder
+  local pol = barOpts().buttonPolicy
+  for i = #order, 1, -1 do
+    if isBlizzardMicroMenuButtonName(order[i]) then
+      pol[order[i]] = nil
+      table.remove(order, i)
+    end
+  end
+  local polStrip = {}
+  for k in pairs(pol) do
+    if isBlizzardMicroMenuButtonName(k) then
+      polStrip[#polStrip + 1] = k
+    end
+  end
+  for _, k in ipairs(polStrip) do
+    pol[k] = nil
+  end
   local seen = {}
   for _, id in ipairs(order) do
     seen[id] = true
@@ -1251,16 +1290,14 @@ function MB:LayoutMiniMenuBar()
   if not mm or not Minimap then
     return
   end
-  local cell, pad = self:GetCell(), self:GetPad()
-  local h = cell + pad * 2
-  mm:SetHeight(h)
-  local gutter = 6
+  mm:SetHeight(self:GetMiniMenuBarHeight())
+  --- Segunda línea: siempre debajo de la barra de addons (si está) o del mapa; separación clara.
+  local gutter = 8
   mm:ClearAllPoints()
   local anchor = Minimap
   if self.bar and self.bar:IsShown() and barOpts().enabled ~= false then
     anchor = self.bar
   end
-  --- Alineado al borde derecho del mapa o de la barra de addons (panel derecho).
   mm:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, -gutter)
 end
 
@@ -1309,7 +1346,7 @@ function MB:EnsureMiniMenuBar()
   mm:SetFrameStrata("MEDIUM")
   mm:SetFixedFrameStrata(true)
   mm:SetFrameLevel((Minimap and Minimap:GetFrameLevel() or 3) + 2)
-  mm:SetHeight(self:GetCell() + self:GetPad() * 2)
+  mm:SetHeight(self:GetMiniMenuBarHeight())
   self.miniMenuBar = mm
 end
 

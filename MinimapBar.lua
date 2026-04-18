@@ -253,6 +253,7 @@ function MB:LayoutMicroMenuEmbedded()
   mm:SetHeight(self:GetMiniMenuBarHeight())
   local targetH = math.max(18, mm:GetHeight() - 4)
   local gap = self:GetMiniMenuSpacing()
+  local scalePct = self:GetMiniMenuButtonScalePercent()
   local x = 0
   self.microMenuDetached = self.microMenuDetached or {}
   local known = {}
@@ -282,8 +283,11 @@ function MB:LayoutMicroMenuEmbedded()
       btn:SetScale(1)
       local h0 = btn:GetHeight() or 58
       local base = btn.chukieMicroSavedScale or 1
-      local sc = math.min(1.15, targetH / math.max(h0, 16))
-      btn:SetScale(sc * base)
+      local fit = targetH / math.max(h0, 8)
+      fit = math.max(0.22, math.min(2.35, fit))
+      local sc = fit * scalePct * base
+      sc = math.max(0.18, math.min(2.5, sc))
+      btn:SetScale(sc)
       btn:ClearAllPoints()
       btn:SetPoint("LEFT", mm, "LEFT", x, 0)
       local step = (btn:GetWidth() or 28) + gap
@@ -390,7 +394,7 @@ end
 function MB:GetCell()
   local v = barOpts() and tonumber(barOpts().cellSize)
   v = v or 34
-  return math.max(22, math.min(48, math.floor(v + 0.5)))
+  return math.max(18, math.min(56, math.floor(v + 0.5)))
 end
 
 function MB:GetPad()
@@ -399,17 +403,9 @@ function MB:GetPad()
   return math.max(0, math.min(16, math.floor(v + 0.5)))
 end
 
---- Altura de la fila del micromenú: por defecto igual que la barra de iconos (addons).
+--- Altura de la fila del micromenú: siempre la misma que la barra de iconos (addons).
 function MB:GetMiniMenuBarHeight()
-  local m = barOpts()
-  if m.minimenuUseAddonRowHeight ~= false then
-    return self:GetCell() + self:GetPad() * 2
-  end
-  local h = tonumber(m.minimenuRowHeight)
-  if not h or h < 1 then
-    return self:GetCell() + self:GetPad() * 2
-  end
-  return math.max(22, math.min(64, math.floor(h + 0.5)))
+  return self:GetCell() + self:GetPad() * 2
 end
 
 function MB:GetMiniMenuSpacing()
@@ -417,7 +413,16 @@ function MB:GetMiniMenuSpacing()
   if not v then
     return 2
   end
-  return math.max(0, math.min(16, math.floor(v + 0.5)))
+  return math.max(-24, math.min(24, math.floor(v + 0.5)))
+end
+
+function MB:GetMiniMenuButtonScalePercent()
+  local v = tonumber(barOpts().minimenuButtonScalePercent)
+  if not v then
+    return 1
+  end
+  v = math.max(35, math.min(220, math.floor(v + 0.5)))
+  return v / 100
 end
 
 function MB:IsMinimenuButtonVisible(frameName)
@@ -1358,14 +1363,14 @@ function MB:LayoutMiniMenuBar()
     return
   end
   mm:SetHeight(self:GetMiniMenuBarHeight())
-  --- Segunda línea: siempre debajo de la barra de addons (si está) o del mapa; separación clara.
+  --- Segunda línea: centrada horizontalmente con el minimapa (mismo eje que el mapa circular).
   local gutter = 8
   mm:ClearAllPoints()
-  local anchor = Minimap
-  if self.bar and self.bar:IsShown() and barOpts().enabled ~= false then
-    anchor = self.bar
+  local y = -gutter
+  if barOpts().enabled ~= false and self.bar and self.bar:IsShown() then
+    y = -4 - self.bar:GetHeight() - gutter
   end
-  mm:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, -gutter)
+  mm:SetPoint("TOP", Minimap, "BOTTOM", 0, y)
 end
 
 function MB:Layout()

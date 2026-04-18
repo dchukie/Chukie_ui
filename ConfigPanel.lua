@@ -534,9 +534,9 @@ function ns.RegisterConfigPanel()
     "ChukieUi_MMBar_cellSize",
     "cellSize",
     "Tamaño de cada icono (px)",
-    "Ancho y alto de cada botón en la barra.",
-    22,
-    48,
+    "Ancho y alto de cada botón en la barra de addons; la fila del micromenú usa la misma altura.",
+    18,
+    56,
     1,
     34
   )
@@ -558,36 +558,28 @@ function ns.RegisterConfigPanel()
     "ChukieUi_MMBar_minimenuBar",
     "minimenuBarEnabled",
     "Activar segunda fila (minimenú)",
-    "Muestra la fila del micromenú de Blizzard bajo la barra de addons. Desmarcar devuelve los botones a la barra inferior por defecto. Puedes afinar altura, espacio e iconos visibles abajo.",
-    true
-  )
-  addBoolProxy(
-    minimapCategory,
-    "ChukieUi_MMBar_minimenuMatchAddonH",
-    "minimenuUseAddonRowHeight",
-    "Misma altura de fila que los iconos de addons",
-    "Por defecto la fila del micromenú tiene el mismo alto que la barra de iconos (tamaño + espacio de addons). Desmarcar para usar la altura en píxeles de abajo.",
+    "Muestra la fila del micromenú de Blizzard bajo la barra de addons, centrada con el minimapa. Desmarcar devuelve los botones a la barra inferior por defecto.",
     true
   )
   addIntSlider(
     minimapCategory,
-    "ChukieUi_MMBar_minimenuRowH",
-    "minimenuRowHeight",
-    "Altura fila micromenú (px)",
-    "Solo aplica si «Misma altura…» está desmarcado. Altura útil de la fila antes de escalar los botones de Blizzard.",
-    22,
-    64,
+    "ChukieUi_MMBar_minimenuBtnScale",
+    "minimenuButtonScalePercent",
+    "Escala botones micromenú (%)",
+    "Porcentaje sobre el tamaño que cabe en la fila (misma altura que la barra de addons). Por debajo de 100 % encoge los iconos; por encima los agranda dentro de un límite razonable.",
+    35,
+    220,
     1,
-    46
+    100
   )
   addIntSlider(
     minimapCategory,
     "ChukieUi_MMBar_minimenuSpacing",
     "minimenuSpacing",
     "Espacio entre iconos del micromenú (px)",
-    "Separación horizontal extra entre botones del micromenú (además del ancho escalado de cada botón).",
-    0,
-    16,
+    "Separación horizontal entre botones (puede ser negativa para acercarlos o solaparlos un poco).",
+    -24,
+    24,
     1,
     2
   )

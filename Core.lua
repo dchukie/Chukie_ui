@@ -10,11 +10,9 @@ local defaults = {
     enabled = true,
     --- Segunda fila bajo la barra de addons: micromenú Blizzard configurable.
     minimenuBarEnabled = true,
-    --- Si es true (defecto), la fila del micromenú tiene la misma altura que la barra de iconos (cellSize + relleno).
-    minimenuUseAddonRowHeight = true,
-    --- Altura de fila del micromenú en px si «igual que addons» está desmarcado (22–64).
-    minimenuRowHeight = 46,
-    --- Espacio horizontal extra entre botones del micromenú (0–16).
+    --- Escala extra de los botones del micromenú (%) respecto al ajuste automático a la fila.
+    minimenuButtonScalePercent = 100,
+    --- Espacio horizontal extra entre botones del micromenú (px; puede ser negativo para apretar).
     minimenuSpacing = 2,
     --- Por botón: false = oculto; nil/true = visible (tabla dispersa).
     minimenuVisibility = {},

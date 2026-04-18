@@ -1,0 +1,16 @@
+# Referencias locales / otros addons (no distribuir)
+tmp/
+
+# Respaldos ZIP generados
+releases/*.zip
+
+# Cursor / IDE
+.cursor/
+
+# Windows
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# Opcional: hoja fuente muy grande (descomenta si no quieres versionarla)
+# assets/source_arrows.png

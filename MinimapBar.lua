@@ -295,6 +295,40 @@ function MB:LayoutMicroMenuEmbedded()
     end
   end
   mm:SetWidth(math.max(x + 2, 48))
+  self:PositionMicromenuCentered()
+end
+
+--- Centra horizontalmente con el centro del marco Minimap (eje del mapa circular).
+function MB:PositionAddonBarCentered()
+  if not self.bar or not Minimap or barOpts().enabled == false then
+    return
+  end
+  local mh = Minimap:GetHeight()
+  local bh = self.bar:GetHeight()
+  local gap = 4
+  local dy = -mh / 2 - gap - bh / 2
+  self.bar:ClearAllPoints()
+  self.bar:SetPoint("CENTER", Minimap, "CENTER", 0, dy)
+end
+
+function MB:PositionMicromenuCentered()
+  if not self.miniMenuBar or not Minimap or barOpts().minimenuBarEnabled == false then
+    return
+  end
+  local mh = Minimap:GetHeight()
+  local mmh = self.miniMenuBar:GetHeight()
+  local gap = 4
+  local gutter = 8
+  local dy
+  if self.bar and self.bar:IsShown() and barOpts().enabled ~= false then
+    local bh = self.bar:GetHeight()
+    local dyBar = -mh / 2 - gap - bh / 2
+    dy = dyBar - bh / 2 - gutter - mmh / 2
+  else
+    dy = -mh / 2 - gap - mmh / 2
+  end
+  self.miniMenuBar:ClearAllPoints()
+  self.miniMenuBar:SetPoint("CENTER", Minimap, "CENTER", 0, dy)
 end
 
 function MB:ProfileRotateMinimap()
@@ -1363,14 +1397,7 @@ function MB:LayoutMiniMenuBar()
     return
   end
   mm:SetHeight(self:GetMiniMenuBarHeight())
-  --- Segunda línea: centrada horizontalmente con el minimapa (mismo eje que el mapa circular).
-  local gutter = 8
-  mm:ClearAllPoints()
-  local y = -gutter
-  if barOpts().enabled ~= false and self.bar and self.bar:IsShown() then
-    y = -4 - self.bar:GetHeight() - gutter
-  end
-  mm:SetPoint("TOP", Minimap, "BOTTOM", 0, y)
+  --- La posición horizontal/vertical la fija PositionMicromenuCentered tras el layout de botones.
 end
 
 function MB:Layout()
@@ -1388,6 +1415,7 @@ function MB:Layout()
   end
   self.bar:SetWidth(math.max(x, 48))
   self.bar:SetHeight(self:GetCell() + self:GetPad() * 2)
+  self:PositionAddonBarCentered()
 end
 
 function MB:EnsureBar()
@@ -1401,12 +1429,12 @@ function MB:EnsureBar()
   bar:SetFixedFrameStrata(true)
   bar:SetFrameLevel((Minimap and Minimap:GetFrameLevel() or 3) + 3)
   bar:SetHeight(self:GetCell() + self:GetPad() * 2)
+  self.bar = bar
   if Minimap then
-    bar:SetPoint("TOP", Minimap, "BOTTOM", 0, -4)
+    self:PositionAddonBarCentered()
   else
     bar:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -80, -80)
   end
-  self.bar = bar
 end
 
 function MB:EnsureMiniMenuBar()

@@ -3,7 +3,7 @@
      - Addons: barra + política por botón (Defecto / Barra / Oculto) en minimapBar.buttonPolicy + discoveredOrder.
      - Barra de addons: el botón real (LibDBIcon, Zygor, etc.) permanece en el mapa pero oculto; la barra usa proxies
        (icono copiado + clic/tooltip reenviados) para que Masque funcione sin tocar el marco LibDBIcon.
-     - Segunda fila: miniMenuBar (contenedor para minimenú; bajo la barra de addons). ]]
+     - Segunda fila: miniMenuBar — botones del micromenú Blizzard (`MICRO_BUTTONS` o fallback), reparent bajo el mapa. ]]
 
 local _, ns = ...
 
@@ -108,6 +108,167 @@ local function barOpts()
   m.buttonPolicy = m.buttonPolicy or {}
   m.discoveredOrder = m.discoveredOrder or {}
   return m
+end
+
+--- Orden típico del micromenú Retail (fallback si no existe la global `MICRO_BUTTONS`).
+local MICRO_BUTTON_FALLBACK_NAMES = {
+  "CharacterMicroButton",
+  "PlayerSpellsMicroButton",
+  "SpellbookMicroButton",
+  "ProfessionMicroButton",
+  "TalentMicroButton",
+  "AchievementMicroButton",
+  "QuestLogMicroButton",
+  "GuildMicroButton",
+  "LFDMicroButton",
+  "CollectionsMicroButton",
+  "EJMicroButton",
+  "StoreMicroButton",
+  "PromotionFrameMicroButton",
+  "WhatsNewMicroButton",
+  "MainMenuMicroButton",
+}
+
+function MB:GetMicroMenuButtonFrames()
+  local out, seen = {}, {}
+  local function pushFrame(f)
+    if not f or type(f) ~= "table" or not f.GetObjectType or seen[f] then
+      return
+    end
+    local ot = f:GetObjectType()
+    if ot ~= "Button" and ot ~= "CheckButton" then
+      return
+    end
+    seen[f] = true
+    out[#out + 1] = f
+  end
+  if type(MICRO_BUTTONS) == "table" then
+    for i = 1, #MICRO_BUTTONS do
+      local v = MICRO_BUTTONS[i]
+      if type(v) == "string" then
+        pushFrame(_G[v])
+      elseif type(v) == "table" and v.GetObjectType then
+        pushFrame(v)
+      end
+    end
+  end
+  if #out == 0 then
+    local hasPlayerSpells = _G.PlayerSpellsMicroButton
+    for _, name in ipairs(MICRO_BUTTON_FALLBACK_NAMES) do
+      if name == "SpellbookMicroButton" and hasPlayerSpells then
+        --- Retail: hechizos y profesiones suelen ir en PlayerSpellsMicroButton.
+      else
+        pushFrame(_G[name])
+      end
+    end
+  end
+  return out
+end
+
+function MB:RestoreMicroMenuButtonsFromChukieBar()
+  local list = self.microMenuDetached
+  if not list then
+    return
+  end
+  for _, btn in ipairs(list) do
+    if btn and type(btn) == "table" then
+      local p = btn.chukieMicroSavedParent
+      if p and type(p) == "table" and p.SetFrameStrata then
+        btn:SetParent(p)
+      elseif MicroButtonAndBagsBar then
+        btn:SetParent(MicroButtonAndBagsBar)
+      elseif MainMenuBar then
+        btn:SetParent(MainMenuBar)
+      end
+      if btn.chukieMicroSavedScale then
+        btn:SetScale(btn.chukieMicroSavedScale)
+      else
+        btn:SetScale(1)
+      end
+      btn.chukieMicroChukieOwned = nil
+      btn.chukieMicroSavedParent = nil
+      btn.chukieMicroSavedScale = nil
+    end
+  end
+  wipe(list)
+  self.microMenuDetached = nil
+end
+
+function MB:EnsureMicroMenuHooks()
+  if self.microMenuHooks then
+    return
+  end
+  self.microMenuHooks = true
+  hooksecurefunc("UpdateMicroButtons", function()
+    if not MB.miniMenuBar or not MB.miniMenuBar:IsShown() then
+      return
+    end
+    if barOpts().minimenuBarEnabled == false then
+      return
+    end
+    if InCombatLockdown() then
+      MB.microMenuRelayoutAfterCombat = true
+      return
+    end
+    MB:LayoutMicroMenuEmbedded()
+  end)
+  if not MB.microMenuCombatEv then
+    local ev = CreateFrame("Frame")
+    MB.microMenuCombatEv = ev
+    ev:RegisterEvent("PLAYER_REGEN_ENABLED")
+    ev:SetScript("OnEvent", function()
+      if MB.microMenuRelayoutAfterCombat then
+        MB.microMenuRelayoutAfterCombat = false
+        if MB.LayoutMicroMenuEmbedded then
+          MB:LayoutMicroMenuEmbedded()
+        end
+      end
+    end)
+  end
+end
+
+function MB:LayoutMicroMenuEmbedded()
+  if not self.miniMenuBar or barOpts().minimenuBarEnabled == false then
+    return
+  end
+  if InCombatLockdown() then
+    self.microMenuRelayoutAfterCombat = true
+    return
+  end
+  local mm = self.miniMenuBar
+  local cell, pad = self:GetCell(), self:GetPad()
+  local targetH = math.max(22, mm:GetHeight() - 4)
+  local x = pad
+  self.microMenuDetached = self.microMenuDetached or {}
+  local known = {}
+  for _, b in ipairs(self.microMenuDetached) do
+    known[b] = true
+  end
+  for _, btn in ipairs(self:GetMicroMenuButtonFrames()) do
+    if not known[btn] then
+      self.microMenuDetached[#self.microMenuDetached + 1] = btn
+      known[btn] = true
+    end
+    if not btn.chukieMicroSavedParent then
+      btn.chukieMicroSavedParent = btn:GetParent()
+    end
+    if not btn.chukieMicroSavedScale then
+      btn.chukieMicroSavedScale = btn:GetScale() > 0 and btn:GetScale() or 1
+    end
+    btn:SetParent(mm)
+    btn.chukieMicroChukieOwned = true
+    btn:SetScale(1)
+    local h = btn:GetHeight()
+    if h and h > 1 then
+      local sc = math.min(targetH / h, 1.15)
+      btn:SetScale(sc * (btn.chukieMicroSavedScale or 1))
+    end
+    btn:ClearAllPoints()
+    btn:SetPoint("LEFT", mm, "LEFT", x, 0)
+    local w = btn:GetWidth() or 28
+    x = x + w + math.max(1, pad - 1)
+  end
+  mm:SetWidth(math.max(x + pad, 48))
 end
 
 function MB:ProfileRotateMinimap()
@@ -1018,9 +1179,6 @@ end
 
 function MB:ReleaseAll()
   self.capturedLDB = self.capturedLDB or {}
-  if self.miniMenuBar then
-    self.miniMenuBar:Hide()
-  end
   if not self.bar then
     wipe(self.capturedLDB)
     return
@@ -1098,15 +1256,12 @@ function MB:LayoutMiniMenuBar()
   mm:SetHeight(h)
   local gutter = 6
   mm:ClearAllPoints()
+  local anchor = Minimap
   if self.bar and self.bar:IsShown() and barOpts().enabled ~= false then
-    mm:SetPoint("TOPLEFT", self.bar, "BOTTOMLEFT", 0, -gutter)
-    mm:SetPoint("TOPRIGHT", self.bar, "BOTTOMRIGHT", 0, -gutter)
-    mm:SetWidth(math.max(self.bar:GetWidth(), cell * 2 + pad * 3))
-  else
-    mm:SetPoint("TOPLEFT", Minimap, "BOTTOMLEFT", -4, -4)
-    mm:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", 4, -4)
-    mm:SetWidth(math.max(80, cell * 2 + pad * 3))
+    anchor = self.bar
   end
+  --- Alineado al borde derecho del mapa o de la barra de addons (panel derecho).
+  mm:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, -gutter)
 end
 
 function MB:Layout()
@@ -1229,9 +1384,11 @@ function MB:Refresh()
   self:ApplyBlizzardStripOrRestore()
   self:ApplyAddonButtonPolicies()
   if not prof().enabled then
+    self:RestoreMicroMenuButtonsFromChukieBar()
     return
   end
   if not Minimap then
+    self:RestoreMicroMenuButtonsFromChukieBar()
     return
   end
   self:EnsureLdbHooks()
@@ -1253,10 +1410,15 @@ function MB:Refresh()
 
   if showMiniMenu then
     self:EnsureMiniMenuBar()
+    self:EnsureMicroMenuHooks()
     self:LayoutMiniMenuBar()
+    self:LayoutMicroMenuEmbedded()
     self.miniMenuBar:Show()
-  elseif self.miniMenuBar then
-    self.miniMenuBar:Hide()
+  else
+    self:RestoreMicroMenuButtonsFromChukieBar()
+    if self.miniMenuBar then
+      self.miniMenuBar:Hide()
+    end
   end
 
   self:ApplyBlizzardStripOrRestore()

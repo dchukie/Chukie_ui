@@ -507,7 +507,7 @@ function ns.RegisterConfigPanel()
     "ChukieUi_MMBar_minimenuBar",
     "minimenuBarEnabled",
     "Activar segunda fila (minimenú)",
-    "Muestra una fila vacía bajo la barra de addons del panel derecho, pensada para botones del minimenú (mapa del mundo, calendario, etc.). Más adelante Chukie podrá colocar ahí esos accesos.",
+    "Muestra la barra de micromenú de Blizzard (personaje, hechizos, talentos, logros, hermandad, buscador, colecciones, guía, tienda, novedades, menú…) bajo la barra de addons, alineada al borde derecho del panel. Desmarcar devuelve los botones a la barra inferior por defecto.",
     true
   )
 

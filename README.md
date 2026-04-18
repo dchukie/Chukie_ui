@@ -30,7 +30,7 @@ git init
 git add .
 git commit -m "Initial commit: Chukie UI"
 git branch -M main
-git remote add origin https://github.com/TU_USUARIO/Chukie_Ui.git
+git remote add origin https://github.com/dchukie/Chukie_ui.git
 git push -u origin main
 ```
 

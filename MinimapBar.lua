@@ -1,8 +1,9 @@
---[[ Minimapa — Retail 12.0.1 (## Interface: 120001 en el .toc).
+--[[ Panel derecho (Retail 12.0.1, ## Interface: 120001 en el .toc).
      - «Solo mapa»: STRIP_FRAMES + descendientes nombrados + marcos del cluster (TrackingFrame, ZoomIn/Out del mapa, InstanceDifficulty, IndicatorFrame…).
      - Addons: barra + política por botón (Defecto / Barra / Oculto) en minimapBar.buttonPolicy + discoveredOrder.
-     - Barra «Bar»: el botón real (LibDBIcon, Zygor, etc.) permanece en el minimapa pero oculto; la barra usa botones proxy
-       (icono copiado + clic/tooltip reenviados) para que Masque funcione sin tocar el marco LibDBIcon. ]]
+     - Barra de addons: el botón real (LibDBIcon, Zygor, etc.) permanece en el mapa pero oculto; la barra usa proxies
+       (icono copiado + clic/tooltip reenviados) para que Masque funcione sin tocar el marco LibDBIcon.
+     - Segunda fila: miniMenuBar (contenedor para minimenú; bajo la barra de addons). ]]
 
 local _, ns = ...
 
@@ -280,7 +281,7 @@ local function isUnderMinimapClusterOrMap(f)
 end
 
 function MB:ShouldNeverCapture(f)
-  if not f or f == self.bar then
+  if not f or f == self.bar or f == self.miniMenuBar then
     return true
   end
   local n = f:GetName() or ""
@@ -1017,7 +1018,11 @@ end
 
 function MB:ReleaseAll()
   self.capturedLDB = self.capturedLDB or {}
+  if self.miniMenuBar then
+    self.miniMenuBar:Hide()
+  end
   if not self.bar then
+    wipe(self.capturedLDB)
     return
   end
   self:MasqueStripBar()
@@ -1083,6 +1088,27 @@ function MB:ReleaseAll()
   wipe(self.capturedLDB)
 end
 
+function MB:LayoutMiniMenuBar()
+  local mm = self.miniMenuBar
+  if not mm or not Minimap then
+    return
+  end
+  local cell, pad = self:GetCell(), self:GetPad()
+  local h = cell + pad * 2
+  mm:SetHeight(h)
+  local gutter = 6
+  mm:ClearAllPoints()
+  if self.bar and self.bar:IsShown() and barOpts().enabled ~= false then
+    mm:SetPoint("TOPLEFT", self.bar, "BOTTOMLEFT", 0, -gutter)
+    mm:SetPoint("TOPRIGHT", self.bar, "BOTTOMRIGHT", 0, -gutter)
+    mm:SetWidth(math.max(self.bar:GetWidth(), cell * 2 + pad * 3))
+  else
+    mm:SetPoint("TOPLEFT", Minimap, "BOTTOMLEFT", -4, -4)
+    mm:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", 4, -4)
+    mm:SetWidth(math.max(80, cell * 2 + pad * 3))
+  end
+end
+
 function MB:Layout()
   if not self.bar then
     return
@@ -1119,16 +1145,34 @@ function MB:EnsureBar()
   self.bar = bar
 end
 
-function MB:EnsureLdbHooks()
-  if self.ldbHooks or not self.bar then
+function MB:EnsureMiniMenuBar()
+  if self.miniMenuBar then
     return
+  end
+  local parent = MinimapCluster or UIParent
+  local mm = CreateFrame("Frame", "ChukieUi_MiniMenuButtonBar", parent)
+  mm:SetFrameStrata("MEDIUM")
+  mm:SetFixedFrameStrata(true)
+  mm:SetFrameLevel((Minimap and Minimap:GetFrameLevel() or 3) + 2)
+  mm:SetHeight(self:GetCell() + self:GetPad() * 2)
+  self.miniMenuBar = mm
+end
+
+function MB:EnsureLdbHooks()
+  if self.ldbHooks then
+    return
+  end
+  local parent = MinimapCluster or UIParent
+  if not self.ldbHookHolder then
+    self.ldbHookHolder = CreateFrame("Frame", "ChukieUi_LdbHookHolder", parent)
+    self.ldbHookHolder:Hide()
   end
   local LDBI = LibStub("LibDBIcon-1.0", true)
   if not LDBI or type(LDBI.RegisterCallback) ~= "function" then
     return
   end
   self.ldbHooks = true
-  LDBI.RegisterCallback(self.bar, "LibDBIcon_IconCreated", function(eventName, button, name)
+  LDBI.RegisterCallback(self.ldbHookHolder, "LibDBIcon_IconCreated", function(eventName, button, name)
     if eventName == "LibDBIcon_IconCreated" and barOpts().enabled ~= false then
       self:ScheduleRefresh()
     end
@@ -1145,7 +1189,7 @@ function MB:EnsureLdbHooks()
         MB:EnsureAddonPolicyHook(btn, nn)
       end
     end
-    if barOpts().enabled ~= false and btn and self.bar then
+    if barOpts().enabled ~= false and btn then
       local nn = btn:GetName()
       if nn and MB:ShouldPlaceOnBar(btn) then
         self:ScheduleRefresh()
@@ -1155,7 +1199,7 @@ function MB:EnsureLdbHooks()
   hooksecurefunc(LDBI, "Refresh", function(lib, name)
     if barOpts().enabled ~= false and name then
       local btn = lib:GetMinimapButton(name)
-      if btn and self.bar then
+      if btn then
         local nn = btn:GetName()
         if nn and MB:ShouldPlaceOnBar(btn) then
           self:ScheduleRefresh()
@@ -1187,21 +1231,36 @@ function MB:Refresh()
   if not prof().enabled then
     return
   end
-  if barOpts().enabled == false then
-    return
-  end
   if not Minimap then
     return
   end
-  self:EnsureBar()
   self:EnsureLdbHooks()
-  self.bar:Show()
-  local list = self:CollectFrames()
-  self:InstallBarProxies(list)
-  self:Layout()
+  local showAddonBar = barOpts().enabled ~= false
+  local showMiniMenu = barOpts().minimenuBarEnabled ~= false
+
+  if showAddonBar then
+    self:EnsureBar()
+    self.bar:Show()
+    local list = self:CollectFrames()
+    self:InstallBarProxies(list)
+    self:Layout()
+    self:MasqueApplyBar()
+  else
+    if self.bar then
+      self.bar:Hide()
+    end
+  end
+
+  if showMiniMenu then
+    self:EnsureMiniMenuBar()
+    self:LayoutMiniMenuBar()
+    self.miniMenuBar:Show()
+  elseif self.miniMenuBar then
+    self.miniMenuBar:Hide()
+  end
+
   self:ApplyBlizzardStripOrRestore()
   self:ApplyAddonButtonPolicies()
-  self:MasqueApplyBar()
 end
 
 local ev = CreateFrame("Frame")

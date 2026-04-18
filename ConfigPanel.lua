@@ -1,5 +1,5 @@
 --[[ Panel de opciones: Esc → Opciones → AddOns → Chukie UI
-     Retail 12.0.1 (Interface 120001): categoría raíz + subcategorías verticales (p. ej. MiniMapa).
+     Retail 12.0.1 (Interface 120001): categoría raíz + subcategorías verticales (p. ej. Panel derecho).
      Controles: RegisterProxySetting + CreateCheckbox / CreateSlider. ]]
 
 local _, ns = ...
@@ -80,7 +80,7 @@ local POLICY_DEFAULT, POLICY_BAR, POLICY_HIDDEN = 0, 1, 2
 
 local function addonPolicyDropdownOptions()
   local c = Settings.CreateControlTextContainer()
-  c:Add(POLICY_DEFAULT, "Defecto (minimapa)")
+  c:Add(POLICY_DEFAULT, "Defecto (en el mapa)")
   c:Add(POLICY_BAR, "Barra Chukie")
   c:Add(POLICY_HIDDEN, "Oculto")
   return c:GetData()
@@ -139,7 +139,7 @@ local function addAddonPolicyDropdown(category, frameName, label, tooltip)
     setting,
     addonPolicyDropdownOptions,
     tooltip
-      or "Defecto: deja el icono en el minimapa. Barra: fila bajo el mapa. Oculto: oculto. La lista se rellena al detectar iconos (LibDBIcon, etc.)."
+      or "Defecto: deja el icono en el mapa circular. Barra Chukie: fila de addons bajo el mapa. Oculto: oculto. La lista se rellena al detectar iconos (LibDBIcon, etc.)."
   )
 end
 
@@ -194,7 +194,7 @@ local function addPlayerArrowSettings(minimapCategory)
     minimapCategory,
     "ChukieUi_MMPos_playerArrowMode",
     Settings.VarType.Number,
-    "Flecha del jugador (minimapa)",
+    "Flecha del jugador (mapa circular)",
     ARROW_DEFAULT,
     getMode,
     setMode
@@ -305,7 +305,7 @@ function ns.RegisterConfigPanel()
   local rootCategory, rootLayout = Settings.RegisterVerticalLayoutCategory("Chukie UI")
   rootCategory.ID = "ChukieUi"
 
-  -- Raíz: opciones globales del addon (otros temas además del minimapa).
+  -- Raíz: opciones globales del addon (otros temas además del panel derecho).
   rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Chukie-UI"))
   rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("General"))
   rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Perfiles"))
@@ -385,27 +385,27 @@ function ns.RegisterConfigPanel()
 
   Settings.RegisterAddOnCategory(rootCategory)
 
-  local minimapCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "MiniMapa")
+  local minimapCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Panel derecho")
   local minimapLayout = SettingsPanel:GetLayout(minimapCategory)
 
-  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("MiniMapa"))
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Panel derecho"))
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Posición"))
   addBoolPos(
     minimapCategory,
     "ChukieUi_MMPos_locked",
     "locked",
     "Fijar posición (Lock)",
-    "Desactiva el arrastre del minimapa por la franja azul superior. Los deslizadores y /chukieui mmpos siguen aplicando offsets.",
+    "Desactiva el arrastre del panel (franja azul superior del cluster del mapa). Los deslizadores y /chukieui mmpos siguen aplicando offsets desde la esquina inferior derecha.",
     false
   )
   addIntSliderPos(
     minimapCategory,
     "ChukieUi_MMPos_offsetX",
     "offsetX",
-    "Desplazamiento X (desde el centro)",
-    "Distancia horizontal respecto al centro de la pantalla (UIParent CENTER). Rango acotado.",
+    "Desplazamiento X (desde la esquina inferior derecha)",
+    "Distancia horizontal desde la esquina inferior derecha de la pantalla: valores negativos mueven el panel hacia la izquierda.",
     -1200,
-    1200,
+    120,
     1,
     0
   )
@@ -413,10 +413,10 @@ function ns.RegisterConfigPanel()
     minimapCategory,
     "ChukieUi_MMPos_offsetY",
     "offsetY",
-    "Desplazamiento Y (desde el centro)",
-    "Distancia vertical respecto al centro de la pantalla (UIParent CENTER). Rango acotado.",
-    -800,
-    800,
+    "Desplazamiento Y (desde la esquina inferior derecha)",
+    "Distancia vertical desde la esquina inferior derecha: valores positivos suben el panel.",
+    -120,
+    900,
     1,
     0
   )
@@ -425,8 +425,8 @@ function ns.RegisterConfigPanel()
     minimapCategory,
     "ChukieUi_MMPos_scalePct",
     "minimapScalePercent",
-    "Tamaño del minimapa (%)",
-    "Escala de todo el MinimapCluster (mapa y anillo). 100 % = tamaño por defecto del cliente. Si otro addon también escala el minimapa, puede haber interacciones; prueba valores o desactiva el otro.",
+    "Tamaño del mapa circular (%)",
+    "Escala de todo el MinimapCluster (mapa y anillo). 100 % = tamaño por defecto del cliente. Si otro addon también escala el mapa, puede haber interacciones; prueba valores o desactiva el otro.",
     70,
     150,
     1,
@@ -437,7 +437,7 @@ function ns.RegisterConfigPanel()
     minimapCategory,
     "ChukieUi_MMPos_rotateMinimap",
     "rotateMinimap",
-    "Rotar el minimapa con la dirección del personaje",
+    "Rotar el mapa con la dirección del personaje",
     "Equivale al CVar rotateMinimap de Blizzard: el mapa gira y la flecha del jugador queda fija hacia arriba. Si «Solo mapa» está activo, Chukie mostrará la brújula (MinimapCompassTexture) en lugar de ocultarla. Si cambias esto en Opciones de Blizzard, el siguiente refresco de Chukie puede volver a alinear el CVar con esta casilla.",
     false
   )
@@ -451,7 +451,7 @@ function ns.RegisterConfigPanel()
     "ChukieUi_MMBar_stripBlizz",
     "stripBlizzardMinimap",
     "Solo mapa (ocultar UI de Blizzard)",
-    "Oculta zoom, rastreo, correo, cola, reloj, dificultad, compartimento de addons (contador), franja de ubicación y similares; deja el círculo del minimapa. Blizzard puede volver a mostrar algún marco: se fuerza el oculto al refrescar. Desmarcar restaura la interfaz por defecto.",
+    "Oculta zoom, rastreo, correo, cola, reloj, dificultad, compartimento de addons (contador), franja de ubicación y similares; deja solo el círculo del mapa. Blizzard puede volver a mostrar algún marco: se fuerza el oculto al refrescar. Desmarcar restaura la interfaz por defecto.",
     true
   )
   addBoolProxy(
@@ -459,7 +459,7 @@ function ns.RegisterConfigPanel()
     "ChukieUi_MMBar_enabled",
     "enabled",
     "Activar barra de iconos (addons)",
-    "Coloca en una fila bajo el mapa solo los iconos de addons (LibDBIcon, Zygor, otros botones pequeños en el minimapa). No mueve botones de Blizzard.",
+    "Coloca en una fila bajo el mapa solo los iconos de addons (LibDBIcon, Zygor, otros botones pequeños junto al mapa). No mueve botones de Blizzard.",
     true
   )
   addBoolProxy(
@@ -467,14 +467,14 @@ function ns.RegisterConfigPanel()
     "ChukieUi_MMBar_lockLdb",
     "lockLdb",
     "Bloquear arrastre LibDBIcon",
-    "Desactiva arrastre (Lock de LibDBIcon y RegisterForDrag) para que no reposicionen el icono en el borde del minimapa al soltarlo.",
+    "Desactiva arrastre (Lock de LibDBIcon y RegisterForDrag) para que no reposicionen el icono en el borde del mapa al soltarlo.",
     true
   )
   addBoolProxy(
     minimapCategory,
     "ChukieUi_MMBar_useMasque",
     "useMasque",
-    "Masque en la barra del minimapa",
+    "Masque en la barra de addons",
     "Si tienes Masque instalado, el grupo «Chukie UI» → «MinimapBar» aplica a los botones proxy de la barra (iconos propios, no el marco LibDBIcon).",
     true
   )
@@ -499,6 +499,16 @@ function ns.RegisterConfigPanel()
     16,
     1,
     4
+  )
+
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Barra minimenú"))
+  addBoolProxy(
+    minimapCategory,
+    "ChukieUi_MMBar_minimenuBar",
+    "minimenuBarEnabled",
+    "Activar segunda fila (minimenú)",
+    "Muestra una fila vacía bajo la barra de addons del panel derecho, pensada para botones del minimenú (mapa del mundo, calendario, etc.). Más adelante Chukie podrá colocar ahí esos accesos.",
+    true
   )
 
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Addons (LibDBIcon y detectados)"))

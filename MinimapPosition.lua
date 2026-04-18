@@ -1,4 +1,4 @@
---[[ Posición del MinimapCluster: ancla CENTER de UIParent, offsets en perfil, franja superior arrastrable y Lock. ]]
+--[[ Panel derecho: MinimapCluster anclado a BOTTOMRIGHT de UIParent (offsets desde esa esquina), franja superior arrastrable y Lock. ]]
 
 local ADDON_NAME, ns = ...
 
@@ -19,8 +19,9 @@ function MP:DB()
 end
 
 function MP:ClampOffsets(ox, oy)
-  ox = math.max(-1200, math.min(1200, math.floor((ox or 0) + 0.5)))
-  oy = math.max(-800, math.min(800, math.floor((oy or 0) + 0.5)))
+  --- X negativo = hacia la izquierda desde la esquina derecha; Y positivo = hacia arriba desde el borde inferior.
+  ox = math.max(-1200, math.min(120, math.floor((ox or 0) + 0.5)))
+  oy = math.max(-120, math.min(900, math.floor((oy or 0) + 0.5)))
   return ox, oy
 end
 
@@ -103,17 +104,15 @@ function MP:ApplyRotateMinimapCvar()
 end
 
 function MP:SaveOffsetsFromCluster()
-  if not MinimapCluster then
+  if not MinimapCluster or not UIParent then
     return
   end
   local db = self:DB()
-  local cx, cy = MinimapCluster:GetCenter()
-  local ux, uy = UIParent:GetCenter()
-  if cx and cy and ux and uy then
-    local ox, oy = self:ClampOffsets(cx - ux, cy - uy)
-    db.offsetX = ox
-    db.offsetY = oy
-  end
+  local ox = MinimapCluster:GetRight() - UIParent:GetRight()
+  local oy = MinimapCluster:GetBottom() - UIParent:GetBottom()
+  ox, oy = self:ClampOffsets(ox, oy)
+  db.offsetX = ox
+  db.offsetY = oy
 end
 
 function MP:Apply()
@@ -121,10 +120,17 @@ function MP:Apply()
   self:ApplyPlayerArrow()
   if MinimapCluster and UIParent then
     local db = self:DB()
+    if not db._brPanelAnchorMigrated then
+      db._brPanelAnchorMigrated = true
+      if (db.offsetX or 0) == 0 and (db.offsetY or 0) == 0 then
+        db.offsetX = -28
+        db.offsetY = 200
+      end
+    end
     local ox, oy = self:ClampOffsets(db.offsetX or 0, db.offsetY or 0)
     db.offsetX, db.offsetY = ox, oy
     MinimapCluster:ClearAllPoints()
-    MinimapCluster:SetPoint("CENTER", UIParent, "CENTER", ox, oy)
+    MinimapCluster:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", ox, oy)
     MinimapCluster:SetClampedToScreen(true)
     self:UpdateDragState()
   end

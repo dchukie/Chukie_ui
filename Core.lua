@@ -8,6 +8,8 @@ local defaults = {
   enabled = true,
   minimapBar = {
     enabled = true,
+    --- Segunda fila bajo la barra de addons (mapa del mundo, menú, etc.); por ahora contenedor vacío.
+    minimenuBarEnabled = true,
     stripBlizzardMinimap = true,
     cellSize = 34,
     pad = 4,
@@ -129,11 +131,11 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     print("|cffff9900Chukie UI|r: no se pudo abrir el panel de opciones.")
     return
   end
-  if msg == "minimapa" or msg == "minimap" then
+  if msg == "minimapa" or msg == "minimap" or msg == "panel" or msg == "panelderecho" then
     if ns.OpenMinimapConfigPanel and ns.OpenMinimapConfigPanel() then
       return
     end
-    print("|cffff9900Chukie UI|r: apartado MiniMapa no disponible.")
+    print("|cffff9900Chukie UI|r: apartado Panel derecho no disponible.")
     return
   end
   if msg == "botones" then
@@ -152,7 +154,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
         local db = ns.MinimapPosition:DB()
         print(
           string.format(
-            "|cff00ff00Chukie UI|r: minimapa → X=%d Y=%d (ancla centro UIParent)%s",
+            "|cff00ff00Chukie UI|r: panel derecho → X=%d Y=%d (ancla esquina inferior derecha)%s",
             db.offsetX or 0,
             db.offsetY or 0,
             (db.locked == true) and " [Lock]" or ""
@@ -165,7 +167,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       local db = ns.MinimapPosition:DB()
       print(
         string.format(
-          "|cff00ff00Chukie UI|r: minimapa actual → X=%d Y=%d%s. Uso: /chukieui mmpos <x> <y>",
+          "|cff00ff00Chukie UI|r: panel derecho actual → X=%d Y=%d%s. Uso: /chukieui mmpos <x> <y>",
           db.offsetX or 0,
           db.offsetY or 0,
           (db.locked == true) and " [Lock]" or ""
@@ -223,7 +225,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       return
     end
   end
-  print("|cff00ff00Chukie UI|r — /chukieui config | minimapa | botones | mmpos <x> <y> | mmarrow …")
+  print("|cff00ff00Chukie UI|r — /chukieui config | panel | minimapa | botones | mmpos <x> <y> | mmarrow …")
   if p then
     print("  Perfil: " .. tostring(ns.Profile:GetCurrentName()) .. " — " .. (p.enabled and "activado" or "desactivado"))
   end

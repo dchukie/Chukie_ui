@@ -1,11 +1,10 @@
---[[ Panel derecho: MinimapCluster anclado a BOTTOMRIGHT de UIParent (offsets desde esa esquina), franja superior arrastrable y Lock. ]]
+--[[ Panel derecho: MinimapCluster anclado a BOTTOMRIGHT de UIParent (offsets desde esa esquina).
+     La posición se ajusta con los deslizadores de opciones o /chukieui mmpos (sin arrastre con ratón). ]]
 
 local ADDON_NAME, ns = ...
 
 local MP = {}
 ns.MinimapPosition = MP
-
-local HANDLE_HEIGHT = 14
 
 --- Textura por defecto del jugador en el minimapa (Blizzard).
 local PLAYER_ARROW_DEFAULT = "Interface\\Minimap\\MinimapArrow"
@@ -58,7 +57,7 @@ function MP:ApplyClusterScale()
     return
   end
   local pct = tonumber(self:DB().minimapScalePercent) or 100
-  pct = math.max(70, math.min(150, math.floor(pct + 0.5)))
+  pct = math.max(20, math.min(300, math.floor(pct + 0.5)))
   self:DB().minimapScalePercent = pct
   MinimapCluster:SetScale(pct / 100)
 end
@@ -103,18 +102,6 @@ function MP:ApplyRotateMinimapCvar()
   end
 end
 
-function MP:SaveOffsetsFromCluster()
-  if not MinimapCluster or not UIParent then
-    return
-  end
-  local db = self:DB()
-  local ox = MinimapCluster:GetRight() - UIParent:GetRight()
-  local oy = MinimapCluster:GetBottom() - UIParent:GetBottom()
-  ox, oy = self:ClampOffsets(ox, oy)
-  db.offsetX = ox
-  db.offsetY = oy
-end
-
 function MP:Apply()
   self:ApplyRotateMinimapCvar()
   self:ApplyPlayerArrow()
@@ -132,7 +119,7 @@ function MP:Apply()
     MinimapCluster:ClearAllPoints()
     MinimapCluster:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", ox, oy)
     MinimapCluster:SetClampedToScreen(true)
-    self:UpdateDragState()
+    MinimapCluster:SetMovable(false)
   end
   if MinimapCluster then
     self:ApplyClusterScale()
@@ -152,70 +139,28 @@ function MP:SetOffsets(ox, oy)
   end
 end
 
-function MP:EnsureHandle()
-  if self.handle or not MinimapCluster then
+function MP:DestroyLegacyDragStrip()
+  local f = _G.ChukieUi_MinimapDragStrip
+  if not f then
     return
   end
-  local h = CreateFrame("Button", "ChukieUi_MinimapDragStrip", MinimapCluster)
-  h:SetHeight(HANDLE_HEIGHT)
-  h:SetPoint("TOPLEFT", MinimapCluster, "TOPLEFT", 0, 0)
-  h:SetPoint("TOPRIGHT", MinimapCluster, "TOPRIGHT", 0, 0)
-  h:SetFrameStrata("HIGH")
-  h:SetFrameLevel(MinimapCluster:GetFrameLevel() + 20)
-  local tex = h:CreateTexture(nil, "BACKGROUND")
-  tex:SetAllPoints()
-  tex:SetColorTexture(0.2, 0.6, 1, 0.12)
-  h:RegisterForDrag("LeftButton")
-  h:SetScript("OnEnter", function(f)
-    if self:DB().locked == true then
-      return
-    end
-    tex:SetColorTexture(0.2, 0.6, 1, 0.25)
-  end)
-  h:SetScript("OnLeave", function()
-    tex:SetColorTexture(0.2, 0.6, 1, 0.12)
-  end)
-  h:SetScript("OnDragStart", function()
-    if self:DB().locked == true or InCombatLockdown() then
-      return
-    end
-    MinimapCluster:StartMoving()
-  end)
-  h:SetScript("OnDragStop", function()
-    if InCombatLockdown() then
-      return
-    end
-    MinimapCluster:StopMovingOrSizing()
-    self:SaveOffsetsFromCluster()
-    self:Apply()
-    if ns.MinimapBar and ns.MinimapBar.Refresh then
-      ns.MinimapBar:Refresh()
-    end
-  end)
-  self.handle = h
-end
-
-function MP:UpdateDragState()
-  if not self.handle or not MinimapCluster then
-    return
+  f:SetScript("OnDragStart", nil)
+  f:SetScript("OnDragStop", nil)
+  f:SetScript("OnEnter", nil)
+  f:SetScript("OnLeave", nil)
+  if f.RegisterForDrag then
+    f:RegisterForDrag()
   end
-  local locked = self:DB().locked == true
-  if locked then
-    self.handle:EnableMouse(false)
-    self.handle:SetAlpha(0.25)
-  else
-    self.handle:EnableMouse(true)
-    self.handle:RegisterForDrag("LeftButton")
-    self.handle:SetAlpha(1)
-  end
-  MinimapCluster:SetMovable(not locked)
+  f:EnableMouse(false)
+  f:Hide()
+  f:SetParent(nil)
 end
 
 function MP:Initialize()
   if not MinimapCluster then
     return
   end
-  self:EnsureHandle()
+  self:DestroyLegacyDragStrip()
   self:Apply()
 end
 

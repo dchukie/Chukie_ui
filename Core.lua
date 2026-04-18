@@ -10,30 +10,43 @@ local defaults = {
     enabled = true,
     --- Segunda fila bajo la barra de addons: micromenú Blizzard configurable.
     minimenuBarEnabled = true,
-    --- Escala extra de los botones del micromenú (%) respecto al ajuste automático a la fila.
-    minimenuButtonScalePercent = 100,
-    --- Espacio horizontal extra entre botones del micromenú (px; puede ser negativo para apretar).
+    --- Fila del micromenú (px), independiente de la barra de addons.
+    minimenuRowHeight = 42,
+    --- Ancho objetivo de cada icono del micromenú tras escalar (px).
+    minimenuIconWidth = 28,
+    --- Espacio horizontal entre iconos del micromenú (px; puede ser negativo).
     minimenuSpacing = 2,
+    --- Distancia vertical entre la barra de addons y la del micromenú (px), cuando ambas están activas.
+    minimenuGapBelowAddonBar = 8,
+    --- Desplazamiento horizontal de la barra de addons (px) respecto al centrado en el minimapa.
+    addonBarOffsetX = 0,
+    --- Desplazamiento horizontal del micromenú (px); independiente de la barra de addons.
+    minimenuBarOffsetX = 0,
     --- Por botón: false = oculto; nil/true = visible (tabla dispersa).
     minimenuVisibility = {},
     stripBlizzardMinimap = true,
+    --- Barra de addons (px); cellSize/pad se rellenan al migrar perfiles antiguos.
+    addonBarIconWidth = 34,
+    addonBarIconHeight = 34,
+    addonBarSpacing = 4,
     cellSize = 34,
     pad = 4,
     lockLdb = true,
     useMasque = true,
+    --- Masque en botones del micromenú embebido (grupo aparte en Masque: «MinimapBarMicroMenu»).
+    useMasqueMicromenu = false,
     buttonPolicy = {},
     discoveredOrder = {},
   },
   minimapPosition = {
     offsetX = 0,
     offsetY = 0,
-    locked = false,
     --- CVar rotateMinimap: mapa gira con el PJ, flecha fija hacia arriba.
     rotateMinimap = false,
     --- 0 = textura Blizzard por defecto; 1 = flecha fina (vehículo); 2 = playerArrowCustom.
     playerArrowMode = 0,
     playerArrowCustom = "",
-    --- Escala visual de todo el MinimapCluster (70–150 %).
+    --- Escala visual de todo el MinimapCluster (límite aplicado en MinimapPosition, p. ej. 20–300 %).
     minimapScalePercent = 100,
     --- 0 = no forzar; 1 = zoom mínimo (máximo alejado); 2 = zoom máximo permitido (máximo acercado). Límite fijo del cliente.
     minimapZoomPreference = 0,
@@ -160,10 +173,9 @@ SlashCmdList["CHUKIEUI"] = function(msg)
         local db = ns.MinimapPosition:DB()
         print(
           string.format(
-            "|cff00ff00Chukie UI|r: panel derecho → X=%d Y=%d (ancla esquina inferior derecha)%s",
+            "|cff00ff00Chukie UI|r: panel derecho → X=%d Y=%d (ancla esquina inferior derecha)",
             db.offsetX or 0,
-            db.offsetY or 0,
-            (db.locked == true) and " [Lock]" or ""
+            db.offsetY or 0
           )
         )
         return
@@ -173,10 +185,9 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       local db = ns.MinimapPosition:DB()
       print(
         string.format(
-          "|cff00ff00Chukie UI|r: panel derecho actual → X=%d Y=%d%s. Uso: /chukieui mmpos <x> <y>",
+          "|cff00ff00Chukie UI|r: panel derecho actual → X=%d Y=%d. Uso: /chukieui mmpos <x> <y>",
           db.offsetX or 0,
-          db.offsetY or 0,
-          (db.locked == true) and " [Lock]" or ""
+          db.offsetY or 0
         )
       )
       return

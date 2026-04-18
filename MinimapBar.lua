@@ -177,6 +177,7 @@ function MB:GetMicroMenuButtonFrames()
 end
 
 function MB:RestoreMicroMenuButtonsFromChukieBar()
+  self:MasqueStripMicromenu()
   local list = self.microMenuDetached
   if not list then
     return
@@ -250,10 +251,11 @@ function MB:LayoutMicroMenuEmbedded()
     return
   end
   local mm = self.miniMenuBar
-  mm:SetHeight(self:GetMiniMenuBarHeight())
-  local targetH = math.max(18, mm:GetHeight() - 4)
+  local rowH = self:GetMiniMenuBarHeight()
+  mm:SetHeight(rowH)
+  local innerH = math.max(14, rowH - 4)
   local gap = self:GetMiniMenuSpacing()
-  local scalePct = self:GetMiniMenuButtonScalePercent()
+  local targetW = self:GetMiniMenuIconWidth()
   local x = 0
   self.microMenuDetached = self.microMenuDetached or {}
   local known = {}
@@ -281,54 +283,71 @@ function MB:LayoutMicroMenuEmbedded()
     else
       btn:Show()
       btn:SetScale(1)
+      local w0 = btn:GetWidth() or 28
       local h0 = btn:GetHeight() or 58
       local base = btn.chukieMicroSavedScale or 1
-      local fit = targetH / math.max(h0, 8)
-      fit = math.max(0.22, math.min(2.35, fit))
-      local sc = fit * scalePct * base
-      sc = math.max(0.18, math.min(2.5, sc))
+      local sW = targetW / math.max(w0, 1)
+      local sH = innerH / math.max(h0, 1)
+      local fit = math.min(sW, sH, 2.35)
+      fit = math.max(0.18, fit)
+      local sc = math.min(2.8, math.max(0.15, fit * base))
       btn:SetScale(sc)
       btn:ClearAllPoints()
       btn:SetPoint("LEFT", mm, "LEFT", x, 0)
-      local step = (btn:GetWidth() or 28) + gap
+      local step = (btn:GetWidth() or w0) + gap
       x = x + step
     end
   end
   mm:SetWidth(math.max(x + 2, 48))
   self:PositionMicromenuCentered()
+  self:MasqueApplyMicromenu()
 end
 
---- Centra horizontalmente con el centro del marco Minimap (eje del mapa circular).
+--- Desplazamiento X de la barra de addons sobre el centrado del minimapa (px).
+function MB:GetAddonBarOffsetX()
+  local v = tonumber(barOpts().addonBarOffsetX)
+  if not v then
+    return 0
+  end
+  return math.max(-200, math.min(200, math.floor(v + 0.5)))
+end
+
+--- Desplazamiento X del micromenú sobre el centrado del minimapa (px); no afecta a la barra de addons.
+function MB:GetMinimenuBarOffsetX()
+  local v = tonumber(barOpts().minimenuBarOffsetX)
+  if not v then
+    return 0
+  end
+  return math.max(-200, math.min(200, math.floor(v + 0.5)))
+end
+
+--- Centra la barra con el ancho del marco Minimap (referencia estable del mapa circular).
 function MB:PositionAddonBarCentered()
   if not self.bar or not Minimap or barOpts().enabled == false then
     return
   end
-  local mh = Minimap:GetHeight()
-  local bh = self.bar:GetHeight()
   local gap = 4
-  local dy = -mh / 2 - gap - bh / 2
   self.bar:ClearAllPoints()
-  self.bar:SetPoint("CENTER", Minimap, "CENTER", 0, dy)
+  local xOff = (Minimap:GetWidth() - self.bar:GetWidth()) / 2 + self:GetAddonBarOffsetX()
+  self.bar:SetPoint("TOPLEFT", Minimap, "BOTTOMLEFT", xOff, -gap)
 end
 
 function MB:PositionMicromenuCentered()
   if not self.miniMenuBar or not Minimap or barOpts().minimenuBarEnabled == false then
     return
   end
-  local mh = Minimap:GetHeight()
-  local mmh = self.miniMenuBar:GetHeight()
-  local gap = 4
-  local gutter = 8
-  local dy
+  local mm = self.miniMenuBar
+  local mapGap = 4
+  mm:ClearAllPoints()
+  --- Centrado horizontal respecto al Minimap + solo el offset del micromenú.
+  local xOff = (Minimap:GetWidth() - mm:GetWidth()) / 2 + self:GetMinimenuBarOffsetX()
+  local yOff
   if self.bar and self.bar:IsShown() and barOpts().enabled ~= false then
-    local bh = self.bar:GetHeight()
-    local dyBar = -mh / 2 - gap - bh / 2
-    dy = dyBar - bh / 2 - gutter - mmh / 2
+    yOff = -(mapGap + self.bar:GetHeight() + self:GetMinimenuGapBelowAddonBar())
   else
-    dy = -mh / 2 - gap - mmh / 2
+    yOff = -mapGap
   end
-  self.miniMenuBar:ClearAllPoints()
-  self.miniMenuBar:SetPoint("CENTER", Minimap, "CENTER", 0, dy)
+  mm:SetPoint("TOPLEFT", Minimap, "BOTTOMLEFT", xOff, yOff)
 end
 
 function MB:ProfileRotateMinimap()
@@ -425,21 +444,37 @@ function MB:ShouldStripBlizzardChrome()
   return barOpts().stripBlizzardMinimap ~= false
 end
 
-function MB:GetCell()
-  local v = barOpts() and tonumber(barOpts().cellSize)
-  v = v or 34
-  return math.max(18, math.min(56, math.floor(v + 0.5)))
+--- Ancho de iconos en la barra de addons (px). Perfiles antiguos: `cellSize`.
+function MB:GetAddonBarIconWidth()
+  local m = barOpts()
+  local v = tonumber(m.addonBarIconWidth) or tonumber(m.cellSize) or 34
+  return math.max(8, math.min(128, math.floor(v + 0.5)))
 end
 
-function MB:GetPad()
-  local v = barOpts() and tonumber(barOpts().pad)
-  v = v or 4
-  return math.max(0, math.min(16, math.floor(v + 0.5)))
+--- Alto de iconos en la barra de addons (px). Por defecto igual al ancho.
+function MB:GetAddonBarIconHeight()
+  local m = barOpts()
+  local v = tonumber(m.addonBarIconHeight) or tonumber(m.addonBarIconWidth) or tonumber(m.cellSize) or 34
+  return math.max(8, math.min(128, math.floor(v + 0.5)))
 end
 
---- Altura de la fila del micromenú: siempre la misma que la barra de iconos (addons).
+--- Espacio horizontal entre iconos de addons (px). Antiguo: `pad`.
+function MB:GetAddonBarSpacing()
+  local m = barOpts()
+  local v = tonumber(m.addonBarSpacing) or tonumber(m.pad) or 4
+  return math.max(0, math.min(64, math.floor(v + 0.5)))
+end
+
+--- Alto de la fila del micromenú (px), independiente de la barra de addons.
 function MB:GetMiniMenuBarHeight()
-  return self:GetCell() + self:GetPad() * 2
+  local v = tonumber(barOpts().minimenuRowHeight) or 42
+  return math.max(20, math.min(80, math.floor(v + 0.5)))
+end
+
+--- Ancho objetivo de cada icono del micromenú tras escalar (px).
+function MB:GetMiniMenuIconWidth()
+  local v = tonumber(barOpts().minimenuIconWidth) or 28
+  return math.max(12, math.min(56, math.floor(v + 0.5)))
 end
 
 function MB:GetMiniMenuSpacing()
@@ -447,16 +482,16 @@ function MB:GetMiniMenuSpacing()
   if not v then
     return 2
   end
-  return math.max(-24, math.min(24, math.floor(v + 0.5)))
+  return math.max(-32, math.min(32, math.floor(v + 0.5)))
 end
 
-function MB:GetMiniMenuButtonScalePercent()
-  local v = tonumber(barOpts().minimenuButtonScalePercent)
+--- Separación entre el borde inferior de la barra de addons y el superior del micromenú (px; negativo = solapar).
+function MB:GetMinimenuGapBelowAddonBar()
+  local v = tonumber(barOpts().minimenuGapBelowAddonBar)
   if not v then
-    return 1
+    return 8
   end
-  v = math.max(35, math.min(220, math.floor(v + 0.5)))
-  return v / 100
+  return math.max(-32, math.min(48, math.floor(v + 0.5)))
 end
 
 function MB:IsMinimenuButtonVisible(frameName)
@@ -1089,7 +1124,6 @@ function MB:GetOrCreateProxy(sourceFrameName, orig)
   if not p then
     p = CreateFrame("Button", pname, self.bar)
     p:SetFrameStrata("MEDIUM")
-    p:SetSize(self:GetCell(), self:GetCell())
     local tex = p:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints()
     p.icon = tex
@@ -1103,6 +1137,7 @@ function MB:GetOrCreateProxy(sourceFrameName, orig)
     end
     p.chukieIsMinimapProxy = true
   end
+  p:SetSize(self:GetAddonBarIconWidth(), self:GetAddonBarIconHeight())
   p:Show()
   return p
 end
@@ -1250,6 +1285,102 @@ function MB:GetMasqueGroup()
     self._masqueGroup = msq:Group("Chukie UI", "MinimapBar")
   end
   return self._masqueGroup
+end
+
+--- Grupo Masque solo para botones del micromenú (independiente de `useMasque` de la barra de addons).
+function MB:GetMasqueMicroGroup()
+  if barOpts().useMasqueMicromenu == false then
+    return nil
+  end
+  local stub = _G.LibStub
+  if not stub then
+    return nil
+  end
+  local msq = stub("Masque", true)
+  if not msq or type(msq.Group) ~= "function" then
+    return nil
+  end
+  if not self._masqueMicroGroup then
+    self._masqueMicroGroup = msq:Group("Chukie UI", "MinimapBarMicroMenu")
+  end
+  return self._masqueMicroGroup
+end
+
+local function masqueRegionsMicroButton(btn)
+  if not btn then
+    return nil
+  end
+  local icon = btn.icon or btn.Icon or btn.Portrait or btn.portrait
+  if icon and icon.GetObjectType and icon:GetObjectType() == "Texture" then
+    return {
+      Icon = icon,
+      Normal = false,
+      Disabled = false,
+      Pushed = false,
+      Flash = false,
+      Checked = false,
+      Border = false,
+      IconBorder = false,
+      DebuffBorder = false,
+      EnchantBorder = false,
+      Highlight = false,
+    }
+  end
+  local nt = btn.GetNormalTexture and btn:GetNormalTexture()
+  if nt and nt.GetObjectType and nt:GetObjectType() == "Texture" then
+    return {
+      Icon = nt,
+      Normal = false,
+      Disabled = false,
+      Pushed = false,
+      Flash = false,
+      Checked = false,
+      Border = false,
+      IconBorder = false,
+      DebuffBorder = false,
+      EnchantBorder = false,
+      Highlight = false,
+    }
+  end
+  return nil
+end
+
+function MB:MasqueStripMicromenu()
+  local grp = self._masqueMicroGroup
+  if not grp or type(grp.RemoveButton) ~= "function" then
+    return
+  end
+  for _, btn in ipairs(self:GetMicroMenuButtonFrames()) do
+    grp:RemoveButton(btn)
+  end
+end
+
+function MB:MasqueApplyMicromenu()
+  if barOpts().useMasqueMicromenu == false or not self.miniMenuBar then
+    self:MasqueStripMicromenu()
+    return
+  end
+  local grp = self:GetMasqueMicroGroup()
+  if not grp then
+    return
+  end
+  for _, btn in ipairs(self:GetMicroMenuButtonFrames()) do
+    grp:RemoveButton(btn)
+  end
+  for _, btn in ipairs(self:GetMicroMenuButtonFrames()) do
+    if btn and btn:GetParent() == self.miniMenuBar and btn:IsShown() then
+      local ot = btn.GetObjectType and btn:GetObjectType()
+      if ot == "Button" or ot == "CheckButton" then
+        local reg = masqueRegionsMicroButton(btn)
+        if reg and grp.AddButton then
+          grp:AddButton(btn, reg, "Legacy")
+        end
+      end
+    end
+  end
+  if grp.ReSkin then
+    grp:ReSkin()
+  end
 end
 
 function MB:MasqueStripBar()
@@ -1404,17 +1535,17 @@ function MB:Layout()
   if not self.bar then
     return
   end
-  local cell, pad = self:GetCell(), self:GetPad()
-  local x = pad
+  local iw, ih, sp = self:GetAddonBarIconWidth(), self:GetAddonBarIconHeight(), self:GetAddonBarSpacing()
+  local x = sp
   local kids = listFrameChildren(self.bar)
   for _, f in ipairs(kids) do
     f:ClearAllPoints()
     f:SetPoint("LEFT", self.bar, "LEFT", x, 0)
-    f:SetSize(cell, cell)
-    x = x + cell + pad
+    f:SetSize(iw, ih)
+    x = x + iw + sp
   end
   self.bar:SetWidth(math.max(x, 48))
-  self.bar:SetHeight(self:GetCell() + self:GetPad() * 2)
+  self.bar:SetHeight(ih + 4)
   self:PositionAddonBarCentered()
 end
 
@@ -1428,7 +1559,7 @@ function MB:EnsureBar()
   bar:SetFrameStrata("MEDIUM")
   bar:SetFixedFrameStrata(true)
   bar:SetFrameLevel((Minimap and Minimap:GetFrameLevel() or 3) + 3)
-  bar:SetHeight(self:GetCell() + self:GetPad() * 2)
+  bar:SetHeight(self:GetAddonBarIconHeight() + 4)
   self.bar = bar
   if Minimap then
     self:PositionAddonBarCentered()
@@ -1513,6 +1644,7 @@ function MB:ScheduleRefresh()
 end
 
 function MB:Refresh()
+  self:MasqueStripMicromenu()
   self:ReleaseAll()
   self:UpdateDiscoveredOrder()
   if ns.AppendMinimapDiscoveryPolicyRows then

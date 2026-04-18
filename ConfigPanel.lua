@@ -75,6 +75,40 @@ local function addIntSlider(category, uniqueId, key, label, tooltip, minV, maxV,
   Settings.CreateSlider(category, setting, options, tooltip)
 end
 
+--- Igual que `addIntSlider`, más caja de texto si el cliente la ofrece (valor en píxeles).
+local function addIntSliderPx(category, uniqueId, key, label, tooltip, minV, maxV, step, defaultNum)
+  local function get()
+    local v = tonumber(minimapBarDB()[key])
+    if not v then
+      return defaultNum
+    end
+    return math.max(minV, math.min(maxV, v))
+  end
+  local function set(v)
+    minimapBarDB()[key] = math.floor(v + 0.5)
+    refreshMinimapBar()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Number,
+    label,
+    defaultNum,
+    get,
+    set
+  )
+  local options = Settings.CreateSliderOptions(minV, maxV, step)
+  Settings.CreateSlider(category, setting, options, tooltip)
+  if Settings.CreateTextBox then
+    Settings.CreateTextBox(
+      category,
+      setting,
+      (tooltip or "")
+        .. " Puedes escribir un número entero (píxeles de interfaz; respetan la escala de la UI del juego)."
+    )
+  end
+end
+
 --- Política por icono de addon (LibDBIcon, Zygor, etc.). Valores numéricos: Add(valor, texto) en el desplegable.
 local POLICY_DEFAULT, POLICY_BAR, POLICY_HIDDEN = 0, 1, 2
 
@@ -359,6 +393,51 @@ function ns.RegisterConfigPanel()
   -- Raíz: opciones globales del addon (otros temas además del panel derecho).
   rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Chukie-UI"))
   rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("General"))
+  rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Tamaño (mapa y barra de iconos)"))
+  addIntSliderPos(
+    rootCategory,
+    "ChukieUi_Gen_minimapScalePct",
+    "minimapScalePercent",
+    "Escala del panel del mapa (%)",
+    "Tamaño de todo el MinimapCluster (mapa circular, anillo y zona del panel derecho). 100 % = por defecto del cliente. Valores extremos pueden solapar otras UI; ajústalos con cuidado.",
+    20,
+    300,
+    1,
+    100
+  )
+  addIntSliderPx(
+    rootCategory,
+    "ChukieUi_Gen_addonIconW",
+    "addonBarIconWidth",
+    "Ancho iconos barra de addons (px)",
+    "Tamaño horizontal de los botones proxy junto al mapa (LibDBIcon, etc.). Opciones detalladas del mapa siguen en «Panel derecho».",
+    8,
+    128,
+    1,
+    34
+  )
+  addIntSliderPx(
+    rootCategory,
+    "ChukieUi_Gen_addonIconH",
+    "addonBarIconHeight",
+    "Alto iconos barra de addons (px)",
+    "Tamaño vertical de los iconos en la barra de addons.",
+    8,
+    128,
+    1,
+    34
+  )
+  addIntSliderPx(
+    rootCategory,
+    "ChukieUi_Gen_addonSpacing",
+    "addonBarSpacing",
+    "Espacio entre iconos addons (px)",
+    "Separación horizontal entre iconos de la barra de addons.",
+    0,
+    64,
+    1,
+    4
+  )
   rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Perfiles"))
 
   do
@@ -441,14 +520,6 @@ function ns.RegisterConfigPanel()
 
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Panel derecho"))
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Posición"))
-  addBoolPos(
-    minimapCategory,
-    "ChukieUi_MMPos_locked",
-    "locked",
-    "Fijar posición (Lock)",
-    "Desactiva el arrastre del panel (franja azul superior del cluster del mapa). Los deslizadores y /chukieui mmpos siguen aplicando offsets desde la esquina inferior derecha.",
-    false
-  )
   addIntSliderPos(
     minimapCategory,
     "ChukieUi_MMPos_offsetX",
@@ -471,18 +542,7 @@ function ns.RegisterConfigPanel()
     1,
     0
   )
-  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Tamaño y zoom"))
-  addIntSliderPos(
-    minimapCategory,
-    "ChukieUi_MMPos_scalePct",
-    "minimapScalePercent",
-    "Tamaño del mapa circular (%)",
-    "Escala de todo el MinimapCluster (mapa y anillo). 100 % = tamaño por defecto del cliente. Si otro addon también escala el mapa, puede haber interacciones; prueba valores o desactiva el otro.",
-    70,
-    150,
-    1,
-    100
-  )
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Zoom del mapa"))
   addMinimapZoomPrefDropdown(minimapCategory)
   addBoolPos(
     minimapCategory,
@@ -495,7 +555,7 @@ function ns.RegisterConfigPanel()
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Flecha del jugador"))
   addPlayerArrowSettings(minimapCategory)
 
-  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Barra de iconos"))
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Barra de addons"))
 
   addBoolProxy(
     minimapCategory,
@@ -529,57 +589,87 @@ function ns.RegisterConfigPanel()
     "Si tienes Masque instalado, el grupo «Chukie UI» → «MinimapBar» aplica a los botones proxy de la barra (iconos propios, no el marco LibDBIcon).",
     true
   )
-  addIntSlider(
+  addBoolProxy(
     minimapCategory,
-    "ChukieUi_MMBar_cellSize",
-    "cellSize",
-    "Tamaño de cada icono (px)",
-    "Ancho y alto de cada botón en la barra de addons; la fila del micromenú usa la misma altura.",
-    18,
-    56,
-    1,
-    34
+    "ChukieUi_MMBar_useMasqueMicro",
+    "useMasqueMicromenu",
+    "Masque en el micromenú",
+    "Independiente de la barra de addons. En Masque aparece el subgrupo «Chukie UI» → «MinimapBarMicroMenu». Algunos botones de Blizzard no exponen textura «Icon» y pueden no skinerse bien; prueba y desmarca si algo raro.",
+    false
   )
-  addIntSlider(
+  addIntSliderPx(
     minimapCategory,
-    "ChukieUi_MMBar_pad",
-    "pad",
-    "Espacio entre iconos (px)",
-    "Separación horizontal entre botones.",
-    0,
-    16,
+    "ChukieUi_MMBar_addonOffsetX",
+    "addonBarOffsetX",
+    "Desplazamiento horizontal barra de addons (px)",
+    "Suma al centrado respecto al ancho del minimapa: positivo = derecha, negativo = izquierda. No afecta al micromenú.",
+    -200,
+    200,
     1,
-    4
+    0
   )
 
-  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Barra minimenú"))
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Barra minimenú (píxeles)"))
   addBoolProxy(
     minimapCategory,
     "ChukieUi_MMBar_minimenuBar",
     "minimenuBarEnabled",
     "Activar segunda fila (minimenú)",
-    "Muestra la fila del micromenú de Blizzard bajo la barra de addons, centrada con el minimapa. Desmarcar devuelve los botones a la barra inferior por defecto.",
+    "Muestra la fila del micromenú de Blizzard bajo la barra de addons, alineada con el ancho del mapa circular. Desmarcar devuelve los botones a la barra inferior por defecto.",
     true
   )
-  addIntSlider(
+  addIntSliderPx(
     minimapCategory,
-    "ChukieUi_MMBar_minimenuBtnScale",
-    "minimenuButtonScalePercent",
-    "Escala botones micromenú (%)",
-    "Porcentaje sobre el tamaño que cabe en la fila (misma altura que la barra de addons). Por debajo de 100 % encoge los iconos; por encima los agranda dentro de un límite razonable.",
-    35,
-    220,
+    "ChukieUi_MMBar_minimenuGapAddon",
+    "minimenuGapBelowAddonBar",
+    "Distancia entre barras (px)",
+    "Espacio vertical entre el borde inferior de la barra de addons y el borde superior del micromenú. Valores negativos acercan o solapan filas. Solo aplica si la barra de addons está activa y visible.",
+    -32,
+    48,
     1,
-    100
+    8
   )
-  addIntSlider(
+  addIntSliderPx(
+    minimapCategory,
+    "ChukieUi_MMBar_minimenuOffsetX",
+    "minimenuBarOffsetX",
+    "Desplazamiento horizontal micromenú (px)",
+    "Suma al centrado respecto al ancho del minimapa: positivo = derecha, negativo = izquierda. Independiente de la barra de addons.",
+    -200,
+    200,
+    1,
+    0
+  )
+  addIntSliderPx(
+    minimapCategory,
+    "ChukieUi_MMBar_minimenuRowH",
+    "minimenuRowHeight",
+    "Alto de la fila (px)",
+    "Altura del marco del micromenú; no depende de la barra de addons.",
+    20,
+    80,
+    1,
+    42
+  )
+  addIntSliderPx(
+    minimapCategory,
+    "ChukieUi_MMBar_minimenuIconW",
+    "minimenuIconWidth",
+    "Ancho objetivo de cada icono (px)",
+    "Tras escalar, cada botón intenta ocupar aproximadamente este ancho (respetando que quepa en la fila).",
+    12,
+    56,
+    1,
+    28
+  )
+  addIntSliderPx(
     minimapCategory,
     "ChukieUi_MMBar_minimenuSpacing",
     "minimenuSpacing",
     "Espacio entre iconos del micromenú (px)",
     "Separación horizontal entre botones (puede ser negativa para acercarlos o solaparlos un poco).",
-    -24,
-    24,
+    -32,
+    32,
     1,
     2
   )

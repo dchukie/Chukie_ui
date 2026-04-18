@@ -117,11 +117,68 @@ function ns.Profile:NotifyChanged()
   end
 end
 
+function ns.Profile:MigrateMinimapBarPixelOptions()
+  local m = self:GetActive().minimapBar
+  if not m then
+    return
+  end
+  --- Una vez: si existía `cellSize`/`pad` de versiones antiguas, copiar a las claves en px (antes de que `CopyDefaultsIntoProfile` rellene solo el defecto).
+  if not m._chukieCellToAddonPxDone then
+    local cs = tonumber(m.cellSize)
+    if cs then
+      m.addonBarIconWidth = cs
+      m.addonBarIconHeight = tonumber(m.addonBarIconHeight) or cs
+      local pd = tonumber(m.pad)
+      if pd then
+        m.addonBarSpacing = pd
+      end
+    end
+    m._chukieCellToAddonPxDone = true
+  end
+  if m.addonBarIconWidth == nil then
+    m.addonBarIconWidth = tonumber(m.cellSize) or 34
+  end
+  if m.addonBarIconHeight == nil then
+    m.addonBarIconHeight = tonumber(m.addonBarIconWidth) or 34
+  end
+  if m.addonBarSpacing == nil then
+    m.addonBarSpacing = tonumber(m.pad) or 4
+  end
+  if m.minimenuRowHeight == nil then
+    m.minimenuRowHeight = 42
+  end
+  if m.minimenuIconWidth == nil then
+    m.minimenuIconWidth = 28
+  end
+  if m.minimenuGapBelowAddonBar == nil then
+    m.minimenuGapBelowAddonBar = 8
+  end
+  if m.useMasqueMicromenu == nil then
+    m.useMasqueMicromenu = false
+  end
+  --- Antigua clave única `minimapBarsOffsetX`: misma posición en ambas barras que antes.
+  if m.minimapBarsOffsetX ~= nil then
+    local leg = tonumber(m.minimapBarsOffsetX) or 0
+    leg = math.max(-200, math.min(200, math.floor(leg + 0.5)))
+    m.addonBarOffsetX = leg
+    m.minimenuBarOffsetX = leg
+    m.minimapBarsOffsetX = nil
+  end
+  if m.addonBarOffsetX == nil then
+    m.addonBarOffsetX = 0
+  end
+  if m.minimenuBarOffsetX == nil then
+    m.minimenuBarOffsetX = 0
+  end
+end
+
 function ns.Profile:Initialize()
   self:Migrate()
+  self:MigrateMinimapBarPixelOptions()
   if ns.CopyDefaultsIntoProfile then
     ns.CopyDefaultsIntoProfile(self:GetActive())
   end
+  self:MigrateMinimapBarPixelOptions()
 end
 
 function ns.Profile:SuggestDuplicateName()
@@ -142,6 +199,7 @@ function ns.Profile:DuplicateCurrent()
     ns.CopyDefaultsIntoProfile(ChukieUiDB.profiles[name])
   end
   ChukieUiDB.currentProfile = name
+  self:MigrateMinimapBarPixelOptions()
   self:NotifyChanged()
   return name
 end
@@ -167,9 +225,11 @@ end
 function ns.Profile:ResetCurrentToTemplate()
   local name = self:GetCurrentName()
   ChukieUiDB.profiles[name] = {}
+  self:MigrateMinimapBarPixelOptions()
   if ns.CopyDefaultsIntoProfile then
     ns.CopyDefaultsIntoProfile(ChukieUiDB.profiles[name])
   end
+  self:MigrateMinimapBarPixelOptions()
   self:NotifyChanged()
   return true
 end

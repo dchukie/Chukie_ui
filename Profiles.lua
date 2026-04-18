@@ -28,7 +28,7 @@ local function cloneProfileData(src)
     t.minimapPosition[k] = v
   end
   for k, v in pairs(src.minimapBar or {}) do
-    if k == "buttonPolicy" and type(v) == "table" then
+    if (k == "buttonPolicy" or k == "minimenuVisibility") and type(v) == "table" then
       local np = {}
       for pk, pv in pairs(v) do
         np[pk] = pv

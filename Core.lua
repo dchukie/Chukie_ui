@@ -8,8 +8,16 @@ local defaults = {
   enabled = true,
   minimapBar = {
     enabled = true,
-    --- Segunda fila bajo la barra de addons (mapa del mundo, menú, etc.); por ahora contenedor vacío.
+    --- Segunda fila bajo la barra de addons: micromenú Blizzard configurable.
     minimenuBarEnabled = true,
+    --- Si es true (defecto), la fila del micromenú tiene la misma altura que la barra de iconos (cellSize + relleno).
+    minimenuUseAddonRowHeight = true,
+    --- Altura de fila del micromenú en px si «igual que addons» está desmarcado (22–64).
+    minimenuRowHeight = 46,
+    --- Espacio horizontal extra entre botones del micromenú (0–16).
+    minimenuSpacing = 2,
+    --- Por botón: false = oculto; nil/true = visible (tabla dispersa).
+    minimenuVisibility = {},
     stripBlizzardMinimap = true,
     cellSize = 34,
     pad = 4,

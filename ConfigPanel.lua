@@ -143,6 +143,57 @@ local function addAddonPolicyDropdown(category, frameName, label, tooltip)
   )
 end
 
+local function minimenuVisibilityDB()
+  local m = minimapBarDB()
+  m.minimenuVisibility = m.minimenuVisibility or {}
+  return m.minimenuVisibility
+end
+
+local function minimenuDisplayName(frameName)
+  local s = tostring(frameName or ""):gsub("MicroButton$", "")
+  if s == "" then
+    return tostring(frameName)
+  end
+  return s
+end
+
+local function minimenuVisibilityUniqueId(frameName)
+  local s = tostring(frameName or "x"):gsub("[^%w]", "_")
+  if #s > 40 then
+    s = strsub(s, 1, 40)
+  end
+  return "ChukieUi_MM_minimenu_vis_" .. s
+end
+
+local function addMinimenuVisibleCheckbox(category, frameName, tooltip)
+  local function get()
+    return minimenuVisibilityDB()[frameName] ~= false
+  end
+  local function set(v)
+    if v == true or v == 1 then
+      minimenuVisibilityDB()[frameName] = nil
+    else
+      minimenuVisibilityDB()[frameName] = false
+    end
+    refreshMinimapBar()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    minimenuVisibilityUniqueId(frameName),
+    Settings.VarType.Boolean,
+    minimenuDisplayName(frameName),
+    Settings.Default.True,
+    get,
+    set
+  )
+  Settings.CreateCheckbox(
+    category,
+    setting,
+    tooltip
+      or ("Mostrar «" .. minimenuDisplayName(frameName) .. "» en la fila del micromenú del panel derecho.")
+  )
+end
+
 local function addBoolPos(category, uniqueId, key, label, tooltip, defaultOn)
   local function get()
     return minimapPosDB()[key] == true
@@ -507,9 +558,65 @@ function ns.RegisterConfigPanel()
     "ChukieUi_MMBar_minimenuBar",
     "minimenuBarEnabled",
     "Activar segunda fila (minimenú)",
-    "Muestra la barra de micromenú de Blizzard (personaje, hechizos, talentos, logros, hermandad, buscador, colecciones, guía, tienda, novedades, menú…) bajo la barra de addons, alineada al borde derecho del panel. Desmarcar devuelve los botones a la barra inferior por defecto.",
+    "Muestra la fila del micromenú de Blizzard bajo la barra de addons. Desmarcar devuelve los botones a la barra inferior por defecto. Puedes afinar altura, espacio e iconos visibles abajo.",
     true
   )
+  addBoolProxy(
+    minimapCategory,
+    "ChukieUi_MMBar_minimenuMatchAddonH",
+    "minimenuUseAddonRowHeight",
+    "Misma altura de fila que los iconos de addons",
+    "Por defecto la fila del micromenú tiene el mismo alto que la barra de iconos (tamaño + espacio de addons). Desmarcar para usar la altura en píxeles de abajo.",
+    true
+  )
+  addIntSlider(
+    minimapCategory,
+    "ChukieUi_MMBar_minimenuRowH",
+    "minimenuRowHeight",
+    "Altura fila micromenú (px)",
+    "Solo aplica si «Misma altura…» está desmarcado. Altura útil de la fila antes de escalar los botones de Blizzard.",
+    22,
+    64,
+    1,
+    46
+  )
+  addIntSlider(
+    minimapCategory,
+    "ChukieUi_MMBar_minimenuSpacing",
+    "minimenuSpacing",
+    "Espacio entre iconos del micromenú (px)",
+    "Separación horizontal extra entre botones del micromenú (además del ancho escalado de cada botón).",
+    0,
+    16,
+    1,
+    2
+  )
+
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Micromenú: mostrar botones"))
+  ns._mmMinimenuRegistered = {}
+  ns._minimenuVisibilityCategory = minimapCategory
+  if ns.MinimapBar and ns.MinimapBar.GetMinimenuButtonNameList then
+    for _, name in ipairs(ns.MinimapBar:GetMinimenuButtonNameList()) do
+      addMinimenuVisibleCheckbox(minimapCategory, name, nil)
+      ns._mmMinimenuRegistered[name] = true
+    end
+  end
+
+  function ns.AppendMinimenuVisibilityRows()
+    if not ns.configPanelRegistered or not ns._minimenuVisibilityCategory then
+      return
+    end
+    if not ns.MinimapBar or not ns.MinimapBar.GetMinimenuButtonNameList then
+      return
+    end
+    local cat = ns._minimenuVisibilityCategory
+    for _, name in ipairs(ns.MinimapBar:GetMinimenuButtonNameList()) do
+      if not ns._mmMinimenuRegistered[name] then
+        ns._mmMinimenuRegistered[name] = true
+        addMinimenuVisibleCheckbox(cat, name, nil)
+      end
+    end
+  end
 
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Addons (LibDBIcon y detectados)"))
   ns._mmAddonPolicyRegistered = {}
@@ -545,6 +652,9 @@ function ns.OpenConfigPanel()
   if ns.AppendMinimapDiscoveryPolicyRows then
     ns.AppendMinimapDiscoveryPolicyRows()
   end
+  if ns.AppendMinimenuVisibilityRows then
+    ns.AppendMinimenuVisibilityRows()
+  end
   Settings.OpenToCategory(ns.settingsCategoryID)
   return true
 end
@@ -556,6 +666,9 @@ function ns.OpenMinimapConfigPanel()
   if ns.AppendMinimapDiscoveryPolicyRows then
     ns.AppendMinimapDiscoveryPolicyRows()
   end
+  if ns.AppendMinimenuVisibilityRows then
+    ns.AppendMinimenuVisibilityRows()
+  end
   Settings.OpenToCategory(ns.minimapCategoryID)
   return true
 end
@@ -563,6 +676,12 @@ end
 function ns.OpenMinimapButtonsPanel()
   if not ns.minimapButtonsCategoryID then
     return false
+  end
+  if ns.AppendMinimapDiscoveryPolicyRows then
+    ns.AppendMinimapDiscoveryPolicyRows()
+  end
+  if ns.AppendMinimenuVisibilityRows then
+    ns.AppendMinimenuVisibilityRows()
   end
   Settings.OpenToCategory(ns.minimapButtonsCategoryID)
   return true

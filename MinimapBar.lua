@@ -199,6 +199,9 @@ function MB:RestoreMicroMenuButtonsFromChukieBar()
       btn.chukieMicroChukieOwned = nil
       btn.chukieMicroSavedParent = nil
       btn.chukieMicroSavedScale = nil
+      if btn.Show then
+        btn:Show()
+      end
     end
   end
   wipe(list)
@@ -248,7 +251,8 @@ function MB:LayoutMicroMenuEmbedded()
   end
   local mm = self.miniMenuBar
   mm:SetHeight(self:GetMiniMenuBarHeight())
-  local targetH = math.max(40, mm:GetHeight() - 4)
+  local targetH = math.max(18, mm:GetHeight() - 4)
+  local gap = self:GetMiniMenuSpacing()
   local x = 0
   self.microMenuDetached = self.microMenuDetached or {}
   local known = {}
@@ -268,16 +272,23 @@ function MB:LayoutMicroMenuEmbedded()
     end
     btn:SetParent(mm)
     btn.chukieMicroChukieOwned = true
-    btn:SetScale(1)
-    local h0 = btn:GetHeight() or 58
-    local base = btn.chukieMicroSavedScale or 1
-    --- Encajar en altura sin aplastar en una fila tan baja como la de addons (conserva proporción estrecha).
-    local sc = math.min(1.05, targetH / math.max(h0, 20))
-    btn:SetScale(sc * base)
-    btn:ClearAllPoints()
-    btn:SetPoint("LEFT", mm, "LEFT", x, 0)
-    local step = (btn:GetWidth() or 28) + 1
-    x = x + step
+    local n = btn:GetName() or ""
+    if not self:IsMinimenuButtonVisible(n) then
+      btn:SetScale(btn.chukieMicroSavedScale or 1)
+      btn:ClearAllPoints()
+      btn:Hide()
+    else
+      btn:Show()
+      btn:SetScale(1)
+      local h0 = btn:GetHeight() or 58
+      local base = btn.chukieMicroSavedScale or 1
+      local sc = math.min(1.15, targetH / math.max(h0, 16))
+      btn:SetScale(sc * base)
+      btn:ClearAllPoints()
+      btn:SetPoint("LEFT", mm, "LEFT", x, 0)
+      local step = (btn:GetWidth() or 28) + gap
+      x = x + step
+    end
   end
   mm:SetWidth(math.max(x + 2, 48))
 end
@@ -388,10 +399,66 @@ function MB:GetPad()
   return math.max(0, math.min(16, math.floor(v + 0.5)))
 end
 
---- Altura dedicada de la fila del micromenú (más alta que la de addons cuadrados, proporción tipo Blizzard).
+--- Altura de la fila del micromenú: por defecto igual que la barra de iconos (addons).
 function MB:GetMiniMenuBarHeight()
-  local cell, pad = self:GetCell(), self:GetPad()
-  return math.max(46, math.min(58, cell + pad * 2 + 16))
+  local m = barOpts()
+  if m.minimenuUseAddonRowHeight ~= false then
+    return self:GetCell() + self:GetPad() * 2
+  end
+  local h = tonumber(m.minimenuRowHeight)
+  if not h or h < 1 then
+    return self:GetCell() + self:GetPad() * 2
+  end
+  return math.max(22, math.min(64, math.floor(h + 0.5)))
+end
+
+function MB:GetMiniMenuSpacing()
+  local v = tonumber(barOpts().minimenuSpacing)
+  if not v then
+    return 2
+  end
+  return math.max(0, math.min(16, math.floor(v + 0.5)))
+end
+
+function MB:IsMinimenuButtonVisible(frameName)
+  if not frameName or frameName == "" then
+    return true
+  end
+  local t = barOpts().minimenuVisibility
+  if not t then
+    return true
+  end
+  return t[frameName] ~= false
+end
+
+--- Nombres únicos del micromenú (orden del cliente: `MICRO_BUTTONS` si existe).
+function MB:GetMinimenuButtonNameList()
+  local seen, ordered = {}, {}
+  local function add(n)
+    if not n or n == "" or seen[n] or not isBlizzardMicroMenuButtonName(n) then
+      return
+    end
+    seen[n] = true
+    ordered[#ordered + 1] = n
+  end
+  if type(MICRO_BUTTONS) == "table" then
+    for i = 1, #MICRO_BUTTONS do
+      local v = MICRO_BUTTONS[i]
+      local n = type(v) == "string" and v or (type(v) == "table" and v.GetName and v:GetName())
+      if n then
+        add(n)
+      end
+    end
+  end
+  for _, n in ipairs(MICRO_BUTTON_FALLBACK_NAMES) do
+    if _G[n] then
+      add(n)
+    end
+  end
+  for _, btn in ipairs(self:GetMicroMenuButtonFrames()) do
+    add(btn:GetName())
+  end
+  return ordered
 end
 
 local function packPoints(f)
@@ -1417,6 +1484,9 @@ function MB:Refresh()
   self:UpdateDiscoveredOrder()
   if ns.AppendMinimapDiscoveryPolicyRows then
     ns.AppendMinimapDiscoveryPolicyRows()
+  end
+  if ns.AppendMinimenuVisibilityRows then
+    ns.AppendMinimenuVisibilityRows()
   end
   self:ApplyBlizzardStripOrRestore()
   self:ApplyAddonButtonPolicies()

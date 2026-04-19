@@ -23,7 +23,7 @@ local function cloneProfileData(src)
     minimapBar = {},
     minimapPosition = {},
     panels = { rightPanel = {} },
-    widgets = { minimapBar = {} },
+    widgets = { minimapBar = {}, rightPanelWidgets = {} },
     cvars = {},
   }
   for k, v in pairs(src.minimapPosition or {}) do
@@ -58,6 +58,9 @@ local function cloneProfileData(src)
     t.widgets.minimapBar[k] = v
     t.minimapBar[k] = v
   end
+  for k, v in pairs((((src.widgets or {}).rightPanelWidgets) or {})) do
+    t.widgets.rightPanelWidgets[k] = v
+  end
   for k, v in pairs(src.cvars or {}) do
     t.cvars[k] = v
   end
@@ -69,8 +72,10 @@ local function ensurePanelWidgetSchema(p)
   p.widgets = p.widgets or {}
   local rightPanel = p.panels.rightPanel or p.minimapPosition or {}
   local minimapBar = p.widgets.minimapBar or p.minimapBar or {}
+  local rightWidgets = p.widgets.rightPanelWidgets or {}
   p.panels.rightPanel = rightPanel
   p.widgets.minimapBar = minimapBar
+  p.widgets.rightPanelWidgets = rightWidgets
   --- Compatibilidad: rutas legacy apuntan al mismo objeto.
   p.minimapPosition = rightPanel
   p.minimapBar = minimapBar
@@ -117,6 +122,12 @@ function ns.Profile:GetMinimapBarModel()
   local p = self:GetActive()
   ensurePanelWidgetSchema(p)
   return p.widgets.minimapBar
+end
+
+function ns.Profile:GetRightPanelWidgetsModel()
+  local p = self:GetActive()
+  ensurePanelWidgetSchema(p)
+  return p.widgets.rightPanelWidgets
 end
 
 function ns.Profile:GetCurrentName()

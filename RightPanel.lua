@@ -962,6 +962,9 @@ function MP:Apply()
   if self:WantsRightPanel() and self._rightPanelFrame then
     self:SyncRightPanelTreeLayout()
     self:EnforceMinimapInCenterTopArea()
+    if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
+      ns.RightPanelWidgets:Refresh()
+    end
   end
   self:UpdateDebugRightPanelOutline()
   if isDebugBoundsEnabled(self:DB()) then

@@ -25,6 +25,18 @@ local defaults = {
   },
   widgets = {
     minimapBar = {},
+    rightPanelWidgets = {
+      enabled = true,
+      useMasque = true,
+      gridCellSize = 46,
+      gridGap = 4,
+      sidePad = 8,
+      topPad = 6,
+      dateHeight = 24,
+      dateBottomPad = 6,
+      dateFontFace = 0,
+      dateFontSize = 0,
+    },
   },
   minimapBar = {
     enabled = true,
@@ -129,6 +141,9 @@ function ns.OnProfileChanged()
   end
   if ns.MinimapBar and ns.MinimapBar.Refresh then
     ns.MinimapBar:Refresh()
+  end
+  if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
+    ns.RightPanelWidgets:Refresh()
   end
 end
 

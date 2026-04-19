@@ -28,11 +28,24 @@ local function minimapPosDB()
   return p.minimapPosition
 end
 
+local function rightWidgetsDB()
+  if ns.Profile and ns.Profile.GetRightPanelWidgetsModel then
+    return ns.Profile:GetRightPanelWidgetsModel()
+  end
+  local p = ns.Profile:GetActive()
+  p.widgets = p.widgets or {}
+  p.widgets.rightPanelWidgets = p.widgets.rightPanelWidgets or {}
+  return p.widgets.rightPanelWidgets
+end
+
 local function refreshRightPanelLayout()
   if ns.RightPanel and ns.RightPanel.Apply then
     ns.RightPanel:Apply()
   end
   refreshMinimapBar()
+  if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
+    ns.RightPanelWidgets:Refresh()
+  end
 end
 
 local function addBoolProxy(category, uniqueId, key, label, tooltip, defaultOn)
@@ -344,6 +357,97 @@ local function addIntSliderPos(category, uniqueId, key, label, tooltip, minV, ma
   Settings.CreateSlider(category, setting, options, tooltip)
 end
 
+local function addBoolRightWidget(category, uniqueId, key, label, tooltip, defaultOn)
+  local function get()
+    return rightWidgetsDB()[key] ~= false
+  end
+  local function set(v)
+    rightWidgetsDB()[key] = (v == true or v == 1) and true or false
+    refreshRightPanelLayout()
+  end
+  local defaultToken = defaultOn and Settings.Default.True or Settings.Default.False
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Boolean,
+    label,
+    defaultToken,
+    get,
+    set
+  )
+  Settings.CreateCheckbox(category, setting, tooltip)
+end
+
+local function addIntSliderRightWidget(category, uniqueId, key, label, tooltip, minV, maxV, step, defaultNum)
+  local function get()
+    local v = tonumber(rightWidgetsDB()[key])
+    if not v then
+      return defaultNum
+    end
+    return math.max(minV, math.min(maxV, v))
+  end
+  local function set(v)
+    rightWidgetsDB()[key] = math.floor(v + 0.5)
+    refreshRightPanelLayout()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Number,
+    label,
+    defaultNum,
+    get,
+    set
+  )
+  local options = Settings.CreateSliderOptions(minV, maxV, step)
+  Settings.CreateSlider(category, setting, options, tooltip)
+end
+
+local DATE_FONT_AUTO, DATE_FONT_FRIZ, DATE_FONT_ARIAL, DATE_FONT_MORPHEUS, DATE_FONT_SKURRI = 0, 1, 2, 3, 4
+
+local function dateFontFaceDropdownData()
+  local c = Settings.CreateControlTextContainer()
+  c:Add(DATE_FONT_AUTO, "Por defecto del juego")
+  c:Add(DATE_FONT_FRIZ, "Frizqt")
+  c:Add(DATE_FONT_ARIAL, "Arial")
+  c:Add(DATE_FONT_MORPHEUS, "Morpheus")
+  c:Add(DATE_FONT_SKURRI, "Skurri")
+  return c:GetData()
+end
+
+local function addDateFontFaceDropdown(category)
+  local function get()
+    local v = tonumber(rightWidgetsDB().dateFontFace)
+    if v == DATE_FONT_FRIZ or v == DATE_FONT_ARIAL or v == DATE_FONT_MORPHEUS or v == DATE_FONT_SKURRI then
+      return v
+    end
+    return DATE_FONT_AUTO
+  end
+  local function set(v)
+    v = tonumber(v)
+    if v ~= DATE_FONT_FRIZ and v ~= DATE_FONT_ARIAL and v ~= DATE_FONT_MORPHEUS and v ~= DATE_FONT_SKURRI then
+      v = DATE_FONT_AUTO
+    end
+    rightWidgetsDB().dateFontFace = v
+    refreshRightPanelLayout()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_RPW_dateFontFace",
+    Settings.VarType.Number,
+    "Tipografía Fecha/Hora",
+    DATE_FONT_AUTO,
+    get,
+    set
+  )
+  Settings.CreateDropdown(
+    category,
+    setting,
+    dateFontFaceDropdownData,
+    "Fuente de texto para el botón de fecha/hora del panel azul."
+  )
+end
+
 local ZOOM_PREF_AUTO, ZOOM_PREF_MAX_OUT, ZOOM_PREF_MAX_IN = 0, 1, 2
 
 local function minimapZoomPrefDropdownData()
@@ -647,6 +751,69 @@ function ns.RegisterConfigPanel()
     24,
     1,
     2
+  )
+
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Panel azul: widgets de sistema"))
+  addBoolRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_enabled",
+    "enabled",
+    "Activar widgets del panel azul",
+    "Muestra la grilla 2x4 de widgets proxy y el boton ancho de fecha/hora en el bloque azul izquierdo del panel derecho.",
+    true
+  )
+  addBoolRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_useMasque",
+    "useMasque",
+    "Masque en widgets del panel azul",
+    "Aplica Masque al grupo «Chukie UI» -> «RightPanelWidgets».",
+    true
+  )
+  addIntSliderRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_gridCell",
+    "gridCellSize",
+    "Tamaño de celda de grilla (px)",
+    "Tamaño base de cada boton de la grilla del panel azul. Escala con el slider global.",
+    14,
+    120,
+    1,
+    46
+  )
+  addIntSliderRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_gridGap",
+    "gridGap",
+    "Separación de grilla (px)",
+    "Espacio horizontal y vertical entre botones de la grilla del panel azul.",
+    0,
+    20,
+    1,
+    4
+  )
+  addIntSliderRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_dateHeight",
+    "dateHeight",
+    "Alto botón Fecha/Hora (px)",
+    "Altura del boton ancho inferior de fecha/hora en el panel azul.",
+    18,
+    46,
+    1,
+    24
+  )
+  addDateFontFaceDropdown(minimapCategory)
+  addIntSliderRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_dateFontSize",
+    "dateFontSize",
+    "Tamaño fuente Fecha/Hora",
+    "Tamaño de texto del botón fecha/hora. Si lo dejas en 0 usa tamaño automático según altura del botón.",
+    0,
+    32,
+    1,
+    0
   )
 
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Micromenú: mostrar botones"))

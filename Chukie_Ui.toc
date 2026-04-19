@@ -10,4 +10,5 @@ Profiles.lua
 PanelCore.lua
 RightPanel.lua
 MinimapBar.lua
+RightPanelWidgets.lua
 ConfigPanel.lua

@@ -159,34 +159,6 @@ local function getPanelScalePct()
   return 100
 end
 
-local function isMicroMenuDebugEnabled()
-  if not ns.RightPanel or not ns.RightPanel.DB then
-    return false
-  end
-  local db = ns.RightPanel:DB()
-  local v = db and db.debugRightPanelBounds
-  return v == true or v == 1
-end
-
-local function microMenuDebugPrint(fmt, ...)
-  if not isMicroMenuDebugEnabled() then
-    return
-  end
-  local ok, msg = pcall(string.format, fmt, ...)
-  if not ok then
-    msg = tostring(fmt)
-  end
-  print("|cff33ff99ChukieUi|r " .. msg)
-end
-
-local function absNum(v)
-  v = tonumber(v) or 0
-  if v < 0 then
-    return -v
-  end
-  return v
-end
-
 local ADDON_BAR_GAP_BELOW_MINIMAP = 1
 local MINIMENU_EXTRA_HEIGHT = 3
 local MINIMENU_TOP_RAISE = 3
@@ -401,61 +373,8 @@ function MB:LayoutMicroMenuEmbedded()
     width = totalContentWidth + 2
   end
   mm:SetWidth(math.max(width, 48))
-  self._microMenuDebug = {
-    visibleCount = visibleCount,
-    targetW = targetW,
-    gap = gap,
-    commonScale = commonScale,
-    baseL = baseL,
-    baseR = baseR,
-    width = mm:GetWidth() or width,
-  }
-  microMenuDebugPrint(
-    "MicroLayout visible=%d targetW=%.2f gap=%.2f scale=%.3f insets(L=%.2f,R=%.2f) calcWidth=%.2f finalWidth=%.2f",
-    visibleCount,
-    targetW,
-    gap,
-    commonScale,
-    baseL,
-    baseR,
-    width,
-    mm:GetWidth() or width
-  )
   self:PositionMicromenuCentered()
   self:MasqueApplyMicromenu()
-end
-
-function MB:GetMicroMenuVisualCenterDelta()
-  if not self.miniMenuBar then
-    return 0
-  end
-  local mm = self.miniMenuBar
-  local mmLeft = mm:GetLeft()
-  local mmW = mm:GetWidth() or 0
-  if not mmLeft or mmW <= 0 then
-    return 0
-  end
-  local minL, maxR = nil, nil
-  for _, btn in ipairs(self:GetMicroMenuButtonFrames()) do
-    if btn and btn:GetParent() == mm and btn:IsShown() then
-      local l = btn:GetLeft()
-      local r = btn:GetRight()
-      if l and r then
-        if not minL or l < minL then
-          minL = l
-        end
-        if not maxR or r > maxR then
-          maxR = r
-        end
-      end
-    end
-  end
-  if not minL or not maxR then
-    return 0
-  end
-  local visualCenter = (minL + maxR) / 2
-  local containerCenter = mmLeft + (mmW / 2)
-  return visualCenter - containerCenter
 end
 
 --- Layout unificado: barras siempre centradas (sin offset manual separado).
@@ -511,25 +430,11 @@ function MB:PositionMicromenuCentered()
         local yOff = (barBottom - refTop) - self:GetMinimenuGapBelowAddonBar() + MINIMENU_TOP_RAISE
         --- Centrado absoluto por eje X contra el bloque central.
         mm:SetPoint("TOP", ref, "TOP", 0, yOff)
-        local refLeft = ref:GetLeft()
-        local mmLeft = mm:GetLeft()
-        local centerDelta = nil
-        if refLeft and mmLeft then
-          centerDelta = ((mmLeft + (mmW / 2)) - (refLeft + (refW / 2)))
-        end
-        microMenuDebugPrint(
-          "MicroPos TOP refW=%.2f mmW=%.2f yOff=%.2f centerDelta=%s",
-          refW,
-          mmW,
-          yOff,
-          centerDelta and string.format("%.2f", centerDelta) or "n/a"
-        )
         return
       end
     end
     --- Fallback: mantener debajo de la barra.
     mm:SetPoint("TOP", self.bar, "BOTTOM", 0, -self:GetMinimenuGapBelowAddonBar() + MINIMENU_TOP_RAISE)
-    microMenuDebugPrint("MicroPos fallback TOP self.bar")
   else
     local ref = getRightPanelBaseFrame()
     if not ref then
@@ -539,11 +444,9 @@ function MB:PositionMicromenuCentered()
     local mmW = mm:GetWidth() or 0
     if refW > 0 and mmW > 0 then
       mm:SetPoint("BOTTOM", ref, "BOTTOM", 0, 2)
-      microMenuDebugPrint("MicroPos BOTTOM refW=%.2f mmW=%.2f", refW, mmW)
       return
     end
     mm:SetPoint("BOTTOM", ref, "BOTTOM", 0, 2)
-    microMenuDebugPrint("MicroPos fallback BOTTOM center")
   end
 end
 

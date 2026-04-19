@@ -15,6 +15,7 @@ foreach ($f in @(
     "Profiles.lua",
     "PanelCore.lua",
     "RightPanel.lua",
+    "RightStrip.lua",
     "MinimapBar.lua",
     "TeleportCatalog.lua",
     "DynamicReservedSlots.lua",

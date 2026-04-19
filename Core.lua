@@ -30,6 +30,11 @@ local defaults = {
       minimapScalePercent = 100,
       minimapZoomPreference = 0,
       debugRightPanelBounds = false,
+      -- Sector amarillo (RightStrip): apariencia de grilla inferior.
+      rightStripUseMasque = false,
+      rightStripGridScalePercent = 100,
+      rightStripFontFace = 0,
+      rightStripFontSize = 0, -- 0 = automático.
     },
   },
   widgets = {
@@ -107,6 +112,11 @@ local defaults = {
     minimapZoomPreference = 0,
     --- Dibuja un recuadro verde sobre los bordes del MinimapCluster (panel derecho).
     debugRightPanelBounds = false,
+    -- Sector amarillo (RightStrip): apariencia de grilla inferior.
+    rightStripUseMasque = false,
+    rightStripGridScalePercent = 100,
+    rightStripFontFace = 0,
+    rightStripFontSize = 0,
   },
   cvars = {
     lootUnderMouse = "1",

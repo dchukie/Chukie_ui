@@ -551,6 +551,39 @@ local function addDateFontFaceDropdown(category)
   )
 end
 
+local function addRightStripFontFaceDropdown(category)
+  local function get()
+    local v = tonumber(minimapPosDB().rightStripFontFace)
+    if v == DATE_FONT_FRIZ or v == DATE_FONT_ARIAL or v == DATE_FONT_MORPHEUS or v == DATE_FONT_SKURRI then
+      return v
+    end
+    return DATE_FONT_AUTO
+  end
+  local function set(v)
+    v = tonumber(v)
+    if v ~= DATE_FONT_FRIZ and v ~= DATE_FONT_ARIAL and v ~= DATE_FONT_MORPHEUS and v ~= DATE_FONT_SKURRI then
+      v = DATE_FONT_AUTO
+    end
+    minimapPosDB().rightStripFontFace = v
+    refreshRightPanelLayout()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_MMPos_rightStripFontFace",
+    Settings.VarType.Number,
+    "Tipografía sector amarillo",
+    DATE_FONT_AUTO,
+    get,
+    set
+  )
+  Settings.CreateDropdown(
+    category,
+    setting,
+    dateFontFaceDropdownData,
+    "Fuente de texto para la grilla inferior del sector amarillo (oro + bolsas)."
+  )
+end
+
 local ZOOM_PREF_AUTO, ZOOM_PREF_MAX_OUT, ZOOM_PREF_MAX_IN = 0, 1, 2
 
 local function minimapZoomPrefDropdownData()
@@ -754,6 +787,39 @@ function ns.RegisterConfigPanel()
   )
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Flecha del jugador"))
   addPlayerArrowSettings(minimapCategory)
+
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Sector amarillo (grilla inferior)"))
+  addBoolPos(
+    minimapCategory,
+    "ChukieUi_MMPos_rightStripUseMasque",
+    "rightStripUseMasque",
+    "Masque en sector amarillo",
+    "Aplica estilo Masque al botón de la grilla inferior del sector amarillo (si Masque está instalado).",
+    false
+  )
+  addIntSliderPos(
+    minimapCategory,
+    "ChukieUi_MMPos_rightStripGridScale",
+    "rightStripGridScalePercent",
+    "Tamaño de grilla sector amarillo (%)",
+    "Escala visual de la grilla inferior (iconos + espaciado).",
+    60,
+    180,
+    1,
+    100
+  )
+  addRightStripFontFaceDropdown(minimapCategory)
+  addIntSliderPos(
+    minimapCategory,
+    "ChukieUi_MMPos_rightStripFontSize",
+    "rightStripFontSize",
+    "Tamaño fuente sector amarillo",
+    "Tamaño de texto de la grilla inferior. 0 = automático.",
+    0,
+    32,
+    1,
+    0
+  )
 
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Barra de addons"))
 

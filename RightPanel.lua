@@ -965,6 +965,9 @@ function MP:Apply()
     if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
       ns.RightPanelWidgets:Refresh()
     end
+    if ns.RightStrip and ns.RightStrip.Layout then
+      ns.RightStrip:Layout()
+    end
   end
   self:UpdateDebugRightPanelOutline()
   if isDebugBoundsEnabled(self:DB()) then

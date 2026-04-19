@@ -2064,8 +2064,12 @@ function RW:ApplyTeleportReservedVisuals()
   local sec = slot._tpDefaultSecure
   slot._tpCooldownEntry = defaultEntry
   if defaultEntry and sec then
-    sec:Show()
-    applyTeleportSecureAttributes(sec, defaultEntry)
+    if not InCombatLockdown() then
+      sec:Show()
+      applyTeleportSecureAttributes(sec, defaultEntry)
+    else
+      self._teleportRegenPending = true
+    end
     applyIconState(slot, {
       texture = teleportDefaultIconTexture(defaultEntry),
       desat = false,
@@ -2078,10 +2082,10 @@ function RW:ApplyTeleportReservedVisuals()
     if sec then
       if not InCombatLockdown() then
         clearTeleportSecureAttributes(sec)
+        sec:Hide()
       else
         self._teleportRegenPending = true
       end
-      sec:Hide()
     end
     applyIconState(slot, {
       texture = ICONS.teleport,

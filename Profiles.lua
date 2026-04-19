@@ -59,7 +59,15 @@ local function cloneProfileData(src)
     t.minimapBar[k] = v
   end
   for k, v in pairs((((src.widgets or {}).rightPanelWidgets) or {})) do
-    t.widgets.rightPanelWidgets[k] = v
+    if k == "teleportGridVisibility" and type(v) == "table" then
+      local np = {}
+      for pk, pv in pairs(v) do
+        np[pk] = pv
+      end
+      t.widgets.rightPanelWidgets[k] = np
+    else
+      t.widgets.rightPanelWidgets[k] = v
+    end
   end
   for k, v in pairs(src.cvars or {}) do
     t.cvars[k] = v

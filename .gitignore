@@ -12,5 +12,5 @@ Thumbs.db
 Desktop.ini
 *.lnk
 
-# Opcional: hoja fuente muy grande (descomenta si no quieres versionarla)
-# assets/source_arrows.png
+# Hoja fuente local para tools/CropMinimapArrows.ps1 (no obligatoria en el repo)
+assets/

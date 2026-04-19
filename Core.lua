@@ -4,6 +4,15 @@
 
 local ADDON_NAME, ns = ...
 
+--- Textos en el panel de teclas (Bindings.xml en la raíz; no incluir en el .toc).
+--- El cuerpo de cada <Binding> se ejecuta como Lua: debe ser código válido (p. ej. solo comentarios «-- …»), no texto suelto ni un «0» suelto.
+_G["BINDING_NAME_CLICK ChukieDynAct2:LeftButton"] =
+  "Chukie UI - ranura dinámica 2 (extra / zona / misión)"
+_G["BINDING_NAME_CLICK ChukieDynAct3:LeftButton"] =
+  "Chukie UI - ranura dinámica 3 (extra / zona / misión)"
+_G["BINDING_NAME_CLICK ChukieDynAct4:LeftButton"] =
+  "Chukie UI - ranura dinámica 4 (extra / zona / misión)"
+
 local defaults = {
   enabled = true,
   panels = {
@@ -36,6 +45,14 @@ local defaults = {
       dateBottomPad = 6,
       dateFontFace = 0,
       dateFontSize = 0,
+      --- Teletransporte: 0 = automático; 1..N = índice en TeleportCatalog.GetList().
+      teleportDefaultIndex = 0,
+      --- Compatibilidad antigua (opcional); si no hay índice, se puede usar esta clave.
+      teleportDefaultKey = nil,
+      --- Por key del catálogo: false = no mostrar en grilla (clic derecho); nil/true = permitir si es válida.
+      teleportGridVisibility = {},
+      --- Ranuras 2–4: acción extra / habilidad de zona / ítem de misión rastreada (Bindings.xml).
+      dynamicActionSlotsEnabled = true,
     },
   },
   minimapBar = {

@@ -415,6 +415,109 @@ local function dateFontFaceDropdownData()
   return c:GetData()
 end
 
+local function teleportGridVisibilityDB()
+  local d = rightWidgetsDB()
+  d.teleportGridVisibility = d.teleportGridVisibility or {}
+  return d.teleportGridVisibility
+end
+
+local function addTeleportGridVisibilityCheckbox(category, key, label)
+  local uid = "ChukieUi_RPW_tpvis_" .. tostring(key or "x"):gsub("[^%w]", "_")
+  if #uid > 48 then
+    uid = strsub(uid, 1, 48)
+  end
+  local function get()
+    return teleportGridVisibilityDB()[key] ~= false
+  end
+  local function set(v)
+    if v == true or v == 1 then
+      teleportGridVisibilityDB()[key] = nil
+    else
+      teleportGridVisibilityDB()[key] = false
+    end
+    refreshRightPanelLayout()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uid,
+    Settings.VarType.Boolean,
+    "Lista: " .. tostring(label or key),
+    Settings.Default.True,
+    get,
+    set
+  )
+  Settings.CreateCheckbox(
+    category,
+    setting,
+    "Si está desmarcado, esta opción no aparece en el modal del clic derecho sobre la celda de teletransporte (panel azul). Sigue pudiendo elegirse como «default» del clic izquierdo en el desplegable de arriba si es válida para tu personaje."
+  )
+end
+
+local function addTeleportDefaultDropdown(category)
+  local function catalogList()
+    if ns.TeleportCatalog and ns.TeleportCatalog.GetList then
+      return ns.TeleportCatalog.GetList()
+    end
+    return {}
+  end
+  local function teleportDefaultDropdownData()
+    local c = Settings.CreateControlTextContainer()
+    c:Add(0, "(Automático: primera válida)")
+    for i, e in ipairs(catalogList()) do
+      c:Add(i, e.label)
+    end
+    return c:GetData()
+  end
+  local function get()
+    local list = catalogList()
+    local v = tonumber(rightWidgetsDB().teleportDefaultIndex)
+    if v and v >= 1 and v <= #list then
+      return math.floor(v)
+    end
+    local k = rightWidgetsDB().teleportDefaultKey
+    if type(k) == "string" and k ~= "" then
+      for i = 1, #list do
+        if list[i].key == k then
+          return i
+        end
+      end
+    end
+    return 0
+  end
+  local function set(v)
+    v = tonumber(v)
+    if not v or v < 0 then
+      v = 0
+    end
+    local list = catalogList()
+    if v > #list then
+      v = 0
+    end
+    rightWidgetsDB().teleportDefaultIndex = math.floor(v)
+    if v >= 1 and list[v] then
+      rightWidgetsDB().teleportDefaultKey = list[v].key
+    else
+      rightWidgetsDB().teleportDefaultKey = nil
+    end
+    refreshRightPanelLayout()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_RPW_teleportDefaultIndex",
+    Settings.VarType.Number,
+    "Teletransporte: clic izquierdo (default)",
+    0,
+    get,
+    set
+  )
+  Settings.CreateDropdown(
+    category,
+    setting,
+    teleportDefaultDropdownData,
+    "Clic izquierdo en el icono del panel azul: ejecuta esta entrada (botón seguro). «(Automático)» = la primera del catálogo que sea válida para tu PJ tras quitar duplicados (mismo CD y mismo destino). El desplegable usa números por compatibilidad con el panel de opciones de WoW 12.x."
+  )
+end
+
 local function addDateFontFaceDropdown(category)
   local function get()
     local v = tonumber(rightWidgetsDB().dateFontFace)
@@ -814,6 +917,31 @@ function ns.RegisterConfigPanel()
     32,
     1,
     0
+  )
+
+  minimapLayout:AddInitializer(
+    CreateSettingsListSectionHeaderInitializer(
+      "Teletransporte (panel azul, celda reservada 1): qué es cada cosa"
+    )
+  )
+  addTeleportDefaultDropdown(minimapCategory)
+  if ns.TeleportCatalog and ns.TeleportCatalog.GetList then
+    for _, e in ipairs(ns.TeleportCatalog.GetList()) do
+      addTeleportGridVisibilityCheckbox(minimapCategory, e.key, e.label)
+    end
+  end
+
+  minimapLayout:AddInitializer(
+    CreateSettingsListSectionHeaderInitializer("Ranuras dinámicas (celdas reservadas 2, 3 y 4)")
+  )
+  addBoolRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_dynamicActionSlotsEnabled",
+    "dynamicActionSlotsEnabled",
+    "Activar detección automática",
+    "Rellena esas tres celdas en orden fijo: (1) botón de acción extra, (2) habilidad de zona del jugador, (3) ítems especiales de misiones que tengas rastreadas y que estén en la bolsa. "
+      .. "Las teclas no enlazan a un hechizo concreto: asignan un clic izquierdo al botón seguro de cada celda. Configúralas en Esc → Controles → Teclas de acción rápida → categoría «Add-ons» (tres líneas «Chukie UI - ranura dinámica 2/3/4»).",
+    true
   )
 
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Micromenú: mostrar botones"))

@@ -8,46 +8,50 @@ Copia la carpeta `Chukie_Ui` en:
 
 `_retail_\Interface\AddOns\`
 
-Activa **Chukie UI** en el selector de addons. Opcional: **Masque**.
+Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueUI** (dependencias opcionales declaradas en el `.toc`).
 
 ## Contenido principal
 
-- Minimapa: posición, escala, rotación (`rotateMinimap`), flecha del jugador, zoom preferido (límites del motor).
-- Barra de iconos con proxies (LibDBIcon, etc.) y Masque.
-- Opciones: *Esc → Opciones → AddOns → Chukie UI*.
+| Área | Descripción |
+|------|-------------|
+| **Minimapa** | Posición del cluster, escala, `rotateMinimap`, flecha del jugador (modos por defecto / fina / ruta personalizada), zoom preferido dentro de los límites del motor. |
+| **Barra de iconos** | Proxies (LibDBIcon, etc.), política por botón, Masque, micromenú configurable. |
+| **Panel derecho** | `PanelCore.lua` + `RightPanel.lua`: host del minimapa y rejilla de widgets. |
+| **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte (`TeleportCatalog.lua`), ranuras dinámicas 2–4 (`DynamicReservedSlots.lua`). |
+| **Opciones** | *Esc → Opciones → AddOns → Chukie UI* (`ConfigPanel.lua`, API Settings de Retail). |
 
-## Publicar en GitHub (desde tu PC)
+## Archivos que carga el cliente
 
-1. **Instala [Git for Windows](https://git-scm.com/download/win)** y abre **Git Bash** o PowerShell donde `git` funcione.
+Orden en `Chukie_Ui.toc`: `Core.lua`, `Profiles.lua`, `PanelCore.lua`, `RightPanel.lua`, `MinimapBar.lua`, `TeleportCatalog.lua`, `DynamicReservedSlots.lua`, `RightPanelWidgets.lua`, `ConfigPanel.lua`.
 
-2. En [GitHub](https://github.com/new) crea un repositorio **vacío** (sin README ni .gitignore si vas a subir este proyecto tal cual), por ejemplo `Chukie_Ui`.
+- **`Bindings.xml`** (raíz del addon): define enlaces de teclado para las ranuras dinámicas seguras (`ChukieDynAct2` … `ChukieDynAct4`). **No** debe incluirse en el `.toc` (el cliente lo cargaría como Lua). Los textos visibles en *Controles → Teclas rápidas* se asignan en `Core.lua` (`BINDING_NAME_CLICK …`).
+- **`Media/`**: PNG/TGA referenciados por ruta desde Lua; **no** van en el `.toc`.
 
-3. En la carpeta del addon ejecuta (cambia `TU_USUARIO` y el nombre del repo si hace falta):
+## Ranuras dinámicas (reservadas 2–4)
+
+Prioridad aproximada: acción extra → habilidad de zona → ítems especiales de misiones rastreadas. Se pueden enlazar teclas en **Controles → Teclas rápidas → Add-ons**. Opción en el panel del addon para activar o desactivar el comportamiento.
+
+## Documentación adicional
+
+- `docs/WoW1201_Opciones_Addons.md` — API de opciones Retail y convenciones del proyecto.
+- `docs/ESTADO_Y_RESPALDO.md` — inventario de archivos, limitaciones y empaquetado ZIP.
+- `releases/README.txt` — uso de `pack_backup.ps1`.
+
+## Herramientas (desarrollo)
+
+- `tools/CropMinimapArrows.ps1` — recorta una hoja fuente (`assets/source_arrows.png`, local, no obligatoria en el repo) y genera flechas del jugador en `Media/`.
+- `releases/pack_backup.ps1` — genera un ZIP de distribución (misma estructura que `AddOns\Chukie_Ui`).
+
+## Publicar en GitHub
+
+Si el repositorio ya existe con remoto `origin`:
 
 ```bash
 cd "/c/Program Files (x86)/World of Warcraft/_retail_/Interface/AddOns/Chukie_Ui"
-git init
-git add .
-git commit -m "Initial commit: Chukie UI"
-git branch -M main
-git remote add origin https://github.com/dchukie/Chukie_ui.git
-git push -u origin main
+git add -A
+git status
+git commit -m "Descripción del cambio"
+git push -u origin dev
 ```
 
-Si GitHub exige autenticación, usa un **Personal Access Token** como contraseña (no la contraseña de la cuenta) o configura **SSH** y usa `git@github.com:TU_USUARIO/Chukie_Ui.git`.
-
-### Alternativa: GitHub CLI
-
-Si tienes [`gh`](https://cli.github.com/) autenticado:
-
-```bash
-cd "/c/Program Files (x86)/World of Warcraft/_retail_/Interface/AddOns/Chukie_Ui"
-git init && git add . && git commit -m "Initial commit: Chukie UI"
-gh repo create Chukie_Ui --private --source=. --remote=origin --push
-```
-
-Ajusta `--public` o `--private` según prefieras.
-
-## Nota sobre `Media/`
-
-Las texturas PNG de `Media/` **no** deben listarse en el `.toc` (el cliente las cargaría como Lua/XML). Se referencian por ruta desde Lua (`SetPlayerTexture`, etc.).
+(Ajusta la rama si usas `main` u otra.) Para crear el repo desde cero, sigue las instrucciones genéricas en la documentación de GitHub o usa `gh repo create`.

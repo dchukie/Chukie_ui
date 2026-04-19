@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Bindings>
+  <Binding name="CLICK ChukieDynAct2:LeftButton" header="ADDONS">
+-- noop (texto visible: BINDING_NAME_CLICK en Core.lua)
+  </Binding>
+  <Binding name="CLICK ChukieDynAct3:LeftButton">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieDynAct4:LeftButton">
+-- noop
+  </Binding>
+</Bindings>

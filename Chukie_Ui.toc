@@ -10,5 +10,7 @@ Profiles.lua
 PanelCore.lua
 RightPanel.lua
 MinimapBar.lua
+TeleportCatalog.lua
+DynamicReservedSlots.lua
 RightPanelWidgets.lua
 ConfigPanel.lua

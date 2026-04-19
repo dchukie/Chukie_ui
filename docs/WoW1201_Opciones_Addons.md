@@ -124,4 +124,10 @@ Sirve para UI totalmente custom. **No** reutilices plantillas `InterfaceOptions*
 - **`ChukieUiDB.profiles`**: tabla `{ [nombre] = { enabled, minimapBar = {...}, cvars = {...} } }`. El perfil **`Default`** es el que recibe la migración desde el formato antiguo y los valores por defecto del addon.
 - Las opciones de juego **no** van duplicadas en la raíz de `ChukieUiDB`: todo lo configurable vive dentro del perfil activo salvo `currentProfile` y `profiles`.
 
+### `Bindings.xml` (teclas de ranuras dinámicas)
+
+- El archivo vive en la **raíz** del addon junto al `.toc`, pero **no** debe listarse en el `.toc` (el cliente lo trataría como Lua/XML de carga distinta).
+- El **cuerpo** de cada nodo `<Binding>` se evalúa como **Lua**: debe ser código válido (p. ej. solo `-- noop`), no texto suelto ni literales sueltos que no formen un chunk válido.
+- Los textos que ves en *Controles → Teclas rápidas* se definen en Lua con `_G["BINDING_NAME_CLICK NombreMarco:LeftButton"] = "…"` (en este proyecto: `Core.lua`).
+
 Última revisión orientada a **interface 120001** (documento pensado para ir afinándolo cuando cambie la API en parches posteriores).

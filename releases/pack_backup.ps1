@@ -8,12 +8,17 @@ New-Item -ItemType Directory -Path $pkg -Force | Out-Null
 $destDir = $PSScriptRoot
 foreach ($f in @(
     "Chukie_Ui.toc",
+    "Bindings.xml",
     "README.md",
     ".gitignore",
     "Core.lua",
     "Profiles.lua",
+    "PanelCore.lua",
     "RightPanel.lua",
     "MinimapBar.lua",
+    "TeleportCatalog.lua",
+    "DynamicReservedSlots.lua",
+    "RightPanelWidgets.lua",
     "ConfigPanel.lua"
   )) {
   $srcF = Join-Path $root $f

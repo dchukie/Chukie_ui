@@ -12,7 +12,7 @@ foreach ($f in @(
     ".gitignore",
     "Core.lua",
     "Profiles.lua",
-    "MinimapPosition.lua",
+    "RightPanel.lua",
     "MinimapBar.lua",
     "ConfigPanel.lua"
   )) {

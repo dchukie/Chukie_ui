@@ -22,10 +22,13 @@ local function cloneProfileData(src)
     enabled = src.enabled,
     minimapBar = {},
     minimapPosition = {},
+    panels = { rightPanel = {} },
+    widgets = { minimapBar = {} },
     cvars = {},
   }
   for k, v in pairs(src.minimapPosition or {}) do
     t.minimapPosition[k] = v
+    t.panels.rightPanel[k] = v
   end
   for k, v in pairs(src.minimapBar or {}) do
     if (k == "buttonPolicy" or k == "minimenuVisibility") and type(v) == "table" then
@@ -34,20 +37,43 @@ local function cloneProfileData(src)
         np[pk] = pv
       end
       t.minimapBar[k] = np
+      t.widgets.minimapBar[k] = np
     elseif k == "discoveredOrder" and type(v) == "table" then
       local no = {}
       for i = 1, #v do
         no[i] = v[i]
       end
       t.minimapBar[k] = no
+      t.widgets.minimapBar[k] = no
     else
       t.minimapBar[k] = v
+      t.widgets.minimapBar[k] = v
     end
+  end
+  for k, v in pairs((((src.panels or {}).rightPanel) or {})) do
+    t.panels.rightPanel[k] = v
+    t.minimapPosition[k] = v
+  end
+  for k, v in pairs((((src.widgets or {}).minimapBar) or {})) do
+    t.widgets.minimapBar[k] = v
+    t.minimapBar[k] = v
   end
   for k, v in pairs(src.cvars or {}) do
     t.cvars[k] = v
   end
   return t
+end
+
+local function ensurePanelWidgetSchema(p)
+  p.panels = p.panels or {}
+  p.widgets = p.widgets or {}
+  local rightPanel = p.panels.rightPanel or p.minimapPosition or {}
+  local minimapBar = p.widgets.minimapBar or p.minimapBar or {}
+  p.panels.rightPanel = rightPanel
+  p.widgets.minimapBar = minimapBar
+  --- Compatibilidad: rutas legacy apuntan al mismo objeto.
+  p.minimapPosition = rightPanel
+  p.minimapBar = minimapBar
 end
 
 function ns.Profile:Migrate()
@@ -76,9 +102,21 @@ function ns.Profile:GetActive()
     ChukieUiDB.currentProfile = DEFAULT_NAME
     p = ChukieUiDB.profiles[DEFAULT_NAME]
   end
-  p.minimapBar = p.minimapBar or {}
+  ensurePanelWidgetSchema(p)
   p.cvars = p.cvars or {}
   return p
+end
+
+function ns.Profile:GetRightPanelModel()
+  local p = self:GetActive()
+  ensurePanelWidgetSchema(p)
+  return p.panels.rightPanel
+end
+
+function ns.Profile:GetMinimapBarModel()
+  local p = self:GetActive()
+  ensurePanelWidgetSchema(p)
+  return p.widgets.minimapBar
 end
 
 function ns.Profile:GetCurrentName()

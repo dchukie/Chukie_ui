@@ -17,7 +17,7 @@ Archivos cargados por el cliente (orden del `.toc`):
 | `Chukie_Ui.toc` | Metadatos, dependencia opcional Masque, `SavedVariables: ChukieUiDB` |
 | `Core.lua` | Arranque, perfil activo, valores por defecto |
 | `Profiles.lua` | Perfiles guardados |
-| `MinimapPosition.lua` | Posición/tamaño del minimapa |
+| `RightPanel.lua` | Panel derecho del addon (marco `ChukieUi_RightPanel`, minimapa/cluster) |
 | `MinimapBar.lua` | Barra de iconos, políticas por botón, strip Blizzard, **barra por proxies**, Masque |
 | `ConfigPanel.lua` | Opciones en Esc → Opciones → AddOns → Chukie UI |
 

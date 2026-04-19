@@ -104,11 +104,92 @@ local function prof()
 end
 
 local function barOpts()
-  local m = prof().minimapBar
+  local m
+  if ns.Profile and ns.Profile.GetMinimapBarModel then
+    m = ns.Profile:GetMinimapBarModel()
+  else
+    m = prof().minimapBar
+  end
+  m = m or {}
   m.buttonPolicy = m.buttonPolicy or {}
   m.discoveredOrder = m.discoveredOrder or {}
   return m
 end
+
+local function getRightPanelTreeCenter()
+  if not ns.RightPanel or not ns.RightPanel.GetPanelTreeFrames then
+    return nil
+  end
+  local _, center = ns.RightPanel:GetPanelTreeFrames()
+  if not center then
+    return nil
+  end
+  local w, h = center:GetWidth(), center:GetHeight()
+  if not w or not h or w < 2 or h < 2 then
+    return nil
+  end
+  return center
+end
+
+local function getRightPanelBaseFrame()
+  local center = getRightPanelTreeCenter()
+  if center then
+    return center
+  end
+  if ns.PanelCore and ns.PanelCore.GetPanelFrame then
+    local p = ns.PanelCore:GetPanelFrame("rightPanel")
+    if p then
+      return p
+    end
+  end
+  if ns.PanelCore and ns.PanelCore.EnsureRoot then
+    return ns.PanelCore:EnsureRoot()
+  end
+  return UIParent
+end
+
+local function getPanelScalePct()
+  if ns.RightPanel and ns.RightPanel.DB then
+    local db = ns.RightPanel:DB()
+    local pct = tonumber(db and db.panelScalePercent)
+    if pct then
+      return math.max(60, math.min(220, math.floor(pct + 0.5)))
+    end
+  end
+  return 100
+end
+
+local function isMicroMenuDebugEnabled()
+  if not ns.RightPanel or not ns.RightPanel.DB then
+    return false
+  end
+  local db = ns.RightPanel:DB()
+  local v = db and db.debugRightPanelBounds
+  return v == true or v == 1
+end
+
+local function microMenuDebugPrint(fmt, ...)
+  if not isMicroMenuDebugEnabled() then
+    return
+  end
+  local ok, msg = pcall(string.format, fmt, ...)
+  if not ok then
+    msg = tostring(fmt)
+  end
+  print("|cff33ff99ChukieUi|r " .. msg)
+end
+
+local function absNum(v)
+  v = tonumber(v) or 0
+  if v < 0 then
+    return -v
+  end
+  return v
+end
+
+local ADDON_BAR_GAP_BELOW_MINIMAP = 1
+local MINIMENU_EXTRA_HEIGHT = 3
+local MINIMENU_TOP_RAISE = 3
 
 --- Orden típico del micromenú Retail (fallback si no existe la global `MICRO_BUTTONS`).
 local MICRO_BUTTON_FALLBACK_NAMES = {
@@ -254,11 +335,12 @@ function MB:LayoutMicroMenuEmbedded()
   local rowH = self:GetMiniMenuBarHeight()
   mm:SetHeight(rowH)
   local innerH = math.max(14, rowH - 4)
-  local gap = self:GetMiniMenuSpacing()
+  local gap = math.max(0, tonumber(self:GetMiniMenuSpacing()) or 0)
   local targetW = self:GetMiniMenuIconWidth()
   local x = 0
   self.microMenuDetached = self.microMenuDetached or {}
   local known = {}
+  local visibleButtons = {}
   for _, b in ipairs(self.microMenuDetached) do
     known[b] = true
   end
@@ -283,71 +365,186 @@ function MB:LayoutMicroMenuEmbedded()
     else
       btn:Show()
       btn:SetScale(1)
-      local w0 = btn:GetWidth() or 28
-      local h0 = btn:GetHeight() or 58
-      local base = btn.chukieMicroSavedScale or 1
-      local sW = targetW / math.max(w0, 1)
-      local sH = innerH / math.max(h0, 1)
-      local fit = math.min(sW, sH, 2.35)
-      fit = math.max(0.18, fit)
-      local sc = math.min(2.8, math.max(0.15, fit * base))
-      btn:SetScale(sc)
       btn:ClearAllPoints()
-      btn:SetPoint("LEFT", mm, "LEFT", x, 0)
-      local step = (btn:GetWidth() or w0) + gap
-      x = x + step
+      visibleButtons[#visibleButtons + 1] = btn
     end
   end
-  mm:SetWidth(math.max(x + 2, 48))
+  local visibleCount = #visibleButtons
+  local commonScale = 1
+  local baseL, baseR = 0, 0
+  if visibleCount > 0 then
+    local refBtn = visibleButtons[1]
+    local w0 = refBtn:GetWidth() or 28
+    local h0 = refBtn:GetHeight() or 58
+    local l, r = refBtn:GetHitRectInsets()
+    baseL = tonumber(l) or 0
+    baseR = tonumber(r) or 0
+    local base = refBtn.chukieMicroSavedScale or 1
+    local sW = targetW / math.max((w0 - (baseL + baseR)), 1)
+    local sH = innerH / math.max(h0, 1)
+    local fit = math.min(sW, sH, 2.35)
+    fit = math.max(0.18, fit)
+    commonScale = math.min(2.8, math.max(0.15, fit * base))
+  end
+  local totalContentWidth = 0
+  if visibleCount > 0 then
+    totalContentWidth = (visibleCount * targetW) + ((visibleCount - 1) * gap)
+  end
+  for i, btn in ipairs(visibleButtons) do
+    btn:SetScale(commonScale)
+    btn:ClearAllPoints()
+    local cx = (-totalContentWidth / 2) + (targetW / 2) + ((i - 1) * (targetW + gap))
+    btn:SetPoint("CENTER", mm, "CENTER", cx, 0)
+  end
+  local width = 48
+  if visibleCount > 0 then
+    width = totalContentWidth + 2
+  end
+  mm:SetWidth(math.max(width, 48))
+  self._microMenuDebug = {
+    visibleCount = visibleCount,
+    targetW = targetW,
+    gap = gap,
+    commonScale = commonScale,
+    baseL = baseL,
+    baseR = baseR,
+    width = mm:GetWidth() or width,
+  }
+  microMenuDebugPrint(
+    "MicroLayout visible=%d targetW=%.2f gap=%.2f scale=%.3f insets(L=%.2f,R=%.2f) calcWidth=%.2f finalWidth=%.2f",
+    visibleCount,
+    targetW,
+    gap,
+    commonScale,
+    baseL,
+    baseR,
+    width,
+    mm:GetWidth() or width
+  )
   self:PositionMicromenuCentered()
   self:MasqueApplyMicromenu()
 end
 
---- Desplazamiento X de la barra de addons sobre el centrado del minimapa (px).
+function MB:GetMicroMenuVisualCenterDelta()
+  if not self.miniMenuBar then
+    return 0
+  end
+  local mm = self.miniMenuBar
+  local mmLeft = mm:GetLeft()
+  local mmW = mm:GetWidth() or 0
+  if not mmLeft or mmW <= 0 then
+    return 0
+  end
+  local minL, maxR = nil, nil
+  for _, btn in ipairs(self:GetMicroMenuButtonFrames()) do
+    if btn and btn:GetParent() == mm and btn:IsShown() then
+      local l = btn:GetLeft()
+      local r = btn:GetRight()
+      if l and r then
+        if not minL or l < minL then
+          minL = l
+        end
+        if not maxR or r > maxR then
+          maxR = r
+        end
+      end
+    end
+  end
+  if not minL or not maxR then
+    return 0
+  end
+  local visualCenter = (minL + maxR) / 2
+  local containerCenter = mmLeft + (mmW / 2)
+  return visualCenter - containerCenter
+end
+
+--- Layout unificado: barras siempre centradas (sin offset manual separado).
 function MB:GetAddonBarOffsetX()
-  local v = tonumber(barOpts().addonBarOffsetX)
-  if not v then
-    return 0
-  end
-  return math.max(-200, math.min(200, math.floor(v + 0.5)))
+  return 0
 end
 
---- Desplazamiento X del micromenú sobre el centrado del minimapa (px); no afecta a la barra de addons.
+--- Layout unificado: micromenú siempre centrado (sin offset manual separado).
 function MB:GetMinimenuBarOffsetX()
-  local v = tonumber(barOpts().minimenuBarOffsetX)
-  if not v then
-    return 0
-  end
-  return math.max(-200, math.min(200, math.floor(v + 0.5)))
+  return 0
 end
 
---- Centra la barra con el ancho del marco Minimap (referencia estable del mapa circular).
+--- Barra de addons: centrada bajo el minimapa (si existe), o en la base del panel.
 function MB:PositionAddonBarCentered()
-  if not self.bar or not Minimap or barOpts().enabled == false then
+  if not self.bar or barOpts().enabled == false then
     return
   end
-  local gap = 4
   self.bar:ClearAllPoints()
-  local xOff = (Minimap:GetWidth() - self.bar:GetWidth()) / 2 + self:GetAddonBarOffsetX()
-  self.bar:SetPoint("TOPLEFT", Minimap, "BOTTOMLEFT", xOff, -gap)
+  local ref = getRightPanelBaseFrame()
+  if Minimap and Minimap:IsShown() and ref then
+    local refTop = ref:GetTop()
+    local mapBottom = Minimap:GetBottom()
+    if refTop and mapBottom then
+      --- Centrado en el bloque central (ref), usando la altura real del minimapa para ubicar la barra abajo.
+      self.bar:SetPoint("TOP", ref, "TOP", 0, (mapBottom - refTop) + ADDON_BAR_GAP_BELOW_MINIMAP)
+      return
+    end
+  end
+  if Minimap and Minimap:IsShown() then
+    self.bar:SetPoint("TOP", Minimap, "BOTTOM", 0, ADDON_BAR_GAP_BELOW_MINIMAP)
+    return
+  end
+  if not ref then
+    return
+  end
+  self.bar:SetPoint("BOTTOM", ref, "BOTTOM", 0, 2)
 end
 
 function MB:PositionMicromenuCentered()
-  if not self.miniMenuBar or not Minimap or barOpts().minimenuBarEnabled == false then
+  if not self.miniMenuBar or barOpts().minimenuBarEnabled == false then
     return
   end
   local mm = self.miniMenuBar
-  local mapGap = 4
   mm:ClearAllPoints()
-  --- Centrado horizontal respecto al Minimap + solo el offset del micromenú.
-  local xOff = (Minimap:GetWidth() - mm:GetWidth()) / 2 + self:GetMinimenuBarOffsetX()
-  local yOff
   if self.bar and self.bar:IsShown() and barOpts().enabled ~= false then
-    yOff = -(mapGap + self.bar:GetHeight() + self:GetMinimenuGapBelowAddonBar())
+    local ref = getRightPanelBaseFrame()
+    if ref then
+      local refTop = ref:GetTop()
+      local refW = ref:GetWidth() or 0
+      local barBottom = self.bar:GetBottom()
+      local mmW = mm:GetWidth() or 0
+      if refTop and barBottom and refW > 0 and mmW > 0 then
+        local yOff = (barBottom - refTop) - self:GetMinimenuGapBelowAddonBar() + MINIMENU_TOP_RAISE
+        --- Centrado absoluto por eje X contra el bloque central.
+        mm:SetPoint("TOP", ref, "TOP", 0, yOff)
+        local refLeft = ref:GetLeft()
+        local mmLeft = mm:GetLeft()
+        local centerDelta = nil
+        if refLeft and mmLeft then
+          centerDelta = ((mmLeft + (mmW / 2)) - (refLeft + (refW / 2)))
+        end
+        microMenuDebugPrint(
+          "MicroPos TOP refW=%.2f mmW=%.2f yOff=%.2f centerDelta=%s",
+          refW,
+          mmW,
+          yOff,
+          centerDelta and string.format("%.2f", centerDelta) or "n/a"
+        )
+        return
+      end
+    end
+    --- Fallback: mantener debajo de la barra.
+    mm:SetPoint("TOP", self.bar, "BOTTOM", 0, -self:GetMinimenuGapBelowAddonBar() + MINIMENU_TOP_RAISE)
+    microMenuDebugPrint("MicroPos fallback TOP self.bar")
   else
-    yOff = -mapGap
+    local ref = getRightPanelBaseFrame()
+    if not ref then
+      return
+    end
+    local refW = ref:GetWidth() or 0
+    local mmW = mm:GetWidth() or 0
+    if refW > 0 and mmW > 0 then
+      mm:SetPoint("BOTTOM", ref, "BOTTOM", 0, 2)
+      microMenuDebugPrint("MicroPos BOTTOM refW=%.2f mmW=%.2f", refW, mmW)
+      return
+    end
+    mm:SetPoint("BOTTOM", ref, "BOTTOM", 0, 2)
+    microMenuDebugPrint("MicroPos fallback BOTTOM center")
   end
-  mm:SetPoint("TOPLEFT", Minimap, "BOTTOMLEFT", xOff, yOff)
 end
 
 function MB:ProfileRotateMinimap()
@@ -358,17 +555,9 @@ function MB:ProfileRotateMinimap()
   return m.rotateMinimap == true
 end
 
-local function getRotateMinimapCvarBool()
-  if C_CVar and C_CVar.GetCVarBool then
-    return C_CVar.GetCVarBool("rotateMinimap")
-  end
-  local s = GetCVar and GetCVar("rotateMinimap")
-  return s == "1"
-end
-
 --- Con «Solo mapa» + rotación en perfil: no stripar norte/brújula como el resto; alinear con el CVar.
 function MB:ApplyNorthCompassAfterStrip()
-  if not self:ShouldStripBlizzardChrome() or not self:ProfileRotateMinimap() then
+  if not self:ShouldStripBlizzardChrome() then
     return
   end
   local north = MinimapNorthTag
@@ -378,21 +567,49 @@ function MB:ApplyNorthCompassAfterStrip()
       f.chukieStripChrome = nil
     end
   end
-  if getRotateMinimapCvarBool() then
-    if north then
-      north:Hide()
-    end
-    if comp then
-      comp:Show()
-    end
-  else
-    if north then
-      north:Hide()
-    end
-    if comp then
-      comp:Hide()
+  --- Forzar oculto del anillo/cardinales: evita que Blizzard o el flujo de rotación los vuelva a mostrar.
+  if north then
+    north:Hide()
+    if north.SetAlpha then
+      north:SetAlpha(0)
     end
   end
+  if comp then
+    comp:Hide()
+    if comp.SetAlpha then
+      comp:SetAlpha(0)
+    end
+    if comp.SetTexture then
+      comp:SetTexture(nil)
+    end
+  end
+  if not self._compassHideEnforced then
+    self._compassHideEnforced = true
+    if north and north.HookScript then
+      north:HookScript("OnShow", function(frame)
+        frame:Hide()
+        if frame.SetAlpha then
+          frame:SetAlpha(0)
+        end
+      end)
+    end
+    if comp and comp.HookScript then
+      comp:HookScript("OnShow", function(frame)
+        frame:Hide()
+        if frame.SetAlpha then
+          frame:SetAlpha(0)
+        end
+      end)
+    end
+  end
+  if self._isApplyingNorthCompassAfterStrip then
+    return
+  end
+  self._isApplyingNorthCompassAfterStrip = true
+  if Minimap_UpdateRotationSetting then
+    pcall(Minimap_UpdateRotationSetting)
+  end
+  self._isApplyingNorthCompassAfterStrip = false
 end
 
 function MB:GetFramePolicy(frameName)
@@ -447,38 +664,47 @@ end
 --- Ancho de iconos en la barra de addons (px). Perfiles antiguos: `cellSize`.
 function MB:GetAddonBarIconWidth()
   local m = barOpts()
-  local v = tonumber(m.addonBarIconWidth) or tonumber(m.cellSize) or 34
+  local base = tonumber(m.addonBarIconWidth) or tonumber(m.cellSize) or 34
+  local v = base * (getPanelScalePct() / 100)
   return math.max(8, math.min(128, math.floor(v + 0.5)))
 end
 
 --- Alto de iconos en la barra de addons (px). Por defecto igual al ancho.
 function MB:GetAddonBarIconHeight()
   local m = barOpts()
-  local v = tonumber(m.addonBarIconHeight) or tonumber(m.addonBarIconWidth) or tonumber(m.cellSize) or 34
+  local base = tonumber(m.addonBarIconHeight) or tonumber(m.addonBarIconWidth) or tonumber(m.cellSize) or 34
+  local v = base * (getPanelScalePct() / 100)
   return math.max(8, math.min(128, math.floor(v + 0.5)))
 end
 
 --- Espacio horizontal entre iconos de addons (px). Antiguo: `pad`.
 function MB:GetAddonBarSpacing()
   local m = barOpts()
-  local v = tonumber(m.addonBarSpacing) or tonumber(m.pad) or 4
+  local base = tonumber(m.addonBarSpacing) or tonumber(m.pad) or 4
+  local v = base * (getPanelScalePct() / 100)
   return math.max(0, math.min(64, math.floor(v + 0.5)))
 end
 
 --- Alto de la fila del micromenú (px), independiente de la barra de addons.
 function MB:GetMiniMenuBarHeight()
-  local v = tonumber(barOpts().minimenuRowHeight) or 42
-  return math.max(20, math.min(80, math.floor(v + 0.5)))
+  local base = tonumber(barOpts().minimenuRowHeight) or 42
+  local v = base * (getPanelScalePct() / 100)
+  return math.max(20, math.min(80, math.floor(v + 0.5))) + MINIMENU_EXTRA_HEIGHT
 end
 
 --- Ancho objetivo de cada icono del micromenú tras escalar (px).
 function MB:GetMiniMenuIconWidth()
-  local v = tonumber(barOpts().minimenuIconWidth) or 28
+  local base = tonumber(barOpts().minimenuIconWidth) or 28
+  local v = base * (getPanelScalePct() / 100)
   return math.max(12, math.min(56, math.floor(v + 0.5)))
 end
 
 function MB:GetMiniMenuSpacing()
-  local v = tonumber(barOpts().minimenuSpacing)
+  local base = tonumber(barOpts().minimenuSpacing)
+  if not base then
+    base = 2
+  end
+  local v = base * (getPanelScalePct() / 100)
   if not v then
     return 2
   end
@@ -487,7 +713,11 @@ end
 
 --- Separación entre el borde inferior de la barra de addons y el superior del micromenú (px; negativo = solapar).
 function MB:GetMinimenuGapBelowAddonBar()
-  local v = tonumber(barOpts().minimenuGapBelowAddonBar)
+  local base = tonumber(barOpts().minimenuGapBelowAddonBar)
+  if not base then
+    base = 8
+  end
+  local v = base * (getPanelScalePct() / 100)
   if not v then
     return 8
   end
@@ -1524,7 +1754,7 @@ end
 
 function MB:LayoutMiniMenuBar()
   local mm = self.miniMenuBar
-  if not mm or not Minimap then
+  if not mm then
     return
   end
   mm:SetHeight(self:GetMiniMenuBarHeight())
@@ -1550,33 +1780,35 @@ function MB:Layout()
 end
 
 function MB:EnsureBar()
+  local parent = getRightPanelBaseFrame()
   if self.bar then
+    if parent and self.bar:GetParent() ~= parent then
+      self.bar:SetParent(parent)
+    end
     return
   end
   self.capturedLDB = {}
-  local parent = MinimapCluster or UIParent
   local bar = CreateFrame("Frame", "ChukieUi_MinimapButtonBar", parent)
   bar:SetFrameStrata("MEDIUM")
   bar:SetFixedFrameStrata(true)
-  bar:SetFrameLevel((Minimap and Minimap:GetFrameLevel() or 3) + 3)
+  bar:SetFrameLevel(((parent and parent.GetFrameLevel and parent:GetFrameLevel()) or 3) + 3)
   bar:SetHeight(self:GetAddonBarIconHeight() + 4)
   self.bar = bar
-  if Minimap then
-    self:PositionAddonBarCentered()
-  else
-    bar:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -80, -80)
-  end
+  self:PositionAddonBarCentered()
 end
 
 function MB:EnsureMiniMenuBar()
+  local parent = getRightPanelBaseFrame()
   if self.miniMenuBar then
+    if parent and self.miniMenuBar:GetParent() ~= parent then
+      self.miniMenuBar:SetParent(parent)
+    end
     return
   end
-  local parent = MinimapCluster or UIParent
   local mm = CreateFrame("Frame", "ChukieUi_MiniMenuButtonBar", parent)
   mm:SetFrameStrata("MEDIUM")
   mm:SetFixedFrameStrata(true)
-  mm:SetFrameLevel((Minimap and Minimap:GetFrameLevel() or 3) + 2)
+  mm:SetFrameLevel(((parent and parent.GetFrameLevel and parent:GetFrameLevel()) or 3) + 2)
   mm:SetHeight(self:GetMiniMenuBarHeight())
   self.miniMenuBar = mm
 end
@@ -1585,10 +1817,12 @@ function MB:EnsureLdbHooks()
   if self.ldbHooks then
     return
   end
-  local parent = MinimapCluster or UIParent
+  local parent = getRightPanelBaseFrame()
   if not self.ldbHookHolder then
     self.ldbHookHolder = CreateFrame("Frame", "ChukieUi_LdbHookHolder", parent)
     self.ldbHookHolder:Hide()
+  elseif parent and self.ldbHookHolder:GetParent() ~= parent then
+    self.ldbHookHolder:SetParent(parent)
   end
   local LDBI = LibStub("LibDBIcon-1.0", true)
   if not LDBI or type(LDBI.RegisterCallback) ~= "function" then
@@ -1644,6 +1878,9 @@ function MB:ScheduleRefresh()
 end
 
 function MB:Refresh()
+  if ns.RightPanel and ns.RightPanel.SyncRightPanelTreeLayout then
+    ns.RightPanel:SyncRightPanelTreeLayout()
+  end
   self:MasqueStripMicromenu()
   self:ReleaseAll()
   self:UpdateDiscoveredOrder()
@@ -1695,6 +1932,9 @@ function MB:Refresh()
 
   self:ApplyBlizzardStripOrRestore()
   self:ApplyAddonButtonPolicies()
+  if ns.RightPanel and ns.RightPanel.UpdateDebugRightPanelOutline then
+    ns.RightPanel:UpdateDebugRightPanelOutline()
+  end
 end
 
 local ev = CreateFrame("Frame")

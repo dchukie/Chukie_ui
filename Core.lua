@@ -6,6 +6,26 @@ local ADDON_NAME, ns = ...
 
 local defaults = {
   enabled = true,
+  panels = {
+    rightPanel = {
+      --- Escala global del cluster derecho: mapa + barras + ranuras debug (porcentaje único).
+      panelScalePercent = 100,
+      panelWidth = 300,
+      panelHeight = 360,
+      lockRightPanelInEditMode = true,
+      offsetX = 0,
+      offsetY = 0,
+      rotateMinimap = false,
+      playerArrowMode = 0,
+      playerArrowCustom = "",
+      minimapScalePercent = 100,
+      minimapZoomPreference = 0,
+      debugRightPanelBounds = false,
+    },
+  },
+  widgets = {
+    minimapBar = {},
+  },
   minimapBar = {
     enabled = true,
     --- Segunda fila bajo la barra de addons: micromenú Blizzard configurable.
@@ -39,6 +59,12 @@ local defaults = {
     discoveredOrder = {},
   },
   minimapPosition = {
+    panelScalePercent = 100,
+    --- Marco global ChukieUi_RightPanel (px): el MinimapCluster rellena este rectángulo; reglas de posición repetibles.
+    panelWidth = 300,
+    panelHeight = 360,
+    --- Con modo edición de Blizzard activo: si es true, el cluster no pasa a UIParent (no uses el editor nativo del minimapa; evita conflictos con el host).
+    lockRightPanelInEditMode = true,
     offsetX = 0,
     offsetY = 0,
     --- CVar rotateMinimap: mapa gira con el PJ, flecha fija hacia arriba.
@@ -46,10 +72,12 @@ local defaults = {
     --- 0 = textura Blizzard por defecto; 1 = flecha fina (vehículo); 2 = playerArrowCustom.
     playerArrowMode = 0,
     playerArrowCustom = "",
-    --- Escala visual de todo el MinimapCluster (límite aplicado en MinimapPosition, p. ej. 20–300 %).
+    --- Escala visual de todo el MinimapCluster (límite aplicado en RightPanel.lua / ns.RightPanel, p. ej. 20–300 %).
     minimapScalePercent = 100,
     --- 0 = no forzar; 1 = zoom mínimo (máximo alejado); 2 = zoom máximo permitido (máximo acercado). Límite fijo del cliente.
     minimapZoomPreference = 0,
+    --- Dibuja un recuadro verde sobre los bordes del MinimapCluster (panel derecho).
+    debugRightPanelBounds = false,
   },
   cvars = {
     lootUnderMouse = "1",
@@ -93,8 +121,11 @@ end
 
 function ns.OnProfileChanged()
   applyCvars()
-  if ns.MinimapPosition and ns.MinimapPosition.Apply then
-    ns.MinimapPosition:Apply()
+  if ns.PanelCore and ns.PanelCore.RefreshRootBounds then
+    ns.PanelCore:RefreshRootBounds()
+  end
+  if ns.RightPanel and ns.RightPanel.Apply then
+    ns.RightPanel:Apply()
   end
   if ns.MinimapBar and ns.MinimapBar.Refresh then
     ns.MinimapBar:Refresh()
@@ -121,9 +152,12 @@ frame:SetScript("OnEvent", function(_, event, addon)
     if ns.RegisterConfigPanel then
       ns.RegisterConfigPanel()
     end
+    if ns.PanelCore and ns.PanelCore.RefreshRootBounds then
+      ns.PanelCore:RefreshRootBounds()
+    end
     C_Timer.After(0, function()
-      if ns.MinimapPosition and ns.MinimapPosition.Initialize then
-        ns.MinimapPosition:Initialize()
+      if ns.RightPanel and ns.RightPanel.Initialize then
+        ns.RightPanel:Initialize()
       end
     end)
     return
@@ -166,11 +200,11 @@ SlashCmdList["CHUKIEUI"] = function(msg)
   end
   if msg == "mmpos" or strmatch(msg, "^mmpos%s") then
     local rest = strtrim(strsub(msg, 6))
-    if rest ~= "" and ns.MinimapPosition and ns.MinimapPosition.SetOffsets then
+    if rest ~= "" and ns.RightPanel and ns.RightPanel.SetOffsets then
       local sx, sy = rest:match("^(-?%d+)%s+(-?%d+)$")
       if sx and sy then
-        ns.MinimapPosition:SetOffsets(tonumber(sx), tonumber(sy))
-        local db = ns.MinimapPosition:DB()
+        ns.RightPanel:SetOffsets(tonumber(sx), tonumber(sy))
+        local db = ns.RightPanel:DB()
         print(
           string.format(
             "|cff00ff00Chukie UI|r: panel derecho → X=%d Y=%d (ancla esquina inferior derecha)",
@@ -181,8 +215,8 @@ SlashCmdList["CHUKIEUI"] = function(msg)
         return
       end
     end
-    if rest == "" and ns.MinimapPosition and ns.MinimapPosition.DB then
-      local db = ns.MinimapPosition:DB()
+    if rest == "" and ns.RightPanel and ns.RightPanel.DB then
+      local db = ns.RightPanel:DB()
       print(
         string.format(
           "|cff00ff00Chukie UI|r: panel derecho actual → X=%d Y=%d. Uso: /chukieui mmpos <x> <y>",
@@ -201,7 +235,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       local tl = strtrim(tail)
       local first = strlower(strmatch(tl, "^(%S+)") or "")
       local pathRest = strtrim(strmatch(tl, "^%S+%s+(.+)$") or "")
-      local db = ns.MinimapPosition and ns.MinimapPosition.DB and ns.MinimapPosition:DB()
+      local db = ns.RightPanel and ns.RightPanel.DB and ns.RightPanel:DB()
       if not db then
         return
       end
@@ -213,28 +247,28 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       end
       if first == "thin" or first == "fina" then
         db.playerArrowMode = 1
-        ns.MinimapPosition:Apply()
+        ns.RightPanel:Apply()
         print("|cff00ff00Chukie UI|r: flecha del minimapa → fina (textura vehículo Blizzard).")
         return
       end
       if first == "default" or first == "defecto" or first == "reset" then
         db.playerArrowMode = 0
         db.playerArrowCustom = ""
-        ns.MinimapPosition:Apply()
+        ns.RightPanel:Apply()
         print("|cff00ff00Chukie UI|r: flecha del minimapa → defecto Blizzard.")
         return
       end
       if first == "custom" and pathRest ~= "" then
         db.playerArrowMode = 2
         db.playerArrowCustom = pathRest
-        ns.MinimapPosition:Apply()
+        ns.RightPanel:Apply()
         print("|cff00ff00Chukie UI|r: flecha → personalizada: " .. pathRest)
         return
       end
       if tl ~= "" and (tl:find("\\", 1, true) or strmatch(tl, "^[Ii]nterface")) then
         db.playerArrowMode = 2
         db.playerArrowCustom = tl
-        ns.MinimapPosition:Apply()
+        ns.RightPanel:Apply()
         print("|cff00ff00Chukie UI|r: flecha → personalizada: " .. tl)
         return
       end

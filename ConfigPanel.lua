@@ -42,6 +42,9 @@ local function refreshRightPanelLayout()
   if ns.RightPanel and ns.RightPanel.Apply then
     ns.RightPanel:Apply()
   end
+  if ns.LeftPanel and ns.LeftPanel.Refresh then
+    ns.LeftPanel:Refresh()
+  end
   refreshMinimapBar()
   if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
     ns.RightPanelWidgets:Refresh()
@@ -258,6 +261,35 @@ local function addBoolPos(category, uniqueId, key, label, tooltip, defaultOn)
     refreshRightPanelLayout()
   end
   local defaultToken = defaultOn and Settings.Default.True or Settings.Default.False
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Boolean,
+    label,
+    defaultToken,
+    get,
+    set
+  )
+  Settings.CreateCheckbox(category, setting, tooltip)
+end
+
+local function addBoolPosSub(category, uniqueId, tableKey, subKey, label, tooltip, defaultOn)
+  local function get()
+    local root = minimapPosDB()
+    root[tableKey] = type(root[tableKey]) == "table" and root[tableKey] or {}
+    local v = root[tableKey][subKey]
+    if v == nil then
+      return defaultOn ~= false
+    end
+    return v == true or v == 1
+  end
+  local function set(v)
+    local root = minimapPosDB()
+    root[tableKey] = type(root[tableKey]) == "table" and root[tableKey] or {}
+    root[tableKey][subKey] = (v == true or v == 1)
+    refreshRightPanelLayout()
+  end
+  local defaultToken = (defaultOn ~= false) and Settings.Default.True or Settings.Default.False
   local setting = Settings.RegisterProxySetting(
     category,
     uniqueId,
@@ -581,6 +613,105 @@ local function addRightStripFontFaceDropdown(category)
     setting,
     dateFontFaceDropdownData,
     "Fuente de texto para la grilla inferior del sector amarillo (oro + bolsas)."
+  )
+end
+
+local function addLeftPanelLootTradeFontFaceDropdown(category)
+  local function get()
+    local v = tonumber(minimapPosDB().leftPanelFeedFontFace)
+    if v == DATE_FONT_FRIZ or v == DATE_FONT_ARIAL or v == DATE_FONT_MORPHEUS or v == DATE_FONT_SKURRI then
+      return v
+    end
+    return DATE_FONT_AUTO
+  end
+  local function set(v)
+    v = tonumber(v)
+    if v ~= DATE_FONT_FRIZ and v ~= DATE_FONT_ARIAL and v ~= DATE_FONT_MORPHEUS and v ~= DATE_FONT_SKURRI then
+      v = DATE_FONT_AUTO
+    end
+    minimapPosDB().leftPanelFeedFontFace = v
+    refreshRightPanelLayout()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_MMPos_leftPanelFeedFontFace",
+    Settings.VarType.Number,
+    "Tipografía sector historial loot/trade",
+    DATE_FONT_AUTO,
+    get,
+    set
+  )
+  Settings.CreateDropdown(
+    category,
+    setting,
+    dateFontFaceDropdownData,
+    "Fuente de texto para la ventana del sector historial loot/trade."
+  )
+end
+
+local function addLeftPanelGeneralFontFaceDropdown(category)
+  local function get()
+    local v = tonumber(minimapPosDB().leftPanelGeneralFontFace)
+    if v == DATE_FONT_FRIZ or v == DATE_FONT_ARIAL or v == DATE_FONT_MORPHEUS or v == DATE_FONT_SKURRI then
+      return v
+    end
+    return DATE_FONT_AUTO
+  end
+  local function set(v)
+    v = tonumber(v)
+    if v ~= DATE_FONT_FRIZ and v ~= DATE_FONT_ARIAL and v ~= DATE_FONT_MORPHEUS and v ~= DATE_FONT_SKURRI then
+      v = DATE_FONT_AUTO
+    end
+    minimapPosDB().leftPanelGeneralFontFace = v
+    refreshRightPanelLayout()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_MMPos_leftPanelGeneralFontFace",
+    Settings.VarType.Number,
+    "Tipografía sector chat general",
+    DATE_FONT_AUTO,
+    get,
+    set
+  )
+  Settings.CreateDropdown(
+    category,
+    setting,
+    dateFontFaceDropdownData,
+    "Fuente de texto para la ventana del sector chat general."
+  )
+end
+
+local function addLeftPanelGeneralInputFontFaceDropdown(category)
+  local function get()
+    local v = tonumber(minimapPosDB().leftPanelGeneralInputFontFace)
+    if v == DATE_FONT_FRIZ or v == DATE_FONT_ARIAL or v == DATE_FONT_MORPHEUS or v == DATE_FONT_SKURRI then
+      return v
+    end
+    return DATE_FONT_AUTO
+  end
+  local function set(v)
+    v = tonumber(v)
+    if v ~= DATE_FONT_FRIZ and v ~= DATE_FONT_ARIAL and v ~= DATE_FONT_MORPHEUS and v ~= DATE_FONT_SKURRI then
+      v = DATE_FONT_AUTO
+    end
+    minimapPosDB().leftPanelGeneralInputFontFace = v
+    refreshRightPanelLayout()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_MMPos_leftPanelGeneralInputFontFace",
+    Settings.VarType.Number,
+    "Tipografía entrada chat general",
+    DATE_FONT_AUTO,
+    get,
+    set
+  )
+  Settings.CreateDropdown(
+    category,
+    setting,
+    dateFontFaceDropdownData,
+    "Fuente de texto para la caja de entrada del sector chat general."
   )
 end
 
@@ -1009,6 +1140,14 @@ function ns.RegisterConfigPanel()
       .. "Las teclas no enlazan a un hechizo concreto: asignan un clic izquierdo al botón seguro de cada celda. Configúralas en Esc → Controles → Teclas de acción rápida → categoría «Add-ons» (tres líneas «Chukie UI - ranura dinámica 2/3/4»).",
     true
   )
+  addBoolRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_staticSessionMode",
+    "staticSessionMode",
+    "Modo estático (sin detección dinámica)",
+    "Solo afecta al panel derecho: desactiva la lógica situacional de combate/zona/quests en las ranuras reservadas para reducir procesos y evitar errores de show/hide dinámico.",
+    true
+  )
 
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Micromenú: mostrar botones"))
   ns._mmMinimenuRegistered = {}
@@ -1056,6 +1195,468 @@ function ns.RegisterConfigPanel()
       end
     end
   end
+
+  local leftCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Panel izquierdo")
+  local leftLayout = SettingsPanel:GetLayout(leftCategory)
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Panel izquierdo (nuevo)"))
+  addBoolPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelEnabled",
+    "leftPanelEnabled",
+    "Activar panel izquierdo",
+    "Muestra el panel izquierdo y habilita el sector historial loot/trade y el sector chat general.",
+    true
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelScalePct",
+    "leftPanelScalePercent",
+    "Tamaño panel izquierdo (%)",
+    "Escala global del panel izquierdo, independiente del panel derecho.",
+    60,
+    220,
+    1,
+    100
+  )
+  addBoolPos(
+    leftCategory,
+    "ChukieUi_MMPos_debugLeftBounds",
+    "debugLeftPanelBounds",
+    "Mostrar referencias del panel izquierdo",
+    "Dibuja los 5 sectores del panel izquierdo con la forma proporcional de la maqueta (bloques rojos).",
+    false
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_debugLeftOffsetX",
+    "leftPanelDebugOffsetX",
+    "Mover conjunto X (panel izquierdo)",
+    "Mueve horizontalmente los 5 sectores del panel izquierdo como un bloque único, tomando como referencia la esquina inferior izquierda del root.",
+    -1200,
+    1200,
+    1,
+    0
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_debugLeftOffsetY",
+    "leftPanelDebugOffsetY",
+    "Mover conjunto Y (panel izquierdo)",
+    "Mueve verticalmente los 5 sectores del panel izquierdo como un bloque único, tomando como referencia la esquina inferior izquierda del root.",
+    -1200,
+    1200,
+    1,
+    0
+  )
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Sector historial loot/trade"))
+  addLeftPanelLootTradeFontFaceDropdown(leftCategory)
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelFeedFontSize",
+    "leftPanelFeedFontSize",
+    "Tamaño fuente sector historial loot/trade",
+    "Tamaño de texto del sector historial loot/trade. 0 = automático.",
+    0,
+    32,
+    1,
+    0
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelFeedBgAlpha",
+    "leftPanelFeedBgAlphaPercent",
+    "Transparencia fondo historial loot/trade (%)",
+    "Opacidad del fondo de la ventana del sector historial loot/trade. 0 = transparente, 100 = opaco.",
+    0,
+    100,
+    1,
+    45
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelFeedHistoryMax",
+    "leftPanelFeedHistoryMax",
+    "Tamaño historial loot/trade (líneas)",
+    "Cantidad máxima de líneas guardadas en la ventana del sector historial loot/trade.",
+    50,
+    2000,
+    10,
+    300
+  )
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Suscripciones L1 (informes de máquina)"))
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_loot",
+    "leftPanelL1Subs",
+    "loot",
+    "Loot",
+    "Mensajes de botín.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_money",
+    "leftPanelL1Subs",
+    "money",
+    "Dinero",
+    "Mensajes de ganancia/pérdida de oro.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_currency",
+    "leftPanelL1Subs",
+    "currency",
+    "Monedas (currency)",
+    "Mensajes de currencies.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_tradeskills",
+    "leftPanelL1Subs",
+    "tradeskills",
+    "Profesiones",
+    "Mensajes de tradeskills.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_system",
+    "leftPanelL1Subs",
+    "system",
+    "Sistema",
+    "Mensajes CHAT_MSG_SYSTEM.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_combatMisc",
+    "leftPanelL1Subs",
+    "combatMisc",
+    "Sistema combate",
+    "Mensajes CHAT_MSG_COMBAT_MISC_INFO.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_skill",
+    "leftPanelL1Subs",
+    "skill",
+    "Subida de habilidad",
+    "Mensajes CHAT_MSG_SKILL.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_bgSystem",
+    "leftPanelL1Subs",
+    "bgSystem",
+    "Avisos BG",
+    "Mensajes de sistema de campos de batalla.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_raidWarning",
+    "leftPanelL1Subs",
+    "raidWarning",
+    "Raid warning",
+    "Mensajes CHAT_MSG_RAID_WARNING.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_uiError",
+    "leftPanelL1Subs",
+    "uiError",
+    "Errores UI",
+    "Mensajes UI_ERROR_MESSAGE.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_uiInfo",
+    "leftPanelL1Subs",
+    "uiInfo",
+    "Info UI",
+    "Mensajes UI_INFO_MESSAGE.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_tradeChannel",
+    "leftPanelL1Subs",
+    "tradeChannel",
+    "Canal Trade",
+    "Mensajes humanos del canal Trade hacia L1.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL1Sub_blizzMirror",
+    "leftPanelL1Subs",
+    "blizzardGeneralMirror",
+    "Espejo General Blizzard",
+    "Replica avisos automáticos desde el chat General de Blizzard hacia L1 (evita faltantes de addons/sistema).",
+    true
+  )
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Sector chat general"))
+  addBoolPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralMirrorFromBlizzard",
+    "leftPanelGeneralMirrorFromBlizzard",
+    "Replicar chat General de Blizzard",
+    "Muestra en L3 exactamente lo que aparece en el chat oficial de Blizzard (según su configuración de filtros/canales).",
+    true
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralMirrorFrame",
+    "leftPanelGeneralMirrorFrame",
+    "Frame origen chat Blizzard (1-10)",
+    "Número de ChatFrame que quieres reflejar en L3. Normalmente 1 = General.",
+    1,
+    10,
+    1,
+    1
+  )
+  addLeftPanelGeneralFontFaceDropdown(leftCategory)
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralFontSize",
+    "leftPanelGeneralFontSize",
+    "Tamaño fuente sector chat general",
+    "Tamaño de texto del sector chat general. 0 = automático.",
+    0,
+    32,
+    1,
+    0
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralBgAlpha",
+    "leftPanelGeneralBgAlphaPercent",
+    "Transparencia fondo chat general (%)",
+    "Opacidad del fondo de la ventana del sector chat general. 0 = transparente, 100 = opaco.",
+    0,
+    100,
+    1,
+    35
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralHistoryMax",
+    "leftPanelGeneralHistoryMax",
+    "Tamaño historial chat general (líneas)",
+    "Cantidad máxima de líneas guardadas en la ventana del sector chat general.",
+    50,
+    2000,
+    10,
+    500
+  )
+  addLeftPanelGeneralInputFontFaceDropdown(leftCategory)
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputFontSize",
+    "leftPanelGeneralInputFontSize",
+    "Tamaño fuente entrada chat",
+    "Tamaño de texto de la caja de entrada en el sector chat general. 0 = automático.",
+    0,
+    32,
+    1,
+    0
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputBgAlpha",
+    "leftPanelGeneralInputBgAlphaPercent",
+    "Transparencia fondo entrada chat (%)",
+    "Opacidad del fondo de la caja de entrada del sector chat general. 0 = transparente, 100 = opaco.",
+    0,
+    100,
+    1,
+    55
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputHeight",
+    "leftPanelGeneralInputHeight",
+    "Alto caja entrada chat (px)",
+    "Altura de la caja de entrada anclada al sector chat general.",
+    18,
+    40,
+    1,
+    24
+  )
+  addBoolPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputCleanStyle",
+    "leftPanelGeneralInputCleanStyle",
+    "Estilo limpio entrada chat",
+    "Oculta la gráfica clásica de Blizzard y aplica un marco limpio acorde al panel (estilo tipo masque).",
+    true
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputBorderAlpha",
+    "leftPanelGeneralInputBorderAlphaPercent",
+    "Opacidad borde entrada chat (%)",
+    "Intensidad del borde del estilo limpio de la caja de entrada.",
+    0,
+    100,
+    1,
+    45
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputBorderSize",
+    "leftPanelGeneralInputBorderSize",
+    "Grosor borde entrada chat",
+    "Grosor del borde del estilo limpio (1 a 3 px).",
+    1,
+    3,
+    1,
+    1
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputHorizontalPad",
+    "leftPanelGeneralInputHorizontalPad",
+    "Margen horizontal entrada chat",
+    "Separación izquierda/derecha de la caja de entrada dentro del sector L3.",
+    0,
+    24,
+    1,
+    4
+  )
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Suscripciones L3 (chat humano)"))
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_say",
+    "leftPanelL3Subs",
+    "say",
+    "Say",
+    "CHAT_MSG_SAY.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_yell",
+    "leftPanelL3Subs",
+    "yell",
+    "Yell",
+    "CHAT_MSG_YELL.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_emote",
+    "leftPanelL3Subs",
+    "emote",
+    "Emotes",
+    "CHAT_MSG_EMOTE / CHAT_MSG_TEXT_EMOTE.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_guild",
+    "leftPanelL3Subs",
+    "guild",
+    "Guild",
+    "CHAT_MSG_GUILD.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_officer",
+    "leftPanelL3Subs",
+    "officer",
+    "Officer",
+    "CHAT_MSG_OFFICER.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_party",
+    "leftPanelL3Subs",
+    "party",
+    "Party",
+    "CHAT_MSG_PARTY / CHAT_MSG_PARTY_LEADER.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_raid",
+    "leftPanelL3Subs",
+    "raid",
+    "Raid",
+    "CHAT_MSG_RAID / CHAT_MSG_RAID_LEADER.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_instance",
+    "leftPanelL3Subs",
+    "instance",
+    "Instancia",
+    "CHAT_MSG_INSTANCE_CHAT / LEADER.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_whisper",
+    "leftPanelL3Subs",
+    "whisper",
+    "Susurro recibido",
+    "CHAT_MSG_WHISPER.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_whisperInform",
+    "leftPanelL3Subs",
+    "whisperInform",
+    "Susurro enviado",
+    "CHAT_MSG_WHISPER_INFORM.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_bnWhisper",
+    "leftPanelL3Subs",
+    "bnWhisper",
+    "BN susurro recibido",
+    "CHAT_MSG_BN_WHISPER.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_bnWhisperInform",
+    "leftPanelL3Subs",
+    "bnWhisperInform",
+    "BN susurro enviado",
+    "CHAT_MSG_BN_WHISPER_INFORM.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_channel",
+    "leftPanelL3Subs",
+    "channel",
+    "Canales (General, LocalDefense, etc.)",
+    "CHAT_MSG_CHANNEL excepto Trade.",
+    true
+  )
+  addBoolPosSub(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelL3Sub_communities",
+    "leftPanelL3Subs",
+    "communities",
+    "Comunidades",
+    "CHAT_MSG_COMMUNITIES_CHANNEL.",
+    true
+  )
 
   ns.settingsCategoryID = rootCategory:GetID()
   ns.minimapCategoryID = minimapCategory:GetID()

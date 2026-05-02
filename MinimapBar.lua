@@ -179,7 +179,17 @@ local MICRO_BUTTON_FALLBACK_NAMES = {
   "StoreMicroButton",
   "PromotionFrameMicroButton",
   "WhatsNewMicroButton",
+  -- Retail 12.0.5+: Housing Dashboard (puede variar el nombre según build).
+  "HousingMicroButton",
+  "HousingDashboardMicroButton",
+  "HousingDashboardButton",
   "MainMenuMicroButton",
+}
+
+local EXTRA_MICROMENU_BUTTON_NAMES = {
+  HousingMicroButton = true,
+  HousingDashboardMicroButton = true,
+  HousingDashboardButton = true,
 }
 
 --- Botones del micromenú de Blizzard (sufijo «MicroButton»). No deben tratarse como iconos LibDBIcon del minimapa.
@@ -189,6 +199,9 @@ local function isBlizzardMicroMenuButtonName(name)
   end
   if name:find("^LibDBIcon10_", 1, true) then
     return false
+  end
+  if EXTRA_MICROMENU_BUTTON_NAMES[name] then
+    return true
   end
   return name:match("MicroButton$") ~= nil
 end
@@ -226,6 +239,29 @@ function MB:GetMicroMenuButtonFrames()
       end
     end
   end
+  -- Descubrimiento adicional: algunos parches agregan botones fuera de MICRO_BUTTONS.
+  local visited = {}
+  local function scanMicroTree(root)
+    if not root or visited[root] then
+      return
+    end
+    visited[root] = true
+    local i = 1
+    while true do
+      local child = root.GetChildren and select(i, root:GetChildren()) or nil
+      if not child then
+        break
+      end
+      local n = child and child.GetName and child:GetName()
+      if n and isBlizzardMicroMenuButtonName(n) then
+        pushFrame(child)
+      end
+      scanMicroTree(child)
+      i = i + 1
+    end
+  end
+  scanMicroTree(_G.MicroButtonAndBagsBar)
+  scanMicroTree(_G.MainMenuBar)
   return out
 end
 

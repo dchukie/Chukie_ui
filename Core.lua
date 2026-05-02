@@ -30,6 +30,60 @@ local defaults = {
       minimapScalePercent = 100,
       minimapZoomPreference = 0,
       debugRightPanelBounds = false,
+      debugLeftPanelBounds = false,
+      leftPanelEnabled = true,
+      leftPanelScalePercent = 100,
+      leftPanelDebugOffsetX = 0,
+      leftPanelDebugOffsetY = 0,
+      leftPanelFeedFontFace = 0,
+      leftPanelFeedFontSize = 0, -- 0 = automático.
+      leftPanelFeedBgAlphaPercent = 45,
+      leftPanelFeedHistoryMax = 300,
+      leftPanelL1Subs = {
+        loot = true,
+        money = true,
+        currency = true,
+        tradeskills = true,
+        system = true,
+        combatMisc = true,
+        skill = true,
+        bgSystem = true,
+        raidWarning = true,
+        uiError = true,
+        uiInfo = true,
+        tradeChannel = true,
+        blizzardGeneralMirror = true,
+      },
+      leftPanelGeneralFontFace = 0,
+      leftPanelGeneralFontSize = 0, -- 0 = automático.
+      leftPanelGeneralBgAlphaPercent = 35,
+      leftPanelGeneralHistoryMax = 500,
+      leftPanelGeneralMirrorFromBlizzard = true,
+      leftPanelGeneralMirrorFrame = 1,
+      leftPanelL3Subs = {
+        say = true,
+        yell = true,
+        emote = true,
+        guild = true,
+        officer = true,
+        party = true,
+        raid = true,
+        instance = true,
+        whisper = true,
+        whisperInform = true,
+        bnWhisper = true,
+        bnWhisperInform = true,
+        channel = true,
+        communities = true,
+      },
+      leftPanelGeneralInputFontFace = 0,
+      leftPanelGeneralInputFontSize = 0, -- 0 = automático.
+      leftPanelGeneralInputBgAlphaPercent = 55,
+      leftPanelGeneralInputHeight = 24,
+      leftPanelGeneralInputCleanStyle = true,
+      leftPanelGeneralInputBorderAlphaPercent = 45,
+      leftPanelGeneralInputBorderSize = 1,
+      leftPanelGeneralInputHorizontalPad = 4,
       -- Sector amarillo (RightStrip): apariencia de grilla inferior.
       rightStripUseMasque = false,
       rightStripGridScalePercent = 100,
@@ -58,6 +112,8 @@ local defaults = {
       teleportGridVisibility = {},
       --- Ranuras 2–4: acción extra / habilidad de zona / ítem de misión rastreada (Bindings.xml).
       dynamicActionSlotsEnabled = true,
+      --- Si está activo, deshabilita detección dinámica y deja el panel derecho en modo estático liviano.
+      staticSessionMode = true,
     },
   },
   minimapBar = {
@@ -112,6 +168,61 @@ local defaults = {
     minimapZoomPreference = 0,
     --- Dibuja un recuadro verde sobre los bordes del MinimapCluster (panel derecho).
     debugRightPanelBounds = false,
+    --- Referencias del nuevo panel izquierdo (5 sectores rojos de la maqueta).
+    debugLeftPanelBounds = false,
+    leftPanelEnabled = true,
+    leftPanelScalePercent = 100,
+    leftPanelDebugOffsetX = 0,
+    leftPanelDebugOffsetY = 0,
+    leftPanelFeedFontFace = 0,
+    leftPanelFeedFontSize = 0,
+    leftPanelFeedBgAlphaPercent = 45,
+    leftPanelFeedHistoryMax = 300,
+    leftPanelL1Subs = {
+      loot = true,
+      money = true,
+      currency = true,
+      tradeskills = true,
+      system = true,
+      combatMisc = true,
+      skill = true,
+      bgSystem = true,
+      raidWarning = true,
+      uiError = true,
+      uiInfo = true,
+      tradeChannel = true,
+      blizzardGeneralMirror = true,
+    },
+    leftPanelGeneralFontFace = 0,
+    leftPanelGeneralFontSize = 0,
+    leftPanelGeneralBgAlphaPercent = 35,
+    leftPanelGeneralHistoryMax = 500,
+    leftPanelGeneralMirrorFromBlizzard = true,
+    leftPanelGeneralMirrorFrame = 1,
+    leftPanelL3Subs = {
+      say = true,
+      yell = true,
+      emote = true,
+      guild = true,
+      officer = true,
+      party = true,
+      raid = true,
+      instance = true,
+      whisper = true,
+      whisperInform = true,
+      bnWhisper = true,
+      bnWhisperInform = true,
+      channel = true,
+      communities = true,
+    },
+    leftPanelGeneralInputFontFace = 0,
+    leftPanelGeneralInputFontSize = 0,
+    leftPanelGeneralInputBgAlphaPercent = 55,
+    leftPanelGeneralInputHeight = 24,
+    leftPanelGeneralInputCleanStyle = true,
+    leftPanelGeneralInputBorderAlphaPercent = 45,
+    leftPanelGeneralInputBorderSize = 1,
+    leftPanelGeneralInputHorizontalPad = 4,
     -- Sector amarillo (RightStrip): apariencia de grilla inferior.
     rightStripUseMasque = false,
     rightStripGridScalePercent = 100,
@@ -172,6 +283,9 @@ function ns.OnProfileChanged()
   if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
     ns.RightPanelWidgets:Refresh()
   end
+  if ns.LeftPanel and ns.LeftPanel.Refresh then
+    ns.LeftPanel:Refresh()
+  end
 end
 
 function ns.ApplyUiTweaks()
@@ -200,6 +314,9 @@ frame:SetScript("OnEvent", function(_, event, addon)
     C_Timer.After(0, function()
       if ns.RightPanel and ns.RightPanel.Initialize then
         ns.RightPanel:Initialize()
+      end
+      if ns.LeftPanel and ns.LeftPanel.Initialize then
+        ns.LeftPanel:Initialize()
       end
     end)
     return

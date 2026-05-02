@@ -55,6 +55,11 @@ local LOCAL_DIFFICULTY_VISUALS = {
 local LFG_EYE_SYNC_DELAY = 0.05
 local lfgIdleVisualFallback = nil
 
+local function isStaticSessionMode()
+  local db = RW:DB()
+  return db and db.staticSessionMode == true
+end
+
 local DATE_FONT_FACES = {
   [0] = STANDARD_TEXT_FONT,
   [1] = "Fonts\\FRIZQT__.TTF",
@@ -1617,6 +1622,7 @@ end
 function RW:ApplyDynamicReservedVisuals()
   local D = ns.DynamicReservedSlots
   local order = { "reserved2", "reserved3", "reserved4" }
+  local inCombat = InCombatLockdown()
   if not self._buttons or not D or not D.BuildQueue then
     for i = 1, #order do
       local b = self._buttons and self._buttons[order[i]]
@@ -1638,7 +1644,11 @@ function RW:ApplyDynamicReservedVisuals()
     for i = 1, #order do
       local b = self._buttons[order[i]]
       if b then
-        b:Show()
+        if not inCombat then
+          b:Show()
+        else
+          self._dynRegenPending = true
+        end
         applyIconState(b, {
           texture = ICONS.reserved,
           desat = true,
@@ -1648,12 +1658,12 @@ function RW:ApplyDynamicReservedVisuals()
           b = 0.55,
         })
         if b._dynDefaultSecure then
-          if not InCombatLockdown() then
+          if not inCombat then
             D.ClearSecure(b._dynDefaultSecure)
+            b._dynDefaultSecure:Hide()
           else
             self._dynRegenPending = true
           end
-          b._dynDefaultSecure:Hide()
         end
         b._dynEntry = nil
         if b.EnableMouse then
@@ -1681,7 +1691,7 @@ function RW:ApplyDynamicReservedVisuals()
       local sec = slot._dynDefaultSecure
       if entry and sec then
         local ok = false
-        if not InCombatLockdown() then
+        if not inCombat then
           ok = D.ApplyEntryToSecureResolved(sec, entry)
           if ok and D.ValidateEntryContext and not D.ValidateEntryContext(entry) then
             ok = false
@@ -1692,8 +1702,12 @@ function RW:ApplyDynamicReservedVisuals()
           ok = sec.IsShown and sec:IsShown() and t ~= nil and t ~= ""
         end
         if ok then
-          slot:Show()
-          sec:Show()
+          if not inCombat then
+            slot:Show()
+            sec:Show()
+          else
+            self._dynRegenPending = true
+          end
           if slot.EnableMouse then
             slot:EnableMouse(false)
           end
@@ -1709,7 +1723,7 @@ function RW:ApplyDynamicReservedVisuals()
             g = tex and 1 or 0.72,
             b = tex and 1 or 0.72,
           })
-        elseif not InCombatLockdown() then
+        elseif not inCombat then
           sec:Hide()
           D.ClearSecure(sec)
           slot._dynEntry = nil
@@ -1723,7 +1737,6 @@ function RW:ApplyDynamicReservedVisuals()
         else
           self._dynRegenPending = true
           slot._dynEntry = nil
-          slot:Hide()
           if slot.EnableMouse then
             slot:EnableMouse(true)
           end
@@ -1733,14 +1746,18 @@ function RW:ApplyDynamicReservedVisuals()
         end
         slot:SetScript("OnClick", nil)
       else
-        slot:Hide()
+        if not inCombat then
+          slot:Hide()
+        else
+          self._dynRegenPending = true
+        end
         if sec then
-          if not InCombatLockdown() then
+          if not inCombat then
             D.ClearSecure(sec)
+            sec:Hide()
           else
             self._dynRegenPending = true
           end
-          sec:Hide()
         end
         slot._dynEntry = nil
         if slot.EnableMouse then
@@ -2135,8 +2152,9 @@ function RW:EnsureFrames()
       b:SetParent(self._grid)
     end
     if id == "reserved1" then
+      -- La ranura de teletransporte debe existir también en modo estático.
       self:EnsureTeleportReservedSlot(b)
-    elseif id == "reserved2" or id == "reserved3" or id == "reserved4" then
+    elseif not isStaticSessionMode() and (id == "reserved2" or id == "reserved3" or id == "reserved4") then
       self:EnsureDynamicReservedSlot(b)
     end
   end
@@ -2228,15 +2246,27 @@ function RW:Layout()
     b:ClearAllPoints()
     b:SetSize(cell, cell)
     b:SetPoint("TOPLEFT", self._grid, "TOPLEFT", col * (cell + gap), -(row * (cell + gap)))
-    local dynOn = ns.DynamicReservedSlots and ns.DynamicReservedSlots.IsFeatureEnabled and ns.DynamicReservedSlots.IsFeatureEnabled()
+    local dynOn = (not isStaticSessionMode())
+      and ns.DynamicReservedSlots
+      and ns.DynamicReservedSlots.IsFeatureEnabled
+      and ns.DynamicReservedSlots.IsFeatureEnabled()
     if (id == "reserved2" or id == "reserved3" or id == "reserved4") and dynOn then
-      b:Hide()
+      if not InCombatLockdown() then
+        b:Hide()
+      else
+        self._dynRegenPending = true
+      end
     else
-      b:Show()
+      if not InCombatLockdown() then
+        b:Show()
+      else
+        self._dynRegenPending = true
+      end
     end
     if id == "reserved1" then
+      -- La ranura de teletransporte debe existir también en modo estático.
       self:EnsureTeleportReservedSlot(b)
-    elseif id == "reserved2" or id == "reserved3" or id == "reserved4" then
+    elseif not isStaticSessionMode() and (id == "reserved2" or id == "reserved3" or id == "reserved4") then
       self:EnsureDynamicReservedSlot(b)
     end
   end
@@ -2323,8 +2353,32 @@ function RW:ApplyBehaviorsAndVisuals()
   })
   diff:SetScript("OnClick", openDifficultyUi)
 
+  -- Teletransporte (reserved1) siempre activo: clic izq default, der lista.
   self:ApplyTeleportReservedVisuals()
-  self:ApplyDynamicReservedVisuals()
+
+  if isStaticSessionMode() then
+    local order = { "reserved2", "reserved3", "reserved4" }
+    for i = 1, #order do
+      local b = self._buttons[order[i]]
+      if b then
+        applyIconState(b, {
+          texture = ICONS.reserved,
+          desat = true,
+          slashed = true,
+          r = 0.55,
+          g = 0.55,
+          b = 0.55,
+        })
+        b:SetScript("OnClick", nil)
+        if b.EnableMouse then
+          b:EnableMouse(true)
+        end
+      end
+    end
+    self:HideTeleportPopup()
+  else
+    self:ApplyDynamicReservedVisuals()
+  end
 
   local dt = self._buttons.datetime
   dt.text:SetText(formatNowText())
@@ -2337,6 +2391,16 @@ end
 
 function RW:EnsureTicker()
   if self._ticker then
+    return
+  end
+  if isStaticSessionMode() then
+    self._ticker = C_Timer.NewTicker(1, function()
+      local rw = ns.RightPanelWidgets
+      local dt = rw and rw._buttons and rw._buttons.datetime
+      if dt and dt.text then
+        dt.text:SetText(formatNowText())
+      end
+    end)
     return
   end
   self._ticker = C_Timer.NewTicker(1, function()
@@ -2352,30 +2416,42 @@ function RW:EnsureEventFrame()
   end
   local f = CreateFrame("Frame")
   self._eventFrame = f
-  local events = {
-    "PLAYER_ENTERING_WORLD",
-    "UPDATE_PENDING_MAIL",
-    "MAIL_INBOX_UPDATE",
-    "LFG_UPDATE",
-    "LFG_PROPOSAL_UPDATE",
-    "LFG_QUEUE_STATUS_UPDATE",
-    "QUEUE_STATUS_UPDATE",
-    "PLAYER_DIFFICULTY_CHANGED",
-    "ZONE_CHANGED_NEW_AREA",
-    "BAG_UPDATE",
-    "SPELLS_CHANGED",
-    "TOYS_UPDATED",
-    "NEW_TOY_ADDED",
-    "PLAYER_REGEN_ENABLED",
-    "PLAYER_REGEN_DISABLED",
-    "UPDATE_EXTRA_ACTION",
-    "QUEST_LOG_UPDATE",
-    "QUEST_WATCH_LIST_CHANGED",
-  }
+  local events
+  if isStaticSessionMode() then
+    -- Modo estatico: un solo refresh al entrar al mundo.
+    events = { "PLAYER_ENTERING_WORLD" }
+  else
+    events = {
+      "PLAYER_ENTERING_WORLD",
+      "UPDATE_PENDING_MAIL",
+      "MAIL_INBOX_UPDATE",
+      "LFG_UPDATE",
+      "LFG_PROPOSAL_UPDATE",
+      "LFG_QUEUE_STATUS_UPDATE",
+      "QUEUE_STATUS_UPDATE",
+      "PLAYER_DIFFICULTY_CHANGED",
+      "ZONE_CHANGED_NEW_AREA",
+      "BAG_UPDATE",
+      "SPELLS_CHANGED",
+      "TOYS_UPDATED",
+      "NEW_TOY_ADDED",
+      "PLAYER_REGEN_ENABLED",
+      "PLAYER_REGEN_DISABLED",
+      "UPDATE_EXTRA_ACTION",
+      "QUEST_LOG_UPDATE",
+      "QUEST_WATCH_LIST_CHANGED",
+    }
+  end
   for i = 1, #events do
     pcall(f.RegisterEvent, f, events[i])
   end
   f:SetScript("OnEvent", function(_, ev)
+    if isStaticSessionMode() then
+      if ev == "PLAYER_ENTERING_WORLD" and ns.RightPanelWidgets then
+        ns.RightPanelWidgets:Refresh()
+      end
+      return
+    end
     if ev == "PLAYER_REGEN_DISABLED" and ns.RightPanelWidgets and ns.RightPanelWidgets.HideTeleportPopup then
       ns.RightPanelWidgets:HideTeleportPopup()
     end
@@ -2391,7 +2467,29 @@ function RW:EnsureEventFrame()
   end)
 end
 
+function RW:SyncRuntimeMode()
+  local mode = isStaticSessionMode() and "static" or "dynamic"
+  if self._runtimeMode == mode then
+    return
+  end
+  self._runtimeMode = mode
+  if self._ticker and self._ticker.Cancel then
+    self._ticker:Cancel()
+  end
+  self._ticker = nil
+  if self._eventFrame then
+    if self._eventFrame.SetScript then
+      self._eventFrame:SetScript("OnEvent", nil)
+    end
+    if self._eventFrame.UnregisterAllEvents then
+      self._eventFrame:UnregisterAllEvents()
+    end
+  end
+  self._eventFrame = nil
+end
+
 function RW:Refresh()
+  self:SyncRuntimeMode()
   self:Layout()
   self:ApplyBehaviorsAndVisuals()
   self:EnsureTicker()

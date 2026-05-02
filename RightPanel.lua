@@ -26,7 +26,19 @@ local DEBUG_OUTLINE_BR_Y = -108
 local DEBUG_RIGHTCLICK_STRIP_GAP = 2
 --- Franja izquierda (azul): mitad de alto del verde, borde inferior alineado con el verde.
 local DEBUG_RIGHTCLICK_STRIP_LEFT_HEIGHT_FRAC = 0.5
+--- Panel izquierdo (nuevo): geometría de referencia tomada de la maqueta (bloques rojos).
+local LEFT_DEBUG_SECTORS = 5
+local LEFT_DEBUG_GROUP_GAP = 10
+local LEFT_DEBUG_GROUP_W_FROM_CENTER = 378 / 210
+local LEFT_DEBUG_GROUP_H_FROM_CENTER = 264 / 285
 local RIGHT_PANEL_CORE_ID = "rightPanel"
+local LEFT_FEED_FONT_FACES = {
+  [0] = STANDARD_TEXT_FONT,
+  [1] = "Fonts\\FRIZQT__.TTF",
+  [2] = "Fonts\\ARIALN.TTF",
+  [3] = "Fonts\\MORPHEUS.TTF",
+  [4] = "Fonts\\SKURRI.TTF",
+}
 --- Minimap en la zona superior del bloque central: casi al borde, dejando 2 ranuras abajo.
 local MINIMAP_TOP_PAD = 9
 local MINIMAP_SIDE_PAD = 24
@@ -37,6 +49,14 @@ local function isDebugBoundsEnabled(db)
     return false
   end
   local v = db.debugRightPanelBounds
+  return v == true or v == 1
+end
+
+local function isLeftDebugBoundsEnabled(db)
+  if not db then
+    return false
+  end
+  local v = db.debugLeftPanelBounds
   return v == true or v == 1
 end
 
@@ -173,8 +193,8 @@ local function createRightPanelDebugOverlay()
 end
 
 --- Franjas de referencia (debug): borde en color (r,g,b,a); relleno semitransparente.
-local function buildRightClickBarsStripFrame(globalName, frameLevel, r, g, b, a)
-  local f = CreateFrame("Frame", globalName, UIParent)
+local function buildRightClickBarsStripFrame(globalName, frameLevel, r, g, b, a, parent)
+  local f = CreateFrame("Frame", globalName, parent or UIParent)
   f:EnableMouse(false)
   f:SetMouseClickEnabled(false)
   f:SetFrameStrata("TOOLTIP")
@@ -209,7 +229,283 @@ local function buildRightClickBarsStripFrame(globalName, frameLevel, r, g, b, a)
   right:SetWidth(t)
   right:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
   right:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+  f._dbgFill = fill
+  f._dbgTop = top
+  f._dbgBot = bot
+  f._dbgLeft = left
+  f._dbgRight = right
+  f._dbgBaseR = r
+  f._dbgBaseG = g
+  f._dbgBaseB = b
+  f._dbgBaseA = a
   return f
+end
+
+local LEFT_DEBUG_COLORS = {
+  { 0.92, 0.40, 0.40, 0.9 },
+  { 0.90, 0.34, 0.34, 0.9 },
+  { 0.95, 0.52, 0.40, 0.9 },
+  { 0.96, 0.62, 0.40, 0.9 },
+  { 0.99, 0.70, 0.42, 0.9 },
+}
+
+--- Geometría no uniforme del panel izquierdo:
+--- - L2 al 50% de su ancho original.
+--- - Separaciones entre sectores al 25% (de 8px -> 2px en la maqueta base).
+--- BBox resultante normalizado: 348x252 px.
+local LEFT_DEBUG_LAYOUT = {
+  { id = "L1", x = 0 / 348, y = 0 / 252, w = 151 / 348, h = 113 / 252 },
+  { id = "L2", x = 0 / 348, y = 115 / 252, w = 17 / 348, h = 143 / 252 },
+  { id = "L3", x = 19 / 348, y = 115 / 252, w = 176 / 348, h = 143 / 252 },
+  { id = "L4", x = 197 / 348, y = 115 / 252, w = 151 / 348, h = 113 / 252 },
+  { id = "L5", x = 197 / 348, y = 230 / 252, w = 151 / 348, h = 22 / 252 },
+}
+
+local function setSectorDebugVisual(seg, showDebug)
+  if not seg then
+    return
+  end
+  local alphaFill = showDebug and 0.12 or 0
+  local alphaBorder = showDebug and (seg._dbgBaseA or 0.9) or 0
+  if seg._dbgFill and seg._dbgFill.SetColorTexture then
+    seg._dbgFill:SetColorTexture(seg._dbgBaseR or 1, seg._dbgBaseG or 1, seg._dbgBaseB or 1, alphaFill)
+  end
+  for _, r in ipairs({ seg._dbgTop, seg._dbgBot, seg._dbgLeft, seg._dbgRight }) do
+    if r and r.SetColorTexture then
+      r:SetColorTexture(seg._dbgBaseR or 1, seg._dbgBaseG or 1, seg._dbgBaseB or 1, alphaBorder)
+    end
+  end
+  if seg._chukieLabel then
+    seg._chukieLabel:SetShown(showDebug)
+  end
+end
+
+local function isTradeChannelName(channelName)
+  if type(channelName) ~= "string" or channelName == "" then
+    return false
+  end
+  local low = strlower(channelName)
+  local tradeToken = strlower(tostring(_G.TRADE or "Trade"))
+  if strfind(low, tradeToken, 1, true) then
+    return true
+  end
+  return strfind(low, "trade", 1, true) ~= nil
+end
+
+local function colorForChatType(chatType)
+  local ci = ChatTypeInfo and ChatTypeInfo[chatType]
+  if ci then
+    return ci.r or 1, ci.g or 1, ci.b or 1
+  end
+  return 1, 1, 1
+end
+
+function MP:EnsureLeftFeed()
+  if self._leftFeed and self._leftFeed.msg then
+    return
+  end
+  local sector1 = self._leftDebugSectors and self._leftDebugSectors[1]
+  if not sector1 then
+    return
+  end
+  local holder = CreateFrame("Frame", nil, sector1)
+  holder:SetPoint("TOPLEFT", sector1, "TOPLEFT", 2, -2)
+  holder:SetPoint("BOTTOMRIGHT", sector1, "BOTTOMRIGHT", -2, 2)
+  holder:EnableMouse(true)
+  holder:SetMouseClickEnabled(true)
+
+  local bg = holder:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints(holder)
+  bg:SetColorTexture(0, 0, 0, 0.45)
+
+  local msg = CreateFrame("ScrollingMessageFrame", nil, holder)
+  msg:SetPoint("TOPLEFT", holder, "TOPLEFT", 6, -6)
+  msg:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", -22, 6)
+  msg:SetJustifyH("LEFT")
+  msg:SetJustifyV("TOP")
+  if msg.SetIndentedWordWrap then
+    msg:SetIndentedWordWrap(true)
+  end
+  msg:SetFading(false)
+  msg:SetMaxLines(300)
+  if msg.SetHyperlinksEnabled then
+    msg:SetHyperlinksEnabled(true)
+  end
+  msg:EnableMouse(true)
+  msg:EnableMouseWheel(true)
+  msg:SetScript("OnMouseWheel", function(self, delta)
+    if delta > 0 then
+      self:ScrollUp()
+    else
+      self:ScrollDown()
+    end
+  end)
+  msg:SetScript("OnHyperlinkClick", function(self, link, text, button)
+    if ChatFrame_OnHyperlinkShow then
+      ChatFrame_OnHyperlinkShow(self, link, text, button)
+    elseif SetItemRef then
+      SetItemRef(link, text, button, self)
+    end
+  end)
+  msg:SetScript("OnHyperlinkEnter", function(self, link, text)
+    if ChatFrame_OnHyperlinkEnter then
+      ChatFrame_OnHyperlinkEnter(self, link, text)
+    end
+  end)
+  msg:SetScript("OnHyperlinkLeave", function(self, link, text)
+    if ChatFrame_OnHyperlinkLeave then
+      ChatFrame_OnHyperlinkLeave(self, link, text)
+    end
+  end)
+
+  local up = CreateFrame("Button", nil, holder, "UIPanelScrollUpButtonTemplate")
+  up:SetPoint("TOPRIGHT", holder, "TOPRIGHT", -2, -4)
+  up:SetScript("OnClick", function()
+    msg:ScrollUp()
+  end)
+  local down = CreateFrame("Button", nil, holder, "UIPanelScrollDownButtonTemplate")
+  down:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", -2, 4)
+  down:SetScript("OnClick", function()
+    msg:ScrollDown()
+  end)
+
+  self._leftFeed = {
+    holder = holder,
+    bg = bg,
+    msg = msg,
+    up = up,
+    down = down,
+  }
+end
+
+function MP:ApplyLeftFeedStyle()
+  self:EnsureLeftFeed()
+  local feed = self._leftFeed
+  if not (feed and feed.msg) then
+    return
+  end
+  local d = self:DB()
+  local alphaPct = tonumber(d.leftPanelFeedBgAlphaPercent) or 45
+  alphaPct = math.max(0, math.min(100, math.floor(alphaPct + 0.5)))
+  d.leftPanelFeedBgAlphaPercent = alphaPct
+  if feed.bg and feed.bg.SetColorTexture then
+    feed.bg:SetColorTexture(0, 0, 0, alphaPct / 100)
+  end
+
+  local autoFont = math.max(9, math.min(16, math.floor(((feed.holder:GetHeight() or 120) / 14) + 0.5)))
+  local manual = tonumber(d.leftPanelFeedFontSize) or 0
+  local fontPx = (manual > 0) and math.max(8, math.min(32, math.floor(manual + 0.5))) or autoFont
+  local path = LEFT_FEED_FONT_FACES[tonumber(d.leftPanelFeedFontFace) or 0] or STANDARD_TEXT_FONT
+  local ok = feed.msg:SetFont(path, fontPx, "")
+  if not ok then
+    feed.msg:SetFont("Fonts\\FRIZQT__.TTF", fontPx, "")
+  end
+
+  local maxLines = tonumber(d.leftPanelFeedHistoryMax) or 300
+  maxLines = math.max(50, math.min(2000, math.floor(maxLines + 0.5)))
+  d.leftPanelFeedHistoryMax = maxLines
+  feed.msg:SetMaxLines(maxLines)
+end
+
+function MP:AppendLeftFeed(chatType, text)
+  self:EnsureLeftFeed()
+  local feed = self._leftFeed
+  if not (feed and feed.msg and type(text) == "string" and text ~= "") then
+    return
+  end
+  local r, g, b = colorForChatType(chatType)
+  feed.msg:AddMessage(text, r, g, b)
+end
+
+function MP:EnsureLeftFeedEvents()
+  if self._leftFeedEventFrame then
+    return
+  end
+  local ev = CreateFrame("Frame")
+  self._leftFeedEventFrame = ev
+  ev:RegisterEvent("CHAT_MSG_LOOT")
+  ev:RegisterEvent("CHAT_MSG_MONEY")
+  ev:RegisterEvent("CHAT_MSG_CURRENCY")
+  ev:RegisterEvent("CHAT_MSG_TRADESKILLS")
+  ev:RegisterEvent("CHAT_MSG_CHANNEL")
+  ev:SetScript("OnEvent", function(_, event, ...)
+    local d = MP:DB()
+    if d.leftPanelEnabled == false then
+      return
+    end
+    if event == "CHAT_MSG_CHANNEL" then
+      local msg = ...
+      local channelName = select(9, ...)
+      if isTradeChannelName(channelName) then
+        MP:AppendLeftFeed("CHANNEL", string.format("[%s] %s", tostring(channelName or "Trade"), tostring(msg or "")))
+      end
+      return
+    end
+    local msg = ...
+    if event == "CHAT_MSG_LOOT" then
+      MP:AppendLeftFeed("LOOT", msg)
+    elseif event == "CHAT_MSG_MONEY" or event == "CHAT_MSG_CURRENCY" then
+      MP:AppendLeftFeed("MONEY", msg)
+    elseif event == "CHAT_MSG_TRADESKILLS" then
+      MP:AppendLeftFeed("TRADESKILLS", msg)
+    end
+  end)
+end
+
+function MP:HideLeftPanelDebugRefs()
+  if self._leftDebugGroup then
+    self._leftDebugGroup:Hide()
+  end
+  if self._leftFeed and self._leftFeed.holder then
+    self._leftFeed.holder:Hide()
+  end
+  if self._leftDebugSectors then
+    for i = 1, #self._leftDebugSectors do
+      local f = self._leftDebugSectors[i]
+      if f then
+        f:Hide()
+      end
+    end
+  end
+end
+
+function MP:EnsureLeftPanelDebugRefs()
+  if not self._leftDebugGroup then
+    local g = CreateFrame("Frame", "ChukieUi_LeftPanelDebugGroup", UIParent)
+    g:EnableMouse(false)
+    g:SetMouseClickEnabled(false)
+    g:SetFrameStrata("TOOLTIP")
+    g:SetFixedFrameStrata(true)
+    g:SetFrameLevel(65531)
+    self._leftDebugGroup = g
+  end
+  self._leftDebugSectors = self._leftDebugSectors or {}
+  for i = 1, LEFT_DEBUG_SECTORS do
+    if not self._leftDebugSectors[i] then
+      local c = LEFT_DEBUG_COLORS[i] or LEFT_DEBUG_COLORS[#LEFT_DEBUG_COLORS]
+      local seg = buildRightClickBarsStripFrame(
+        "ChukieUi_LeftPanelDebugSector" .. tostring(i),
+        65530 - i,
+        c[1],
+        c[2],
+        c[3],
+        c[4],
+        self._leftDebugGroup
+      )
+      local label = seg:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+      label:SetPoint("CENTER", seg, "CENTER", 0, 0)
+      label:SetText((LEFT_DEBUG_LAYOUT[i] and LEFT_DEBUG_LAYOUT[i].id) or ("L" .. tostring(i)))
+      label:SetTextColor(1, 1, 1, 0.95)
+      label:SetShadowOffset(1, -1)
+      label:SetShadowColor(0, 0, 0, 0.9)
+      seg._chukieLabel = label
+      self._leftDebugSectors[i] = seg
+    end
+  end
+end
+
+function MP:UpdateLeftPanelDebugRefs()
+  -- Compatibilidad legacy: el panel izquierdo ya no se gestiona desde RightPanel.
 end
 
 function MP:DB()
@@ -365,7 +661,7 @@ function MP:EnforceMinimapClusterFillRightPanel()
 end
 
 function MP:UpdateDebugRightPanelOutline()
-  local function hideDebugFrames()
+  local function hideRightDebugFrames()
     if self._debugOutline then
       self._debugOutline:Hide()
     end
@@ -379,7 +675,7 @@ function MP:UpdateDebugRightPanelOutline()
 
   local on = isDebugBoundsEnabled(self:DB())
   if not on then
-    hideDebugFrames()
+    hideRightDebugFrames()
     return
   end
   local host = self._rightPanelFrame
@@ -399,7 +695,7 @@ function MP:UpdateDebugRightPanelOutline()
     target = host
   end
   if not target then
-    hideDebugFrames()
+    hideRightDebugFrames()
     return
   end
   local f = self._debugOutline

@@ -1,6 +1,6 @@
 # Chukie UI
 
-Addon de interfaz para **World of Warcraft Retail** (TOC `## Interface: 120001`).
+Addon de interfaz para **World of Warcraft Retail** (TOC `## Interface: 120007`).
 
 ## Instalación
 

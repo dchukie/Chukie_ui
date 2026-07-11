@@ -1,5 +1,5 @@
 --[[ Panel de opciones: Esc → Opciones → AddOns → Chukie UI
-     Retail 12.0.1 (Interface 120001): categoría raíz + subcategorías verticales (p. ej. Panel derecho).
+     Retail 12.0.7 (Interface 120007): categoría raíz + subcategorías verticales (p. ej. Panel derecho).
      Controles: RegisterProxySetting + CreateCheckbox / CreateSlider. ]]
 
 local _, ns = ...
@@ -496,7 +496,9 @@ local function addTeleportDefaultDropdown(category)
     local c = Settings.CreateControlTextContainer()
     c:Add(0, "(Automático: primera válida)")
     for i, e in ipairs(catalogList()) do
-      c:Add(i, e.label)
+      local label = (ns.TeleportCatalog and ns.TeleportCatalog.GetDisplayLabel and ns.TeleportCatalog.GetDisplayLabel(e))
+        or e.label
+      c:Add(i, label)
     end
     return c:GetData()
   end
@@ -770,9 +772,6 @@ function ns.RegisterConfigPanel()
   rootCategory.ID = "ChukieUi"
 
   -- Raíz: opciones globales del addon (otros temas además del panel derecho).
-  rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Chukie-UI"))
-  rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("General"))
-  rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Tamaño"))
   rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Perfiles"))
 
   do
@@ -1124,7 +1123,8 @@ function ns.RegisterConfigPanel()
   addTeleportDefaultDropdown(minimapCategory)
   if ns.TeleportCatalog and ns.TeleportCatalog.GetList then
     for _, e in ipairs(ns.TeleportCatalog.GetList()) do
-      addTeleportGridVisibilityCheckbox(minimapCategory, e.key, e.label)
+      local label = (ns.TeleportCatalog.GetDisplayLabel and ns.TeleportCatalog.GetDisplayLabel(e)) or e.label
+      addTeleportGridVisibilityCheckbox(minimapCategory, e.key, label)
     end
   end
 

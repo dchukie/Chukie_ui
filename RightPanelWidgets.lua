@@ -19,6 +19,23 @@ local WIDGET_IDS = {
   "reserved4",
 }
 
+local function isCombatProtectedFrame(frame)
+  if not frame then
+    return false
+  end
+  if not InCombatLockdown or not InCombatLockdown() then
+    return false
+  end
+  return frame.IsProtected and frame:IsProtected()
+end
+
+local function teleportDisplayLabel(entry)
+  if ns.TeleportCatalog and ns.TeleportCatalog.GetDisplayLabel then
+    return ns.TeleportCatalog.GetDisplayLabel(entry)
+  end
+  return tostring(entry and (entry.label or entry.key) or "?")
+end
+
 local function getGridSlotBottomUpRightFirst(index, cols, rows)
   local total = cols * rows
   local i = math.max(1, math.min(tonumber(index) or 1, total)) - 1
@@ -1784,7 +1801,7 @@ function RW:EnsureTeleportReservedSlot(slotBtn)
   if slotBtn._tpTeleportBuilt and slotBtn._tpTeleportLayoutVersion == TP_SLOT_LAYOUT_VERSION then
     return
   end
-  if InCombatLockdown() and slotBtn._tpTeleportBuilt then
+  if InCombatLockdown() then
     self._teleportRegenPending = true
     return
   end
@@ -1832,10 +1849,8 @@ function RW:EnsureTeleportReservedSlot(slotBtn)
   if ovh and ovh.SetBlendMode then
     ovh:SetBlendMode("ADD")
   end
-  if ov.SetPassThroughButtons then
-    pcall(function()
-      ov:SetPassThroughButtons("LeftButton")
-    end)
+  if ov.SetPassThroughButtons and not isCombatProtectedFrame(ov) then
+    ov:SetPassThroughButtons("LeftButton")
   else
     sec:ClearAllPoints()
     sec:SetPoint("TOPLEFT", slotBtn, "TOPLEFT", 0, 0)
@@ -1857,8 +1872,8 @@ function RW:EnsureTeleportReservedSlot(slotBtn)
 end
 
 local function sortTeleportEntriesAlphabetically(a, b)
-  local la = strlower(tostring(a.label or a.key or ""))
-  local lb = strlower(tostring(b.label or b.key or ""))
+  local la = strlower(teleportDisplayLabel(a))
+  local lb = strlower(teleportDisplayLabel(b))
   if la ~= lb then
     return la < lb
   end
@@ -2008,7 +2023,7 @@ function RW:EnsureTeleportListModal()
       row:SetPoint("TOPRIGHT", self.content, "TOPRIGHT", -4, -((shown - 1) * rowH) - 6)
       applyTeleportSecureAttributes(row, entry)
       row.icon:SetTexture(teleportDefaultIconTexture(entry))
-      row.label:SetText(tostring(entry.label or entry.key or "?"))
+      row.label:SetText(teleportDisplayLabel(entry))
       row:Show()
     end
     for j = shown + 1, #self.rows do
@@ -2152,8 +2167,11 @@ function RW:EnsureFrames()
       b:SetParent(self._grid)
     end
     if id == "reserved1" then
-      -- La ranura de teletransporte debe existir también en modo estático.
-      self:EnsureTeleportReservedSlot(b)
+      if not InCombatLockdown() then
+        self:EnsureTeleportReservedSlot(b)
+      else
+        self._teleportRegenPending = true
+      end
     elseif not isStaticSessionMode() and (id == "reserved2" or id == "reserved3" or id == "reserved4") then
       self:EnsureDynamicReservedSlot(b)
     end
@@ -2203,9 +2221,16 @@ function RW:Layout()
   local left = self:GetLeftSlotFrame()
   local db = self:DB()
   if db.enabled == false or not left then
-    host:Hide()
+    if host and not isCombatProtectedFrame(host) then
+      host:Hide()
+    end
     return
   end
+  if isCombatProtectedFrame(host) then
+    self._pendingLayoutRefresh = true
+    return
+  end
+  self._pendingLayoutRefresh = nil
   if host:GetParent() ~= left then
     host:SetParent(left)
   end
@@ -2264,8 +2289,11 @@ function RW:Layout()
       end
     end
     if id == "reserved1" then
-      -- La ranura de teletransporte debe existir también en modo estático.
-      self:EnsureTeleportReservedSlot(b)
+      if not InCombatLockdown() then
+        self:EnsureTeleportReservedSlot(b)
+      else
+        self._teleportRegenPending = true
+      end
     elseif not isStaticSessionMode() and (id == "reserved2" or id == "reserved3" or id == "reserved4") then
       self:EnsureDynamicReservedSlot(b)
     end
@@ -2418,8 +2446,7 @@ function RW:EnsureEventFrame()
   self._eventFrame = f
   local events
   if isStaticSessionMode() then
-    -- Modo estatico: un solo refresh al entrar al mundo.
-    events = { "PLAYER_ENTERING_WORLD" }
+    events = { "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED" }
   else
     events = {
       "PLAYER_ENTERING_WORLD",
@@ -2446,12 +2473,6 @@ function RW:EnsureEventFrame()
     pcall(f.RegisterEvent, f, events[i])
   end
   f:SetScript("OnEvent", function(_, ev)
-    if isStaticSessionMode() then
-      if ev == "PLAYER_ENTERING_WORLD" and ns.RightPanelWidgets then
-        ns.RightPanelWidgets:Refresh()
-      end
-      return
-    end
     if ev == "PLAYER_REGEN_DISABLED" and ns.RightPanelWidgets and ns.RightPanelWidgets.HideTeleportPopup then
       ns.RightPanelWidgets:HideTeleportPopup()
     end
@@ -2460,6 +2481,18 @@ function RW:EnsureEventFrame()
       if rw._dynRegenPending then
         rw:ApplyDynamicReservedVisuals()
       end
+      if rw._teleportRegenPending then
+        rw._teleportRegenPending = nil
+      end
+      if rw._pendingLayoutRefresh then
+        rw._pendingLayoutRefresh = nil
+      end
+    end
+    if isStaticSessionMode() then
+      if (ev == "PLAYER_ENTERING_WORLD" or ev == "PLAYER_REGEN_ENABLED") and ns.RightPanelWidgets then
+        ns.RightPanelWidgets:Refresh()
+      end
+      return
     end
     if ns.RightPanelWidgets then
       ns.RightPanelWidgets:Refresh()

@@ -30,6 +30,16 @@ local FONT_FACES = {
   [4] = "Fonts\\SKURRI.TTF",
 }
 
+local function isCombatProtectedFrame(frame)
+  if not frame then
+    return false
+  end
+  if not InCombatLockdown or not InCombatLockdown() then
+    return false
+  end
+  return frame.IsProtected and frame:IsProtected()
+end
+
 local function db()
   if ns.Profile and ns.Profile.GetRightPanelModel then
     return ns.Profile:GetRightPanelModel()
@@ -305,6 +315,10 @@ function RS:Ensure()
     RS:RefreshText()
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED" then
       RS:HideBlizzardBagBar()
+      if event == "PLAYER_REGEN_ENABLED" and RS._pendingLayoutRefresh then
+        RS._pendingLayoutRefresh = nil
+        RS:Layout()
+      end
     end
   end)
   self._event = ef
@@ -378,6 +392,12 @@ function RS:Layout()
   if not slot then
     return
   end
+
+  if isCombatProtectedFrame(self._host) then
+    self._pendingLayoutRefresh = true
+    return
+  end
+  self._pendingLayoutRefresh = nil
 
   self._host:ClearAllPoints()
   self._host:SetAllPoints(slot)

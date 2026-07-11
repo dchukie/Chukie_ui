@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$ver = "0.1.0"
+$ver = "0.2.0"
 $stamp = Get-Date -Format "yyyy-MM-dd"
 $stage = Join-Path $env:TEMP ("ChukieUi_pkg_" + [guid]::NewGuid().ToString("N"))
 $pkg = Join-Path $stage "Chukie_Ui"

@@ -1,8 +1,8 @@
 # Chukie UI — estado del proyecto y respaldo
 
-**Instantánea:** 2026-04-19  
-**Versión en `Chukie_Ui.toc`:** 0.1.0  
-**Interface WoW:** 120001 (Retail 12.0.1)
+**Instantánea:** 2026-07-11  
+**Versión en `Chukie_Ui.toc`:** 0.2.0  
+**Interface WoW:** 120007 (Retail 12.0.7)
 
 Este documento describe el estado del addon **tal como se empaqueta en el ZIP de respaldo** y cómo restaurarlo.
 
@@ -86,6 +86,6 @@ Este documento describe el estado del addon **tal como se empaqueta en el ZIP de
 powershell -ExecutionPolicy Bypass -File releases\pack_backup.ps1
 ```
 
-Ejecútalo desde la raíz del addon `Chukie_Ui`. El ZIP queda en **`releases\`** con nombre `Chukie_Ui_v0.1.0_backup_YYYY-MM-DD.zip`. Para cambiar la versión del nombre, edita `$ver` en `releases\pack_backup.ps1` o alinea con `## Version:` del `.toc`.
+Ejecútalo desde la raíz del addon `Chukie_Ui`. El ZIP queda en **`releases\`** con nombre `Chukie_Ui_v0.2.0_backup_YYYY-MM-DD.zip`. Para cambiar la versión del nombre, edita `$ver` en `releases\pack_backup.ps1` o alinea con `## Version:` del `.toc`.
 
 El script copia los mismos archivos que el cliente necesita (lista alineada con el `.toc`) más `Bindings.xml`, `README.md`, `.gitignore`, `docs/`, `tools/` y `Media/`.

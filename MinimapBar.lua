@@ -1,4 +1,4 @@
---[[ Panel derecho (Retail 12.0.1, ## Interface: 120001 en el .toc).
+--[[ Panel derecho (Retail 12.0.7, ## Interface: 120007 en el .toc).
      - «Solo mapa»: STRIP_FRAMES + descendientes nombrados + marcos del cluster (TrackingFrame, ZoomIn/Out del mapa, InstanceDifficulty, IndicatorFrame…).
      - Addons: barra + política por botón (Defecto / Barra / Oculto) en minimapBar.buttonPolicy + discoveredOrder.
      - Barra de addons: el botón real (LibDBIcon, Zygor, etc.) permanece en el mapa pero oculto; la barra usa proxies
@@ -1225,39 +1225,33 @@ function MB:EnsureProxyIconHooks(orig)
   end)
 end
 
+--- Reenvía scripts de ratón del botón LibDBIcon original; en combate no reenvía clics
+--- (evita ADDON_ACTION_BLOCKED cuando el handler abre UI protegida, p. ej. BugSack).
+local function forwardProxyMouseScript(orig, scriptName, ...)
+  if not orig then
+    return
+  end
+  if InCombatLockdown() then
+    return
+  end
+  local h = orig:GetScript(scriptName)
+  if h then
+    h(orig, ...)
+  end
+end
+
 function MB:WireProxy(proxy, orig)
   proxy.chukieSource = orig
   orig.chukieActiveProxy = proxy
   proxy:RegisterForClicks("AnyUp", "AnyDown")
   proxy:SetScript("OnMouseDown", function(self, button)
-    local o = self.chukieSource
-    if not o then
-      return
-    end
-    local h = o:GetScript("OnMouseDown")
-    if h then
-      h(o, button)
-    end
+    forwardProxyMouseScript(self.chukieSource, "OnMouseDown", button)
   end)
   proxy:SetScript("OnMouseUp", function(self, button)
-    local o = self.chukieSource
-    if not o then
-      return
-    end
-    local h = o:GetScript("OnMouseUp")
-    if h then
-      h(o, button)
-    end
+    forwardProxyMouseScript(self.chukieSource, "OnMouseUp", button)
   end)
   proxy:SetScript("OnClick", function(self, button)
-    local o = self.chukieSource
-    if not o then
-      return
-    end
-    local h = o:GetScript("OnClick")
-    if h then
-      h(o, button)
-    end
+    forwardProxyMouseScript(self.chukieSource, "OnClick", button)
   end)
   proxy:SetScript("OnEnter", function(self)
     local o = self.chukieSource

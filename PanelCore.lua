@@ -9,6 +9,37 @@ ns.PanelCore = PC
 
 local ROOT_FRAME_NAME = "ChukieUi_Root"
 
+local function isCombatProtectedFrame(frame)
+  if not frame then
+    return false
+  end
+  if not InCombatLockdown or not InCombatLockdown() then
+    return false
+  end
+  return frame.IsProtected and frame:IsProtected()
+end
+
+function PC:EnsureCombatRetryWatcher()
+  if self._combatRetryWatcher then
+    return
+  end
+  local ev = CreateFrame("Frame")
+  self._combatRetryWatcher = ev
+  ev:RegisterEvent("PLAYER_REGEN_ENABLED")
+  ev:SetScript("OnEvent", function()
+    if not (self._pendingRootRefresh or self._pendingLayoutRefresh) then
+      return
+    end
+    self._pendingRootRefresh = nil
+    self._pendingLayoutRefresh = nil
+    if ns.RightPanel and ns.RightPanel.RequestApply then
+      ns.RightPanel:RequestApply(0)
+    elseif self.RefreshRootBounds then
+      self:RefreshRootBounds()
+    end
+  end)
+end
+
 local function sameNum(a, b)
   return math.abs((tonumber(a) or 0) - (tonumber(b) or 0)) < 0.0001
 end
@@ -104,6 +135,11 @@ function PC:RefreshRootBounds()
   if not root or not UIParent then
     return
   end
+  if isCombatProtectedFrame(root) then
+    self._pendingRootRefresh = true
+    self:EnsureCombatRetryWatcher()
+    return
+  end
   root:ClearAllPoints()
   root:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
   root:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, 0)
@@ -140,6 +176,11 @@ function PC:SetPanelBottomRight(panelId, width, height, offsetX, offsetY)
   local panel = self:EnsurePanel(panelId)
   if not panel then
     return nil
+  end
+  if isCombatProtectedFrame(panel) then
+    self._pendingLayoutRefresh = true
+    self:EnsureCombatRetryWatcher()
+    return panel
   end
   local w = math.max(1, tonumber(width) or 1)
   local h = math.max(1, tonumber(height) or 1)
@@ -178,6 +219,11 @@ function PC:LayoutSlotByInsets(panelId, slotId, left, top, right, bottom)
   if not f then
     return nil
   end
+  if isCombatProtectedFrame(f) then
+    self._pendingLayoutRefresh = true
+    self:EnsureCombatRetryWatcher()
+    return f
+  end
   local panel = self:EnsurePanel(panelId)
   if not panel then
     return nil
@@ -190,6 +236,11 @@ function PC:LayoutSlotByAttach(panelId, slotId, opts)
   local f = self:EnsureSlot(panelId, slotId)
   if not f then
     return nil
+  end
+  if isCombatProtectedFrame(f) then
+    self._pendingLayoutRefresh = true
+    self:EnsureCombatRetryWatcher()
+    return f
   end
   opts = opts or {}
   local rel = opts.relativeTo or self:EnsurePanel(panelId)

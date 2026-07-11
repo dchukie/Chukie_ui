@@ -97,8 +97,18 @@ local function subEnabled(groupKey, key)
   return current == true or current == 1
 end
 
+local function isUsableChatString(s)
+  if s == nil then
+    return false
+  end
+  if issecretvalue and issecretvalue(s) then
+    return false
+  end
+  return type(s) == "string" and s ~= ""
+end
+
 local function isTradeChannelName(channelName)
-  if type(channelName) ~= "string" or channelName == "" then
+  if not isUsableChatString(channelName) then
     return false
   end
   local low = strlower(channelName)
@@ -175,7 +185,7 @@ local function getPlayerShortName()
 end
 
 local function shortSenderName(name)
-  if type(name) ~= "string" or name == "" then
+  if not isUsableChatString(name) then
     return nil
   end
   local out = name
@@ -190,6 +200,9 @@ local function shortSenderName(name)
 end
 
 local function withSenderPrefix(text, sender)
+  if issecretvalue and issecretvalue(text) then
+    return nil
+  end
   local msg = tostring(text or "")
   local s = shortSenderName(sender)
   if not s then
@@ -595,10 +608,24 @@ function LP:EnsureEvents()
     if d.leftPanelEnabled == false then
       return
     end
+    if InCombatLockdown and InCombatLockdown() then
+      if event:match("^CHAT_MSG_") or event == "UI_ERROR_MESSAGE" or event == "UI_INFO_MESSAGE" then
+        return
+      end
+    end
     if event == "CHAT_MSG_CHANNEL" then
       local msg, sender = ...
+      if issecretvalue and (issecretvalue(msg) or issecretvalue(sender)) then
+        return
+      end
       local channelName = select(9, ...)
+      if issecretvalue and issecretvalue(channelName) then
+        return
+      end
       local line = withSenderPrefix(msg, sender)
+      if not line then
+        return
+      end
       if isTradeChannelName(channelName) then
         if subEnabled("leftPanelL1Subs", "tradeChannel") then
           LP:AppendLootTrade("CHANNEL", string.format("[%s] %s", tostring(channelName or "Trade"), tostring(line or "")))
@@ -610,13 +637,22 @@ function LP:EnsureEvents()
     elseif event == "CHAT_MSG_COMMUNITIES_CHANNEL" then
       if (not mirrorGeneral) and subEnabled("leftPanelL3Subs", "communities") then
         local msg, sender = ...
+        if issecretvalue and (issecretvalue(msg) or issecretvalue(sender)) then
+          return
+        end
         local channelLabel = select(4, ...)
         local line = withSenderPrefix(msg, sender)
+        if not line then
+          return
+        end
         LP:AppendGeneral("CHANNEL", string.format("[%s] %s", tostring(channelLabel or "Comunidad"), tostring(line or "")))
       end
       return
     end
     local msg, sender = ...
+    if issecretvalue and (issecretvalue(msg) or issecretvalue(sender)) then
+      return
+    end
     if event == "CHAT_MSG_LOOT" then
       if subEnabled("leftPanelL1Subs", "loot") then
         LP:AppendLootTrade("LOOT", msg)

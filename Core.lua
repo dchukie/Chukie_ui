@@ -1,6 +1,6 @@
 --[[ Chukie UI — núcleo del addon. Aquí se fusionan opciones por defecto,
      se aplican CVars y puedes ir añadiendo hooks a marcos de la UI.
-     Documentación / cliente objetivo: Retail 12.0.1 (Interface 120001 en Chukie_Ui.toc). ]]
+     Documentación / cliente objetivo: Retail 12.0.7 (Interface 120007 en Chukie_Ui.toc). ]]
 
 local ADDON_NAME, ns = ...
 

@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$ver = "0.2.0"
+$ver = "0.2.1"
 $stamp = Get-Date -Format "yyyy-MM-dd"
 $stage = Join-Path $env:TEMP ("ChukieUi_pkg_" + [guid]::NewGuid().ToString("N"))
 $pkg = Join-Path $stage "Chukie_Ui"
@@ -15,17 +15,26 @@ foreach ($f in @(
     "Profiles.lua",
     "PanelCore.lua",
     "RightPanel.lua",
+    "LeftPanel.lua",
     "RightStrip.lua",
     "MinimapBar.lua",
     "TeleportCatalog.lua",
     "DynamicReservedSlots.lua",
+    "MiniActionBar.lua",
     "RightPanelWidgets.lua",
+    "AlertsMedia.lua",
+    "Alerts.lua",
+    "AlertsManager.lua",
     "ConfigPanel.lua"
   )) {
   $srcF = Join-Path $root $f
   if (Test-Path $srcF) {
     Copy-Item $srcF $pkg
   }
+}
+$libs = Join-Path $root "Libs"
+if (Test-Path $libs) {
+  Copy-Item $libs $pkg -Recurse
 }
 $tools = Join-Path $root "tools"
 if (Test-Path $tools) {

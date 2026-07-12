@@ -1129,15 +1129,29 @@ function ns.RegisterConfigPanel()
   end
 
   minimapLayout:AddInitializer(
-    CreateSettingsListSectionHeaderInitializer("Ranuras dinámicas (celdas reservadas 2, 3 y 4)")
+    CreateSettingsListSectionHeaderInitializer("Mini barra de acciones (celdas 2, 3 y 4)")
+  )
+  addBoolRightWidget(
+    minimapCategory,
+    "ChukieUi_RPW_miniActionBarEnabled",
+    "miniActionBarEnabled",
+    "Barra de 3 acciones (Action Bar 6)",
+    "Convierte las tres celdas reservadas en botones de acción normales (slots 145–147, Action Bar 6 / MultiBar5). "
+      .. "Acepta cualquier hechizo, macro o ítem (no usa Bonus Bar 6 / tótems). "
+      .. "Arrastra como en Dominos o una barra Blizzard. "
+      .. "Teclas: Esc → Controles → «Chukie UI - mini barra acción 1/2/3», o Multi Action Bar 5 botones 1–3.",
+    true
+  )
+  minimapLayout:AddInitializer(
+    CreateSettingsListSectionHeaderInitializer("Ranuras dinámicas (alternativa si la mini barra está off)")
   )
   addBoolRightWidget(
     minimapCategory,
     "ChukieUi_RPW_dynamicActionSlotsEnabled",
     "dynamicActionSlotsEnabled",
     "Activar detección automática",
-    "Rellena esas tres celdas en orden fijo: (1) botón de acción extra, (2) habilidad de zona del jugador, (3) ítems especiales de misiones que tengas rastreadas y que estén en la bolsa. "
-      .. "Las teclas no enlazan a un hechizo concreto: asignan un clic izquierdo al botón seguro de cada celda. Configúralas en Esc → Controles → Teclas de acción rápida → categoría «Add-ons» (tres líneas «Chukie UI - ranura dinámica 2/3/4»).",
+    "Solo aplica si «Barra de 3 acciones» está desactivada. Rellena las tres celdas: (1) acción extra, (2) habilidad de zona, (3) ítems de misiones rastreadas. "
+      .. "Teclas en Esc → Controles → «Chukie UI - ranura dinámica 2/3/4».",
     true
   )
   addBoolRightWidget(
@@ -1145,7 +1159,7 @@ function ns.RegisterConfigPanel()
     "ChukieUi_RPW_staticSessionMode",
     "staticSessionMode",
     "Modo estático (sin detección dinámica)",
-    "Solo afecta al panel derecho: desactiva la lógica situacional de combate/zona/quests en las ranuras reservadas para reducir procesos y evitar errores de show/hide dinámico.",
+    "Solo afecta si la mini barra está off: desactiva la lógica situacional de combate/zona/quests en las ranuras reservadas.",
     true
   )
 
@@ -1658,9 +1672,109 @@ function ns.RegisterConfigPanel()
     true
   )
 
+  local alertsCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Alertas (CD / procs)")
+  local alertsLayout = SettingsPanel:GetLayout(alertsCategory)
+
+  local function alertsDB()
+    if ns.Profile and ns.Profile.GetAlertsModel then
+      return ns.Profile:GetAlertsModel()
+    end
+    local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
+    p.alerts = p.alerts or { enabled = false, nextId = 1, rules = {} }
+    if ns.Alerts and ns.Alerts.EnsureSchema then
+      ns.Alerts:EnsureSchema(p.alerts)
+    end
+    return p.alerts
+  end
+
+  local function refreshAlerts()
+    if ns.Alerts and ns.Alerts.Refresh then
+      ns.Alerts:Refresh()
+    end
+  end
+
+  alertsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Módulo"))
+  do
+    local function get()
+      return alertsDB().enabled == true
+    end
+    local function set(v)
+      alertsDB().enabled = (v == true or v == 1) and true or false
+      refreshAlerts()
+    end
+    local setting = Settings.RegisterProxySetting(
+      alertsCategory,
+      "ChukieUi_Alerts_enabled",
+      Settings.VarType.Boolean,
+      "Activar módulo de alertas",
+      Settings.Default.False,
+      get,
+      set
+    )
+    Settings.CreateCheckbox(
+      alertsCategory,
+      setting,
+      "Las alertas se apilan por perfil. Usá «Gestionar alertas…» o /chukie-aura para abrir el wizard (cierra Opciones para pantallar limpia)."
+    )
+  end
+
+  alertsLayout:AddInitializer(
+    CreateSettingsButtonInitializer(
+      "",
+      "Gestionar alertas…",
+      function()
+        if ns.AlertsManager and ns.AlertsManager.Show then
+          ns.AlertsManager:Show()
+        else
+          print("|cffff9900Chukie UI|r: gestor de alertas no disponible.")
+        end
+      end,
+      "Abre la ventana de alertas y cierra Opciones (también: /chukie-aura).",
+      true,
+      nil,
+      nil
+    )
+  )
+
+  alertsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Media cargada"))
+  do
+    local c = (ns.Alerts and ns.Alerts.GetMediaCounts and ns.Alerts:GetMediaCounts()) or {}
+    local glowOk = (ns.Alerts and ns.Alerts.GetLibCustomGlow and ns.Alerts:GetLibCustomGlow()) and "sí" or "no"
+    local nRules = #(alertsDB().rules or {})
+    alertsLayout:AddInitializer(
+      CreateSettingsListSectionHeaderInitializer(
+        string.format(
+          "Texturas %d · shapes %d · rings %d · borders %d · bars %d",
+          tonumber(c.textures) or 0,
+          tonumber(c.shapes) or 0,
+          tonumber(c.rings) or 0,
+          tonumber(c.borders) or 0,
+          tonumber(c.statusbars) or 0
+        )
+      )
+    )
+    alertsLayout:AddInitializer(
+      CreateSettingsListSectionHeaderInitializer(
+        string.format(
+          "Fonts %d · sounds %d · powerAuras %d · paSounds %d",
+          tonumber(c.fonts) or 0,
+          tonumber(c.sounds) or 0,
+          tonumber(c.powerAuras) or 0,
+          tonumber(c.powerAurasSounds) or 0
+        )
+      )
+    )
+    alertsLayout:AddInitializer(
+      CreateSettingsListSectionHeaderInitializer(
+        string.format("LibCustomGlow: %s · reglas en este perfil: %d", glowOk, nRules)
+      )
+    )
+  end
+
   ns.settingsCategoryID = rootCategory:GetID()
   ns.minimapCategoryID = minimapCategory:GetID()
   ns.minimapButtonsCategoryID = minimapCategory:GetID()
+  ns.alertsCategoryID = alertsCategory:GetID()
   ns.configPanelRegistered = true
 end
 

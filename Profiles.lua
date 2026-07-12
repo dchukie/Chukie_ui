@@ -25,6 +25,7 @@ local function cloneProfileData(src)
     panels = { rightPanel = {} },
     widgets = { minimapBar = {}, rightPanelWidgets = {} },
     cvars = {},
+    alerts = { enabled = false, nextId = 1, rules = {} },
   }
   for k, v in pairs(src.minimapPosition or {}) do
     t.minimapPosition[k] = v
@@ -72,6 +73,53 @@ local function cloneProfileData(src)
   for k, v in pairs(src.cvars or {}) do
     t.cvars[k] = v
   end
+  if type(src.alerts) == "table" then
+    t.alerts.enabled = src.alerts.enabled == true
+    t.alerts.nextId = math.floor(tonumber(src.alerts.nextId) or 1)
+    if t.alerts.nextId < 1 then
+      t.alerts.nextId = 1
+    end
+    t.alerts.rules = {}
+    if type(src.alerts.rules) == "table" then
+      for i = 1, #src.alerts.rules do
+        local r = src.alerts.rules[i]
+        if type(r) == "table" then
+          local nr = {}
+          for rk, rv in pairs(r) do
+            if rk == "point" and type(rv) == "table" then
+              nr.point = { rv[1], rv[2], rv[3] }
+            elseif rk == "color" and type(rv) == "table" then
+              nr.color = { tonumber(rv[1]) or 1, tonumber(rv[2]) or 1, tonumber(rv[3]) or 1 }
+            elseif type(rv) ~= "table" then
+              nr[rk] = rv
+            end
+          end
+          t.alerts.rules[#t.alerts.rules + 1] = nr
+        end
+      end
+    end
+    -- Preserve legacy cd/proc so EnsureSchema can migrate after clone.
+    if type(src.alerts.cd) == "table" then
+      t.alerts.cd = {}
+      for rk, rv in pairs(src.alerts.cd) do
+        if rk == "point" and type(rv) == "table" then
+          t.alerts.cd.point = { rv[1], rv[2], rv[3] }
+        elseif type(rv) ~= "table" then
+          t.alerts.cd[rk] = rv
+        end
+      end
+    end
+    if type(src.alerts.proc) == "table" then
+      t.alerts.proc = {}
+      for rk, rv in pairs(src.alerts.proc) do
+        if rk == "point" and type(rv) == "table" then
+          t.alerts.proc.point = { rv[1], rv[2], rv[3] }
+        elseif type(rv) ~= "table" then
+          t.alerts.proc[rk] = rv
+        end
+      end
+    end
+  end
   return t
 end
 
@@ -87,6 +135,17 @@ local function ensurePanelWidgetSchema(p)
   --- Compatibilidad: rutas legacy apuntan al mismo objeto.
   p.minimapPosition = rightPanel
   p.minimapBar = minimapBar
+  p.alerts = p.alerts or { enabled = false, nextId = 1, rules = {} }
+  p.alerts.rules = p.alerts.rules or {}
+  if ns.Alerts and ns.Alerts.EnsureSchema then
+    ns.Alerts:EnsureSchema(p.alerts)
+  end
+end
+
+function ns.Profile:GetAlertsModel()
+  local p = self:GetActive()
+  ensurePanelWidgetSchema(p)
+  return p.alerts
 end
 
 function ns.Profile:Migrate()

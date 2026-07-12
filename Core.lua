@@ -6,6 +6,12 @@ local ADDON_NAME, ns = ...
 
 --- Textos en el panel de teclas (Bindings.xml en la raíz; no incluir en el .toc).
 --- El cuerpo de cada <Binding> se ejecuta como Lua: debe ser código válido (p. ej. solo comentarios «-- …»), no texto suelto ni un «0» suelto.
+_G["BINDING_NAME_CLICK ChukieUi_MiniAct1:LeftButton"] =
+  "Chukie UI - mini barra acción 1 (Action Bar 6 / slot 145)"
+_G["BINDING_NAME_CLICK ChukieUi_MiniAct2:LeftButton"] =
+  "Chukie UI - mini barra acción 2 (Action Bar 6 / slot 146)"
+_G["BINDING_NAME_CLICK ChukieUi_MiniAct3:LeftButton"] =
+  "Chukie UI - mini barra acción 3 (Action Bar 6 / slot 147)"
 _G["BINDING_NAME_CLICK ChukieDynAct2:LeftButton"] =
   "Chukie UI - ranura dinámica 2 (extra / zona / misión)"
 _G["BINDING_NAME_CLICK ChukieDynAct3:LeftButton"] =
@@ -110,7 +116,9 @@ local defaults = {
       teleportDefaultKey = nil,
       --- Por key del catálogo: false = no mostrar en grilla (clic derecho); nil/true = permitir si es válida.
       teleportGridVisibility = {},
-      --- Ranuras 2–4: acción extra / habilidad de zona / ítem de misión rastreada (Bindings.xml).
+      --- Ranuras 2–4 como barra de 3 acciones (slots 145–147 / Action Bar 6). Estilo Dominos.
+      miniActionBarEnabled = true,
+      --- Ranuras 2–4: acción extra / habilidad de zona / ítem de misión (solo si miniActionBarEnabled = false).
       dynamicActionSlotsEnabled = true,
       --- Si está activo, deshabilita detección dinámica y deja el panel derecho en modo estático liviano.
       staticSessionMode = true,
@@ -232,6 +240,12 @@ local defaults = {
   cvars = {
     lootUnderMouse = "1",
   },
+  --- Alertas CD / procs: lista apilable `rules` por perfil.
+  alerts = {
+    enabled = false,
+    nextId = 1,
+    rules = {},
+  },
 }
 
 ns.defaults = defaults
@@ -286,6 +300,9 @@ function ns.OnProfileChanged()
   if ns.LeftPanel and ns.LeftPanel.Refresh then
     ns.LeftPanel:Refresh()
   end
+  if ns.Alerts and ns.Alerts.OnProfileChanged then
+    ns.Alerts:OnProfileChanged()
+  end
 end
 
 function ns.ApplyUiTweaks()
@@ -323,10 +340,16 @@ frame:SetScript("OnEvent", function(_, event, addon)
   end
   if event == "PLAYER_LOGIN" then
     applyCvars()
+    if ns.Alerts and ns.Alerts.Refresh then
+      ns.Alerts:Refresh()
+    end
     return
   end
   if event == "PLAYER_ENTERING_WORLD" then
     ns.ApplyUiTweaks()
+    if ns.Alerts and ns.Alerts.Refresh then
+      ns.Alerts:Refresh()
+    end
   end
 end)
 
@@ -436,6 +459,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     end
   end
   print("|cff00ff00Chukie UI|r — /chukieui config | panel | minimapa | botones | mmpos <x> <y> | mmarrow …")
+  print("|cff00ff00Chukie UI|r — alertas: /chukie-aura")
   if p then
     print("  Perfil: " .. tostring(ns.Profile:GetCurrentName()) .. " — " .. (p.enabled and "activado" or "desactivado"))
   end

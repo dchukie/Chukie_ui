@@ -77,6 +77,14 @@ local function isStaticSessionMode()
   return db and db.staticSessionMode == true
 end
 
+local function isMiniActionBarEnabled()
+  if ns.MiniActionBar and ns.MiniActionBar.IsEnabled then
+    return ns.MiniActionBar.IsEnabled()
+  end
+  local db = RW:DB()
+  return not db or db.miniActionBarEnabled ~= false
+end
+
 local DATE_FONT_FACES = {
   [0] = STANDARD_TEXT_FONT,
   [1] = "Fonts\\FRIZQT__.TTF",
@@ -1414,6 +1422,10 @@ local function teleportDefaultIconTexture(entry)
 end
 
 --- start, duration en segundos de reloj de juego (GetTime); modRate para SetCooldown.
+local function isSecretNumber(v)
+  return issecretvalue and issecretvalue(v) or false
+end
+
 local function getTeleportEntryCooldownTimes(entry)
   if not entry then
     return 0, 0, 1
@@ -1429,9 +1441,13 @@ local function getTeleportEntryCooldownTimes(entry)
       if dur == nil and info.durationMS then
         dur = info.durationMS * 0.001
       end
+      local modRate = info.modRate
+      if isSecretNumber(st) or isSecretNumber(dur) or isSecretNumber(modRate) then
+        return 0, 0, 1
+      end
       st = tonumber(st) or 0
       dur = tonumber(dur) or 0
-      return st, dur, tonumber(info.modRate) or 1
+      return st, dur, tonumber(modRate) or 1
     end
   end
   if (entry.type == "item" or entry.type == "toy") and C_Item and C_Item.GetItemCooldown then
@@ -1439,7 +1455,13 @@ local function getTeleportEntryCooldownTimes(entry)
     if type(a) == "table" then
       local st = a.startTimeSeconds or a.startTime or 0
       local dur = a.durationSeconds or a.duration or 0
+      if isSecretNumber(st) or isSecretNumber(dur) then
+        return 0, 0, 1
+      end
       return tonumber(st) or 0, tonumber(dur) or 0, 1
+    end
+    if isSecretNumber(a) or isSecretNumber(b) then
+      return 0, 0, 1
     end
     if type(a) == "number" then
       return tonumber(a) or 0, tonumber(b) or 0, 1
@@ -1447,9 +1469,30 @@ local function getTeleportEntryCooldownTimes(entry)
   end
   if (entry.type == "item" or entry.type == "toy") and GetItemCooldown then
     local st, dur = GetItemCooldown(entry.id)
+    if isSecretNumber(st) or isSecretNumber(dur) then
+      return 0, 0, 1
+    end
     return tonumber(st) or 0, tonumber(dur) or 0, 1
   end
   return 0, 0, 1
+end
+
+local function safeCooldownSet(cd, start, duration, modRate)
+  if not cd then
+    return
+  end
+  if isSecretNumber(start) or isSecretNumber(duration) or isSecretNumber(modRate) then
+    pcall(function()
+      cd:Clear()
+    end)
+    return
+  end
+  local ok = pcall(cd.SetCooldown, cd, tonumber(start) or 0, tonumber(duration) or 0, tonumber(modRate) or 1)
+  if not ok then
+    pcall(function()
+      cd:Clear()
+    end)
+  end
 end
 
 local function ensureTeleportCooldownFrame(slotBtn, baseLevel)
@@ -1509,7 +1552,7 @@ function RW:RefreshTeleportReservedCooldown(slotBtn)
   end
   local start, duration, modRate = getTeleportEntryCooldownTimes(entry)
   if duration and duration > 0.001 and start and start > 0 then
-    cd:SetCooldown(start, duration, modRate or 1)
+    safeCooldownSet(cd, start, duration, modRate or 1)
     cd:Show()
   else
     cd:Clear()
@@ -1585,7 +1628,7 @@ function RW:RefreshDynamicReservedCooldown(slotBtn)
   end
   local start, duration, modRate = ns.DynamicReservedSlots.GetEntryCooldownTimes(entry)
   if duration and duration > 0.001 and start and start > 0 then
-    cd:SetCooldown(start, duration, modRate or 1)
+    safeCooldownSet(cd, start, duration, modRate or 1)
     cd:Show()
   else
     cd:Clear()
@@ -2172,6 +2215,8 @@ function RW:EnsureFrames()
       else
         self._teleportRegenPending = true
       end
+    elseif (id == "reserved2" or id == "reserved3" or id == "reserved4") and isMiniActionBarEnabled() then
+      -- Mini barra: ActionBarButtonTemplate vía ns.MiniActionBar
     elseif not isStaticSessionMode() and (id == "reserved2" or id == "reserved3" or id == "reserved4") then
       self:EnsureDynamicReservedSlot(b)
     end
@@ -2271,7 +2316,9 @@ function RW:Layout()
     b:ClearAllPoints()
     b:SetSize(cell, cell)
     b:SetPoint("TOPLEFT", self._grid, "TOPLEFT", col * (cell + gap), -(row * (cell + gap)))
-    local dynOn = (not isStaticSessionMode())
+    local miniOn = isMiniActionBarEnabled()
+    local dynOn = (not miniOn)
+      and (not isStaticSessionMode())
       and ns.DynamicReservedSlots
       and ns.DynamicReservedSlots.IsFeatureEnabled
       and ns.DynamicReservedSlots.IsFeatureEnabled()
@@ -2294,9 +2341,17 @@ function RW:Layout()
       else
         self._teleportRegenPending = true
       end
+    elseif (id == "reserved2" or id == "reserved3" or id == "reserved4") and miniOn then
+      -- Attach happens in ApplyBehaviorsAndVisuals / ApplyMiniActionBar
     elseif not isStaticSessionMode() and (id == "reserved2" or id == "reserved3" or id == "reserved4") then
       self:EnsureDynamicReservedSlot(b)
     end
+  end
+
+  if isMiniActionBarEnabled() and ns.MiniActionBar and ns.MiniActionBar.AttachToSlots then
+    ns.MiniActionBar:AttachToSlots(self._buttons)
+  elseif ns.MiniActionBar and ns.MiniActionBar.Detach then
+    ns.MiniActionBar:Detach()
   end
 
   local dt = self._buttons.datetime
@@ -2384,7 +2439,11 @@ function RW:ApplyBehaviorsAndVisuals()
   -- Teletransporte (reserved1) siempre activo: clic izq default, der lista.
   self:ApplyTeleportReservedVisuals()
 
-  if isStaticSessionMode() then
+  if isMiniActionBarEnabled() and ns.MiniActionBar then
+    if ns.MiniActionBar.AttachToSlots then
+      ns.MiniActionBar:AttachToSlots(self._buttons)
+    end
+  elseif isStaticSessionMode() then
     local order = { "reserved2", "reserved3", "reserved4" }
     for i = 1, #order do
       local b = self._buttons[order[i]]
@@ -2400,6 +2459,9 @@ function RW:ApplyBehaviorsAndVisuals()
         b:SetScript("OnClick", nil)
         if b.EnableMouse then
           b:EnableMouse(true)
+        end
+        if b.icon then
+          b.icon:Show()
         end
       end
     end
@@ -2446,7 +2508,8 @@ function RW:EnsureEventFrame()
   self._eventFrame = f
   local events
   if isStaticSessionMode() then
-    events = { "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED" }
+    -- Modo estático / mini barra: refresh al entrar al mundo y al salir de combate.
+    events = { "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "UPDATE_BINDINGS" }
   else
     events = {
       "PLAYER_ENTERING_WORLD",
@@ -2487,8 +2550,11 @@ function RW:EnsureEventFrame()
       if rw._pendingLayoutRefresh then
         rw._pendingLayoutRefresh = nil
       end
+      if ns.MiniActionBar and ns.MiniActionBar.OnRegenEnabled then
+        ns.MiniActionBar:OnRegenEnabled()
+      end
     end
-    if isStaticSessionMode() then
+    if isStaticSessionMode() and not isMiniActionBarEnabled() then
       if (ev == "PLAYER_ENTERING_WORLD" or ev == "PLAYER_REGEN_ENABLED") and ns.RightPanelWidgets then
         ns.RightPanelWidgets:Refresh()
       end
@@ -2501,7 +2567,7 @@ function RW:EnsureEventFrame()
 end
 
 function RW:SyncRuntimeMode()
-  local mode = isStaticSessionMode() and "static" or "dynamic"
+  local mode = isMiniActionBarEnabled() and "minibar" or (isStaticSessionMode() and "static" or "dynamic")
   if self._runtimeMode == mode then
     return
   end

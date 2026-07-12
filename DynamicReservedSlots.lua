@@ -352,14 +352,21 @@ function D.GetEntryIcon(entry)
 end
 
 local function cooldownFromSpellOrItem(spellId, itemId)
+  local function secret(v)
+    return issecretvalue and issecretvalue(v) or false
+  end
   if spellId and C_Spell and C_Spell.GetSpellCooldown then
     local info = C_Spell.GetSpellCooldown(spellId)
     if info then
       local st = info.startTime or (info.startTimeMS and info.startTimeMS * 0.001) or 0
       local dur = info.duration or (info.durationMS and info.durationMS * 0.001) or 0
+      local modRate = info.modRate
+      if secret(st) or secret(dur) or secret(modRate) then
+        return 0, 0, 1
+      end
       st = tonumber(st) or 0
       dur = tonumber(dur) or 0
-      return st, dur, tonumber(info.modRate) or 1
+      return st, dur, tonumber(modRate) or 1
     end
   end
   if itemId and C_Item and C_Item.GetItemCooldown then
@@ -367,7 +374,13 @@ local function cooldownFromSpellOrItem(spellId, itemId)
     if type(a) == "table" then
       local st = a.startTimeSeconds or a.startTime or 0
       local dur = a.durationSeconds or a.duration or 0
+      if secret(st) or secret(dur) then
+        return 0, 0, 1
+      end
       return tonumber(st) or 0, tonumber(dur) or 0, 1
+    end
+    if secret(a) or secret(b) then
+      return 0, 0, 1
     end
     if type(a) == "number" then
       return tonumber(a) or 0, tonumber(b) or 0, 1
@@ -375,22 +388,16 @@ local function cooldownFromSpellOrItem(spellId, itemId)
   end
   if itemId and GetItemCooldown then
     local st, dur = GetItemCooldown(itemId)
+    if secret(st) or secret(dur) then
+      return 0, 0, 1
+    end
     return tonumber(st) or 0, tonumber(dur) or 0, 1
   end
   return 0, 0, 1
 end
 
 local function cooldownFromBlizzardActionButton(btn)
-  if not btn then
-    return 0, 0, 1
-  end
-  local cd = btn.cooldown
-  if cd and cd.GetCooldownTimes then
-    local ok, a, b, c = pcall(cd.GetCooldownTimes, cd)
-    if ok and type(a) == "number" and type(b) == "number" then
-      return tonumber(a) or 0, tonumber(b) or 0, tonumber(c) or 1
-    end
-  end
+  -- No leer GetCooldownTimes de botones Blizzard (secretos / taint en 12.x).
   return 0, 0, 1
 end
 
@@ -404,26 +411,9 @@ function D.GetEntryCooldownTimes(entry)
   if entry.actionType == "item" then
     return cooldownFromSpellOrItem(nil, entry.itemId)
   end
-  if entry.source == "extra" then
-    return cooldownFromBlizzardActionButton(extraActionBlizzardButton())
-  end
-  if entry.source == "zone" then
-    local st, dur, m = cooldownFromBlizzardActionButton(zoneAbilitySpellButton())
-    if dur > 0.001 then
-      return st, dur, m
-    end
-    if entry.spellId then
-      return cooldownFromSpellOrItem(entry.spellId, nil)
-    end
-    return st, dur, m
-  end
-  if entry.actionType == "macro" then
-    if entry.source == "extra" then
-      return cooldownFromBlizzardActionButton(extraActionBlizzardButton())
-    end
-    if entry.source == "zone" then
-      return cooldownFromBlizzardActionButton(zoneAbilitySpellButton())
-    end
+  -- extra/zone: prefer spellId; no leer cooldown del ActionButton Blizzard (taint).
+  if entry.spellId then
+    return cooldownFromSpellOrItem(entry.spellId, nil)
   end
   return 0, 0, 1
 end

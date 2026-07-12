@@ -1,9 +1,12 @@
 ## Interface: 120007
 ## Title: Chukie UI
 ## Notes: Ajustes de interfaz (Retail 12.0.7 / Interface 120007).
-## Version: 0.2.0
+## Version: 0.2.1
 ## OptionalDeps: Masque, DialogueUI
 ## SavedVariables: ChukieUiDB
+
+Libs\LibStub\LibStub.lua
+Libs\LibCustomGlow-1.0\LibCustomGlow-1.0.lua
 
 Core.lua
 Profiles.lua
@@ -14,5 +17,9 @@ RightStrip.lua
 MinimapBar.lua
 TeleportCatalog.lua
 DynamicReservedSlots.lua
+MiniActionBar.lua
 RightPanelWidgets.lua
+AlertsMedia.lua
+Alerts.lua
+AlertsManager.lua
 ConfigPanel.lua

@@ -18,6 +18,7 @@ MinimapBar.lua
 TeleportCatalog.lua
 DynamicReservedSlots.lua
 MiniActionBar.lua
+ActionBars.lua
 RightPanelWidgets.lua
 AlertsUserMedia.lua
 AlertsMedia.lua

@@ -6,6 +6,7 @@ local ADDON_NAME, ns = ...
 
 --- Textos en el panel de teclas (Bindings.xml en la raíz; no incluir en el .toc).
 --- El cuerpo de cada <Binding> se ejecuta como Lua: debe ser código válido (p. ej. solo comentarios «-- …»), no texto suelto ni un «0» suelto.
+_G["BINDING_HEADER_CHUKIEUI_ACTIONBARS"] = "Chukie UI - Barras 1–4"
 _G["BINDING_NAME_CLICK ChukieUi_MiniAct1:LeftButton"] =
   "Chukie UI - mini barra acción 1 (Action Bar 6 / slot 145)"
 _G["BINDING_NAME_CLICK ChukieUi_MiniAct2:LeftButton"] =
@@ -18,6 +19,23 @@ _G["BINDING_NAME_CLICK ChukieDynAct3:LeftButton"] =
   "Chukie UI - ranura dinámica 3 (extra / zona / misión)"
 _G["BINDING_NAME_CLICK ChukieDynAct4:LeftButton"] =
   "Chukie UI - ranura dinámica 4 (extra / zona / misión)"
+
+do
+  local labels = {
+    [1] = { "1", "2", "3", "4", "5" },
+    [2] = { "Q", "W", "E", "R", "T" },
+    [3] = { "A", "S", "D", "F", "G" },
+    [4] = { "Z", "X", "C", "V" },
+  }
+  for barId = 1, 4 do
+    for btn = 1, 5 do
+      local keyHint = labels[barId] and labels[barId][btn]
+      local suffix = keyHint and (" (def: " .. keyHint .. ")") or ""
+      _G[string.format("BINDING_NAME_CLICK ChukieUi_AB%d_B%d:LeftButton", barId, btn)] =
+        string.format("Chukie UI - barra %d botón %d%s", barId, btn, suffix)
+    end
+  end
+end
 
 local defaults = {
   enabled = true,
@@ -123,6 +141,32 @@ local defaults = {
       --- Si está activo, deshabilita detección dinámica y deja el panel derecho en modo estático liviano.
       staticSessionMode = true,
     },
+  },
+  --- Barras de acción estilo Dominos (IDs 1–14 lineales × 12 slots).
+  actionBars = {
+    enabled = true,
+    leftEnabled = true,
+    --- Botones visibles por barra izquierda (1–12). Dominos suele usar 6.
+    leftNumButtons = 6,
+    leftButtonSize = 36,
+    leftSpacing = 2,
+    leftBarSpacing = 4,
+    leftOffsetX = 8,
+    leftOffsetY = 8,
+    --- Skyriding: barras 1–4 → páginas 8–11 ([bonusbar:5]).
+    skyridingPaging = true,
+    --- Asignar una vez las teclas por defecto (12345/qwert/asdfg/zxcv) si no hay binds.
+    applyDefaultKeybinds = true,
+    --- Masque: grupo «Chukie UI» → «ActionBars».
+    useMasque = true,
+    rightBar6Enabled = true,
+    rightBar6NumButtons = 8,
+    --- 2 columnas × 4 filas.
+    rightBar6Cols = 2,
+    rightBar6ButtonSize = 36,
+    rightBar6Spacing = 2,
+    rightBar6OffsetX = 8,
+    rightBar6OffsetY = 8,
   },
   minimapBar = {
     enabled = true,
@@ -300,6 +344,9 @@ function ns.OnProfileChanged()
   if ns.LeftPanel and ns.LeftPanel.Refresh then
     ns.LeftPanel:Refresh()
   end
+  if ns.ActionBars and ns.ActionBars.Refresh then
+    ns.ActionBars:Refresh()
+  end
   if ns.Alerts and ns.Alerts.OnProfileChanged then
     ns.Alerts:OnProfileChanged()
   end
@@ -335,6 +382,9 @@ frame:SetScript("OnEvent", function(_, event, addon)
       if ns.LeftPanel and ns.LeftPanel.Initialize then
         ns.LeftPanel:Initialize()
       end
+      if ns.ActionBars and ns.ActionBars.Refresh then
+        ns.ActionBars:Refresh()
+      end
     end)
     return
   end
@@ -347,6 +397,9 @@ frame:SetScript("OnEvent", function(_, event, addon)
   end
   if event == "PLAYER_ENTERING_WORLD" then
     ns.ApplyUiTweaks()
+    if ns.ActionBars and ns.ActionBars.Refresh then
+      ns.ActionBars:Refresh()
+    end
     if ns.Alerts and ns.Alerts.Refresh then
       ns.Alerts:Refresh()
     end

@@ -18,4 +18,69 @@
   <Binding name="CLICK ChukieDynAct4:LeftButton">
 -- noop
   </Binding>
+
+  <!-- Barras 1–4 (botones 1–5). Defaults: 12345 / qwert / asdfg / zxcv -->
+  <Binding name="CLICK ChukieUi_AB1_B1:LeftButton" header="CHUKIEUI_ACTIONBARS" default="1">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB1_B2:LeftButton" default="2">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB1_B3:LeftButton" default="3">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB1_B4:LeftButton" default="4">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB1_B5:LeftButton" default="5">
+-- noop
+  </Binding>
+
+  <Binding name="CLICK ChukieUi_AB2_B1:LeftButton" default="Q">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB2_B2:LeftButton" default="W">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB2_B3:LeftButton" default="E">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB2_B4:LeftButton" default="R">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB2_B5:LeftButton" default="T">
+-- noop
+  </Binding>
+
+  <Binding name="CLICK ChukieUi_AB3_B1:LeftButton" default="A">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB3_B2:LeftButton" default="S">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB3_B3:LeftButton" default="D">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB3_B4:LeftButton" default="F">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB3_B5:LeftButton" default="G">
+-- noop
+  </Binding>
+
+  <Binding name="CLICK ChukieUi_AB4_B1:LeftButton" default="Z">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB4_B2:LeftButton" default="X">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB4_B3:LeftButton" default="C">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB4_B4:LeftButton" default="V">
+-- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB4_B5:LeftButton">
+-- noop (sin tecla por defecto)
+  </Binding>
 </Bindings>

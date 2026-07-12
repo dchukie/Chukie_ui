@@ -1261,6 +1261,9 @@ function MP:Apply()
     if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
       ns.RightPanelWidgets:Refresh()
     end
+    if ns.ActionBars and ns.ActionBars.Refresh then
+      ns.ActionBars:Refresh()
+    end
     if ns.RightStrip and ns.RightStrip.Layout then
       ns.RightStrip:Layout()
     end

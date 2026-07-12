@@ -260,42 +260,116 @@ function MB:GetMicroMenuButtonFrames()
       i = i + 1
     end
   end
+  scanMicroTree(_G.MicroMenu)
+  scanMicroTree(_G.MicroMenuContainer)
   scanMicroTree(_G.MicroButtonAndBagsBar)
   scanMicroTree(_G.MainMenuBar)
   return out
 end
 
-function MB:RestoreMicroMenuButtonsFromChukieBar()
-  self:MasqueStripMicromenu()
-  local list = self.microMenuDetached
-  if not list then
+--- Holder oculto: evita que MicroMenuContainer:Layout → GetEdgeButton compare nils
+--- al tener los botones reparentados fuera del árbol Blizzard (mismo enfoque que Dominos).
+local function getMicroMenuHolder()
+  if not MB._microMenuHolder then
+    local h = CreateFrame("Frame", "ChukieUi_MicroMenuHolder", UIParent)
+    h:Hide()
+    h:SetSize(1, 1)
+    MB._microMenuHolder = h
+  end
+  return MB._microMenuHolder
+end
+
+local function chukieOwnsMicromenu()
+  return MB._chukieMicroEmbedded == true
+end
+
+function MB:BanishBlizzardMicroMenuShell()
+  if InCombatLockdown() then
     return
   end
-  for _, btn in ipairs(list) do
-    if btn and type(btn) == "table" then
-      local p = btn.chukieMicroSavedParent
-      if p and type(p) == "table" and p.SetFrameStrata then
-        btn:SetParent(p)
-      elseif MicroButtonAndBagsBar then
-        btn:SetParent(MicroButtonAndBagsBar)
-      elseif MainMenuBar then
-        btn:SetParent(MainMenuBar)
-      end
-      if btn.chukieMicroSavedScale then
-        btn:SetScale(btn.chukieMicroSavedScale)
-      else
-        btn:SetScale(1)
-      end
-      btn.chukieMicroChukieOwned = nil
-      btn.chukieMicroSavedParent = nil
-      btn.chukieMicroSavedScale = nil
-      if btn.Show then
-        btn:Show()
-      end
+  local holder = getMicroMenuHolder()
+  if MicroMenu and MicroMenu.SetParent then
+    if MicroMenu:GetParent() ~= holder then
+      self._savedMicroMenuParent = self._savedMicroMenuParent or MicroMenu:GetParent()
+      MicroMenu:SetParent(holder)
     end
   end
-  wipe(list)
+  if MicroMenuContainer and MicroMenuContainer.SetParent then
+    if MicroMenuContainer:GetParent() ~= holder then
+      self._savedMicroMenuContainerParent = self._savedMicroMenuContainerParent or MicroMenuContainer:GetParent()
+      MicroMenuContainer:SetParent(holder)
+    end
+  end
+end
+
+function MB:RestoreBlizzardMicroMenuShell()
+  if InCombatLockdown() then
+    return
+  end
+  self._chukieMicroEmbedded = false
+  if MicroMenu and MicroMenu.SetParent then
+    local p = self._savedMicroMenuParent
+    if p and p.SetFrameStrata and p ~= getMicroMenuHolder() then
+      MicroMenu:SetParent(p)
+    elseif MicroMenuContainer then
+      MicroMenu:SetParent(MicroMenuContainer)
+    elseif UIParent then
+      MicroMenu:SetParent(UIParent)
+    end
+  end
+  if MicroMenuContainer and MicroMenuContainer.SetParent then
+    local p = self._savedMicroMenuContainerParent
+    if p and p.SetFrameStrata and p ~= getMicroMenuHolder() then
+      MicroMenuContainer:SetParent(p)
+    elseif UIParent then
+      MicroMenuContainer:SetParent(UIParent)
+    end
+  end
+  self._savedMicroMenuParent = nil
+  self._savedMicroMenuContainerParent = nil
+  if MicroMenu and MicroMenu.ResetMicroMenuPosition then
+    pcall(MicroMenu.ResetMicroMenuPosition, MicroMenu)
+  elseif UpdateMicroButtons then
+    pcall(UpdateMicroButtons)
+  end
+end
+
+function MB:RestoreMicroMenuButtonsFromChukieBar()
+  self._chukieMicroEmbedded = false
+  self:MasqueStripMicromenu()
+  local list = self.microMenuDetached
+  if list then
+    local defaultParent = MicroMenu or MicroButtonAndBagsBar or MainMenuBar
+    for _, btn in ipairs(list) do
+      if btn and type(btn) == "table" then
+        local p = btn.chukieMicroSavedParent
+        -- No restaurar al shell banished; preferir MicroMenu Blizzard.
+        if p and type(p) == "table" and p.SetFrameStrata and p ~= getMicroMenuHolder() and p ~= self.miniMenuBar then
+          btn:SetParent(p)
+        elseif defaultParent then
+          btn:SetParent(defaultParent)
+        elseif MicroButtonAndBagsBar then
+          btn:SetParent(MicroButtonAndBagsBar)
+        elseif MainMenuBar then
+          btn:SetParent(MainMenuBar)
+        end
+        if btn.chukieMicroSavedScale then
+          btn:SetScale(btn.chukieMicroSavedScale)
+        else
+          btn:SetScale(1)
+        end
+        btn.chukieMicroChukieOwned = nil
+        btn.chukieMicroSavedParent = nil
+        btn.chukieMicroSavedScale = nil
+        if btn.Show then
+          btn:Show()
+        end
+      end
+    end
+    wipe(list)
+  end
   self.microMenuDetached = nil
+  self:RestoreBlizzardMicroMenuShell()
 end
 
 function MB:EnsureMicroMenuHooks()
@@ -304,10 +378,7 @@ function MB:EnsureMicroMenuHooks()
   end
   self.microMenuHooks = true
   hooksecurefunc("UpdateMicroButtons", function()
-    if not MB.miniMenuBar or not MB.miniMenuBar:IsShown() then
-      return
-    end
-    if barOpts().minimenuBarEnabled == false then
+    if not chukieOwnsMicromenu() then
       return
     end
     if InCombatLockdown() then
@@ -316,6 +387,31 @@ function MB:EnsureMicroMenuHooks()
     end
     MB:LayoutMicroMenuEmbedded()
   end)
+  if MicroMenu and MicroMenu.SetParent then
+    -- Blizzard (Edit Mode / ResetMicroMenuPosition) intenta devolver MicroMenu al container.
+    hooksecurefunc(MicroMenu, "SetParent", function(menu, parent)
+      if not chukieOwnsMicromenu() or InCombatLockdown() then
+        return
+      end
+      local holder = getMicroMenuHolder()
+      if parent ~= holder and menu:GetParent() ~= holder then
+        menu:SetParent(holder)
+      end
+    end)
+  end
+  if MicroMenu and MicroMenu.UpdateHelpTicketButtonAnchor then
+    hooksecurefunc(MicroMenu, "UpdateHelpTicketButtonAnchor", function()
+      if not HelpOpenWebTicketButton or not chukieOwnsMicromenu() then
+        return
+      end
+      local anchor = CharacterMicroButton or MainMenuMicroButton
+      if not anchor then
+        return
+      end
+      HelpOpenWebTicketButton:ClearAllPoints()
+      HelpOpenWebTicketButton:SetPoint("CENTER", anchor, "CENTER", 0, 20)
+    end)
+  end
   if not MB.microMenuCombatEv then
     local ev = CreateFrame("Frame")
     MB.microMenuCombatEv = ev
@@ -339,6 +435,8 @@ function MB:LayoutMicroMenuEmbedded()
     self.microMenuRelayoutAfterCombat = true
     return
   end
+  self._chukieMicroEmbedded = true
+  self:BanishBlizzardMicroMenuShell()
   local mm = self.miniMenuBar
   local rowH = self:GetMiniMenuBarHeight()
   mm:SetHeight(rowH)

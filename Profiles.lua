@@ -26,6 +26,7 @@ local function cloneProfileData(src)
     widgets = { minimapBar = {}, rightPanelWidgets = {} },
     cvars = {},
     alerts = { enabled = false, nextId = 1, rules = {}, tickInterval = 0.15 },
+    actionBars = {},
   }
   for k, v in pairs(src.minimapPosition or {}) do
     t.minimapPosition[k] = v
@@ -133,6 +134,13 @@ local function cloneProfileData(src)
       end
     end
   end
+  if type(src.actionBars) == "table" then
+    for k, v in pairs(src.actionBars) do
+      if type(v) ~= "table" then
+        t.actionBars[k] = v
+      end
+    end
+  end
   return t
 end
 
@@ -148,6 +156,7 @@ local function ensurePanelWidgetSchema(p)
   --- Compatibilidad: rutas legacy apuntan al mismo objeto.
   p.minimapPosition = rightPanel
   p.minimapBar = minimapBar
+  p.actionBars = p.actionBars or {}
   p.alerts = p.alerts or { enabled = false, nextId = 1, rules = {} }
   p.alerts.rules = p.alerts.rules or {}
   if ns.Alerts and ns.Alerts.EnsureSchema then

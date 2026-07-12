@@ -1,7 +1,8 @@
---[[ Mini barra de 3 acciones (estilo Dominos) en reserved2–4.
-     Enlaza slots Blizzard 145–147 (Action Bar 6 / MultiBar5).
-     Nota: 133–144 son Bonus Bar 6 (p. ej. tótems / utilidad de clase), no sirven
-     para acciones libres; Dominos también salta ese rango. ]]
+--[[ Mini barra de 3 acciones en reserved2–4.
+     Slots Blizzard 145–147 (Action Bar 6 / MultiBar5).
+     Retail 12+: no registrar en ActionBarActionEventsFrame ni dejar que
+     ActionButtonTemplate llame SetAttribute/SetCooldown con secretos (taint).
+     Clicks siguen seguros vía atributo action; el visual lo actualizamos nosotros. ]]
 
 local _, ns = ...
 
@@ -32,6 +33,10 @@ end
 function M.IsEnabled()
   local d = db()
   return d.miniActionBarEnabled ~= false
+end
+
+local function isSecret(v)
+  return issecretvalue and issecretvalue(v) or false
 end
 
 local function setShowGridInsecure(btn, show, reason)
@@ -117,9 +122,6 @@ local function skinButtonForCell(btn)
   if btn.NewActionTexture then
     btn.NewActionTexture:Hide()
   end
-  if btn.SpellHighlightTexture then
-    -- leave Blizzard highlight/glow intact
-  end
   if btn.HotKey then
     btn.HotKey:SetAlpha(0.85)
   end
@@ -128,37 +130,195 @@ local function skinButtonForCell(btn)
   end
 end
 
+local function applyActionCooldown(cd, action)
+  if not cd or not action then
+    return
+  end
+  if cd.SetCooldownFromDurationObject and C_ActionBar and C_ActionBar.GetActionCooldownDuration then
+    local ok, dur = pcall(C_ActionBar.GetActionCooldownDuration, action)
+    if ok and dur then
+      pcall(cd.SetCooldownFromDurationObject, cd, dur)
+      return
+    end
+    pcall(function()
+      cd:Clear()
+    end)
+    return
+  end
+  local start, duration, enable, modRate = GetActionCooldown(action)
+  if isSecret(start) or isSecret(duration) or isSecret(modRate) then
+    pcall(function()
+      cd:Clear()
+    end)
+    return
+  end
+  if enable and duration and duration > 0 then
+    pcall(cd.SetCooldown, cd, start or 0, duration, modRate or 1)
+  else
+    pcall(function()
+      cd:Clear()
+    end)
+  end
+end
+
+function M:UpdateButtonVisual(btn)
+  if not btn then
+    return
+  end
+  local action = btn._miniSlot or tonumber(btn:GetAttribute("action")) or 0
+  if action <= 0 then
+    return
+  end
+
+  local has = false
+  if HasAction then
+    local okH, h = pcall(HasAction, action)
+    if okH and not isSecret(h) then
+      has = h and true or false
+    end
+  end
+  if btn.icon then
+    local tex = GetActionTexture and GetActionTexture(action)
+    if isSecret(tex) then
+      -- Textura secreta: no SetTexture con el valor.
+    elseif tex then
+      btn.icon:SetTexture(tex)
+      btn.icon:Show()
+    else
+      btn.icon:SetTexture(nil)
+      if not has then
+        btn.icon:Hide()
+      end
+    end
+  end
+
+  if btn.cooldown then
+    applyActionCooldown(btn.cooldown, action)
+  end
+  if btn.chargeCooldown and C_ActionBar and C_ActionBar.GetActionChargeDuration and btn.chargeCooldown.SetCooldownFromDurationObject then
+    local ok, dur = pcall(C_ActionBar.GetActionChargeDuration, action)
+    if ok and dur then
+      pcall(btn.chargeCooldown.SetCooldownFromDurationObject, btn.chargeCooldown, dur)
+    else
+      pcall(function()
+        btn.chargeCooldown:Clear()
+      end)
+    end
+  end
+
+  if btn.Count then
+    local shown = false
+    if C_ActionBar and C_ActionBar.GetActionDisplayCount then
+      local ok, display = pcall(C_ActionBar.GetActionDisplayCount, action)
+      -- Nunca comparar el valor si es secreto (ni ~= "").
+      if ok then
+        if isSecret(display) then
+          -- Conteo secreto: no mostrar (no comparar / SetText con secret).
+        elseif type(display) == "string" and display ~= "" then
+          btn.Count:SetText(display)
+          btn.Count:Show()
+          shown = true
+        end
+      end
+    end
+    if not shown and GetActionCount then
+      local ok, c = pcall(GetActionCount, action)
+      if ok and not isSecret(c) then
+        local n = tonumber(c)
+        if n and n > 1 then
+          btn.Count:SetText(n)
+          btn.Count:Show()
+          shown = true
+        elseif n and IsConsumableAction and IsConsumableAction(action) then
+          btn.Count:SetText(n)
+          btn.Count:Show()
+          shown = true
+        end
+      end
+    end
+    if not shown then
+      btn.Count:SetText("")
+    end
+  end
+
+  if btn.icon and IsUsableAction then
+    local ok, isUsable, notEnoughMana = pcall(IsUsableAction, action)
+    if ok and not isSecret(isUsable) and not isSecret(notEnoughMana) then
+      if isUsable then
+        btn.icon:SetVertexColor(1, 1, 1)
+      elseif notEnoughMana then
+        btn.icon:SetVertexColor(0.5, 0.5, 1)
+      else
+        btn.icon:SetVertexColor(0.4, 0.4, 0.4)
+      end
+    else
+      btn.icon:SetVertexColor(1, 1, 1)
+    end
+  end
+
+  if btn.HotKey and btn._commandName and GetBindingKey then
+    local key = GetBindingKey(btn._commandName)
+    if key and key ~= "" then
+      btn.HotKey:SetText(GetBindingText and GetBindingText(key, 1) or key)
+      btn.HotKey:Show()
+    else
+      btn.HotKey:SetText(RANGE_INDICATOR or "")
+    end
+  end
+end
+
+function M:UpdateAllVisuals()
+  if not self._buttons then
+    return
+  end
+  for i = 1, #SLOT_DEFS do
+    self:UpdateButtonVisual(self._buttons[i])
+  end
+end
+
+local function disconnectBlizzardActionEvents(btn)
+  if not btn then
+    return
+  end
+  if ActionBarActionEventsFrame and ActionBarActionEventsFrame.UnregisterFrame then
+    pcall(function()
+      ActionBarActionEventsFrame:UnregisterFrame(btn)
+    end)
+  end
+  if btn.UnregisterAllEvents then
+    btn:UnregisterAllEvents()
+  end
+  btn:SetScript("OnEvent", nil)
+end
+
 local function ensureButton(def)
   local btn = _G[def.name]
   if not btn then
     btn = CreateFrame("CheckButton", def.name, UIParent, "ActionBarButtonTemplate")
   end
-  btn:SetID(0)
-  btn:SetAttribute("action", def.slot)
-  btn:SetAttribute("commandName", def.command)
-  btn:SetAttribute("useparent-checkfocuscast", true)
-  btn:SetAttribute("useparent-checkmouseovercast", true)
-  btn:SetAttribute("useparent-checkselfcast", true)
-  btn:SetAttribute("statehidden", false)
-  btn:EnableMouseWheel(true)
-  btn:RegisterForClicks("AnyUp", "AnyDown")
+  disconnectBlizzardActionEvents(btn)
+  if not InCombatLockdown() then
+    btn:SetID(0)
+    btn:SetAttribute("type", "action")
+    btn:SetAttribute("action", def.slot)
+    btn:SetAttribute("commandName", def.command)
+    btn:SetAttribute("useparent-checkfocuscast", true)
+    btn:SetAttribute("useparent-checkmouseovercast", true)
+    btn:SetAttribute("useparent-checkselfcast", true)
+    btn:SetAttribute("statehidden", false)
+    btn:EnableMouseWheel(true)
+    btn:RegisterForClicks("AnyUp", "AnyDown")
+  end
   btn._commandName = def.command
   btn._miniSlot = def.slot
   btn._miniWidgetId = def.widgetId
   addCastOnKeyPress(btn)
   skinButtonForCell(btn)
-  if ActionBarActionEventsFrame and ActionBarActionEventsFrame.RegisterFrame then
-    pcall(function()
-      ActionBarActionEventsFrame:RegisterFrame(btn)
-    end)
+  if not InCombatLockdown() then
+    setShowGridInsecure(btn, true, SHOWGRID_REASON)
+    updateOverrideBindings(btn)
   end
-  if btn.UpdateAction then
-    pcall(function()
-      btn:UpdateAction()
-    end)
-  end
-  setShowGridInsecure(btn, true, SHOWGRID_REASON)
-  updateOverrideBindings(btn)
+  M:UpdateButtonVisual(btn)
   return btn
 end
 
@@ -171,12 +331,6 @@ function M:HideStockMultiBar5()
   for i = 1, #STOCK_HIDE do
     local f = _G[STOCK_HIDE[i]]
     if f then
-      if f.UnregisterAllEvents and i == 1 then
-        -- keep MultiBar5 quiet; do not wipe shared events from ActionBarActionEventsFrame
-        pcall(function()
-          f:UnregisterAllEvents()
-        end)
-      end
       if f.SetAttribute then
         pcall(function()
           f:SetAttribute("statehidden", true)
@@ -184,9 +338,6 @@ function M:HideStockMultiBar5()
       end
       if f.Hide then
         f:Hide()
-      end
-      if f.SetParent and i > 1 then
-        -- leave stock action buttons parented but hidden
       end
     end
   end
@@ -217,6 +368,7 @@ function M:EnsureButtons()
     self._buttons[i] = btn
   end
   self:HideStockMultiBar5()
+  self:EnsureVisualEvents()
   return self._buttons
 end
 
@@ -224,8 +376,10 @@ local function fitButtonToSlot(btn, slotBtn)
   if not btn or not slotBtn then
     return
   end
-  btn:SetAttribute("statehidden", false)
-  btn:SetParent(slotBtn)
+  if not InCombatLockdown() then
+    btn:SetAttribute("statehidden", false)
+    btn:SetParent(slotBtn)
+  end
   btn:ClearAllPoints()
   btn:SetPoint("CENTER", slotBtn, "CENTER", 0, 0)
   local cell = math.max(14, math.floor((slotBtn:GetWidth() or 36) + 0.5))
@@ -284,6 +438,7 @@ function M:AttachToSlots(buttonsById)
       fitButtonToSlot(act, slotBtn)
       setShowGridInsecure(act, true, SHOWGRID_REASON)
       updateOverrideBindings(act)
+      self:UpdateButtonVisual(act)
     end
   end
   self:HideStockMultiBar5()
@@ -306,6 +461,45 @@ function M:Detach()
       btn:SetParent(UIParent)
       ClearOverrideBindings(btn._hotkeyBind or btn)
     end
+  end
+end
+
+function M:EnsureVisualEvents()
+  if self._visEv then
+    return
+  end
+  local f = CreateFrame("Frame")
+  self._visEv = f
+  f:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+  f:RegisterEvent("ACTIONBAR_UPDATE_STATE")
+  f:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
+  f:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+  f:RegisterEvent("SPELL_UPDATE_CHARGES")
+  f:RegisterEvent("UPDATE_BINDINGS")
+  f:RegisterEvent("PLAYER_ENTERING_WORLD")
+  f:RegisterEvent("PLAYER_TARGET_CHANGED")
+  pcall(function()
+    f:RegisterEvent("ACTIONBAR_UPDATE_USABLE")
+  end)
+  f:SetScript("OnEvent", function(_, ev)
+    if not M.IsEnabled() then
+      return
+    end
+    if ev == "UPDATE_BINDINGS" then
+      if M._buttons and not InCombatLockdown() then
+        for i = 1, #SLOT_DEFS do
+          updateOverrideBindings(M._buttons[i])
+        end
+      end
+    end
+    M:UpdateAllVisuals()
+  end)
+  if not self._visTicker then
+    self._visTicker = C_Timer.NewTicker(0.2, function()
+      if M.IsEnabled() then
+        M:UpdateAllVisuals()
+      end
+    end)
   end
 end
 
@@ -361,4 +555,5 @@ function M:Refresh()
   else
     self:EnsureButtons()
   end
+  self:UpdateAllVisuals()
 end

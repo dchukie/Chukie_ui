@@ -898,6 +898,9 @@ function LP:Refresh()
   if showPanel then
     self:ApplyGeneralInputStyle()
   end
+  if ns.ActionBars and ns.ActionBars.Refresh then
+    ns.ActionBars:Refresh()
+  end
 end
 
 function LP:Initialize()

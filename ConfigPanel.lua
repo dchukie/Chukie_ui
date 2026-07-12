@@ -49,6 +49,70 @@ local function refreshRightPanelLayout()
   if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
     ns.RightPanelWidgets:Refresh()
   end
+  if ns.ActionBars and ns.ActionBars.Refresh then
+    ns.ActionBars:Refresh()
+  end
+end
+
+local function actionBarsDB()
+  local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
+  if not p then
+    return {}
+  end
+  p.actionBars = p.actionBars or {}
+  return p.actionBars
+end
+
+local function refreshActionBars()
+  if ns.ActionBars and ns.ActionBars.Refresh then
+    ns.ActionBars:Refresh()
+  end
+end
+
+local function addBoolActionBars(category, uniqueId, key, label, tooltip, defaultOn)
+  local function get()
+    return actionBarsDB()[key] ~= false
+  end
+  local function set(v)
+    actionBarsDB()[key] = (v == true or v == 1) and true or false
+    refreshActionBars()
+  end
+  local defaultToken = defaultOn and Settings.Default.True or Settings.Default.False
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Boolean,
+    label,
+    defaultToken,
+    get,
+    set
+  )
+  Settings.CreateCheckbox(category, setting, tooltip)
+end
+
+local function addIntSliderActionBars(category, uniqueId, key, label, tooltip, minV, maxV, step, defaultNum)
+  local function get()
+    local v = tonumber(actionBarsDB()[key])
+    if not v then
+      return defaultNum
+    end
+    return math.max(minV, math.min(maxV, v))
+  end
+  local function set(v)
+    actionBarsDB()[key] = math.floor(v + 0.5)
+    refreshActionBars()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Number,
+    label,
+    defaultNum,
+    get,
+    set
+  )
+  local options = Settings.CreateSliderOptions(minV, maxV, step)
+  Settings.CreateSlider(category, setting, options, tooltip)
 end
 
 local function addBoolProxy(category, uniqueId, key, label, tooltip, defaultOn)
@@ -1139,7 +1203,8 @@ function ns.RegisterConfigPanel()
     "Convierte las tres celdas reservadas en botones de acción normales (slots 145–147, Action Bar 6 / MultiBar5). "
       .. "Acepta cualquier hechizo, macro o ítem (no usa Bonus Bar 6 / tótems). "
       .. "Arrastra como en Dominos o una barra Blizzard. "
-      .. "Teclas: Esc → Controles → «Chukie UI - mini barra acción 1/2/3», o Multi Action Bar 5 botones 1–3.",
+      .. "Teclas: Esc → Controles → «Chukie UI - mini barra acción 1/2/3», o Multi Action Bar 5 botones 1–3. "
+      .. "Si ves errores SetAttribute/SetCooldown en ChukieUi_MiniAct*, desactivá esta opción y /reload.",
     true
   )
   minimapLayout:AddInitializer(
@@ -1209,6 +1274,196 @@ function ns.RegisterConfigPanel()
       end
     end
   end
+
+  local barsCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Barras de acción")
+  local barsLayout = SettingsPanel:GetLayout(barsCategory)
+  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("General"))
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_enabled",
+    "enabled",
+    "Activar barras Chukie",
+    "Reemplaza Dominos para las barras 1–4 (panel izquierdo) y la barra 6 (panel derecho). "
+      .. "Usa la misma numeración de slots que Dominos (barra N = slots (N−1)×12+…). "
+      .. "Desactivá Dominos (o esas barras) para no duplicar botones.",
+    true
+  )
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_skyriding",
+    "skyridingPaging",
+    "Paging skyriding 1–4 → 8–11",
+    "Con [bonusbar:5] (skyriding), la barra 1 muestra la 8, la 2→9, la 3→10 y la 4→11.",
+    true
+  )
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_useMasque",
+    "useMasque",
+    "Masque en barras de acción",
+    "Si Masque está instalado, aplica el grupo «Chukie UI» → «ActionBars» a los botones. "
+      .. "Tras cambiar tamaño, Masque re-skinea para que el borde acompañe al botón.",
+    true
+  )
+  do
+    local function get()
+      return actionBarsDB().applyDefaultKeybinds ~= false
+    end
+    local function set(v)
+      local d = actionBarsDB()
+      local on = (v == true or v == 1)
+      d.applyDefaultKeybinds = on
+      if on then
+        d._defaultKeybindsApplied = nil
+      end
+      refreshActionBars()
+    end
+    local setting = Settings.RegisterProxySetting(
+      barsCategory,
+      "ChukieUi_AB_applyDefaultKeys",
+      Settings.VarType.Boolean,
+      "Teclas por defecto (1–4)",
+      Settings.Default.True,
+      get,
+      set
+    )
+    Settings.CreateCheckbox(
+      barsCategory,
+      setting,
+      "En el primer uso (o al reactivar esta opción) asigna: barra1=12345, barra2=QWERTY, barra3=ASDFG, barra4=ZXCV. "
+        .. "También en Esc → Teclado → Chukie UI - Barras 1–4. Desmarcá y volvé a marcar para reaplicar."
+    )
+  end
+
+  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Panel izquierdo (barras 1–4)"))
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_leftEnabled",
+    "leftEnabled",
+    "Mostrar barras 1–4",
+    "Cuatro filas horizontales ancladas al panel izquierdo.",
+    true
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_leftNum",
+    "leftNumButtons",
+    "Botones por barra",
+    "Cuántos botones mostrar en cada fila (1–12).",
+    1,
+    12,
+    1,
+    6
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_leftSize",
+    "leftButtonSize",
+    "Tamaño botón (px)",
+    "Tamaño de cada botón de las barras izquierdas.",
+    18,
+    64,
+    1,
+    36
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_leftGap",
+    "leftSpacing",
+    "Espacio entre botones",
+    "Separación horizontal entre botones.",
+    0,
+    16,
+    1,
+    2
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_leftBarGap",
+    "leftBarSpacing",
+    "Espacio entre filas",
+    "Separación vertical entre barras 1–4.",
+    0,
+    24,
+    1,
+    4
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_leftOffX",
+    "leftOffsetX",
+    "Offset X",
+    "Desplazamiento desde la esquina inferior izquierda del panel.",
+    -400,
+    800,
+    1,
+    8
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_leftOffY",
+    "leftOffsetY",
+    "Offset Y",
+    "Desplazamiento vertical desde la base del panel izquierdo.",
+    -200,
+    400,
+    1,
+    8
+  )
+
+  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Panel derecho (barra 6)"))
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_right6",
+    "rightBar6Enabled",
+    "Mostrar barra 6 (2×4)",
+    "Ocho botones en 2 columnas × 4 filas (slots Dominos 61–68).",
+    true
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_right6Size",
+    "rightBar6ButtonSize",
+    "Tamaño botón barra 6",
+    "Tamaño de cada botón de la barra 6.",
+    18,
+    64,
+    1,
+    36
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_right6Gap",
+    "rightBar6Spacing",
+    "Espacio barra 6",
+    "Separación entre botones de la barra 6.",
+    0,
+    16,
+    1,
+    2
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_right6OffX",
+    "rightBar6OffsetX",
+    "Offset X barra 6",
+    "Desde BOTTOMLEFT del panel derecho.",
+    -400,
+    800,
+    1,
+    8
+  )
+  addIntSliderActionBars(
+    barsCategory,
+    "ChukieUi_AB_right6OffY",
+    "rightBar6OffsetY",
+    "Offset Y barra 6",
+    "Desde BOTTOMLEFT del panel derecho.",
+    -200,
+    400,
+    1,
+    8
+  )
 
   local leftCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Panel izquierdo")
   local leftLayout = SettingsPanel:GetLayout(leftCategory)

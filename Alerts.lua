@@ -24,6 +24,7 @@ local RULE_DEFAULTS = {
   glowType = "Proc",
   sound = true,
   combatOnly = false,
+  targetOnly = false,
   display = "icon",
   alpha = 1,
   auraPath = "",
@@ -31,6 +32,13 @@ local RULE_DEFAULTS = {
   pairGap = 80,
   text = "",
   fontPath = "",
+}
+
+local OVERLAY_FX_DEFAULTS = {
+  pulse = false,
+  color = false,
+  shake = false,
+  glow = false,
 }
 
 local function clamp(n, lo, hi)
@@ -69,6 +77,20 @@ local function copyColor(c)
   }
 end
 
+local function copyOverlayFx(src)
+  local o = {}
+  for k, v in pairs(OVERLAY_FX_DEFAULTS) do
+    o[k] = v
+  end
+  if type(src) == "table" then
+    o.pulse = src.pulse == true
+    o.color = src.color == true
+    o.shake = src.shake == true
+    o.glow = src.glow == true
+  end
+  return o
+end
+
 local function clampSize(n)
   n = math.floor(tonumber(n) or 48)
   if n < SIZE_MIN then
@@ -86,12 +108,15 @@ local function copyRule(src, index)
     r[k] = v
   end
   r.color = { 1, 1, 1 }
+  r.overlayFx = copyOverlayFx(nil)
   if type(src) == "table" then
     for k, v in pairs(src) do
       if k == "point" then
         r.point = copyPoint(v, index)
       elseif k == "color" then
         r.color = copyColor(v)
+      elseif k == "overlayFx" then
+        r.overlayFx = copyOverlayFx(v)
       elseif type(v) ~= "table" then
         r[k] = v
       end
@@ -109,9 +134,11 @@ local function copyRule(src, index)
   r.inverse = r.inverse == true
   r.sound = r.sound ~= false
   r.combatOnly = r.combatOnly == true
+  r.targetOnly = r.targetOnly == true
   r.display = DISPLAY_OK[r.display] and r.display or "icon"
   r.alpha = clamp(r.alpha, 0, 1)
   r.color = copyColor(r.color)
+  r.overlayFx = copyOverlayFx(r.overlayFx)
   r.auraPath = type(r.auraPath) == "string" and r.auraPath or ""
   r.auraLayout = LAYOUT_OK[r.auraLayout] and r.auraLayout or "single"
   r.pairGap = clamp(math.floor(tonumber(r.pairGap) or 80), 20, 400)
@@ -252,6 +279,8 @@ function A:UpdateRule(id, partial)
         merged.point = copyPoint(v, idx)
       elseif k == "color" then
         merged.color = copyColor(v)
+      elseif k == "overlayFx" then
+        merged.overlayFx = copyOverlayFx(v)
       elseif k ~= "id" then
         merged[k] = v
       end
@@ -498,6 +527,181 @@ local function playAlertSound(enabled)
   if path and PlaySoundFile then
     pcall(PlaySoundFile, path, "Master")
   end
+end
+
+local function stopOverlayGlow(frame)
+  if not frame or not frame._overlayGlowOn then
+    return
+  end
+  local lib = A:GetLibCustomGlow()
+  if lib and lib.ProcGlow_Stop then
+    lib.ProcGlow_Stop(frame, "overlay")
+  end
+  frame._overlayGlowOn = false
+end
+
+local function startOverlayGlow(frame)
+  if not frame then
+    return
+  end
+  if frame._overlayGlowOn then
+    return
+  end
+  local lib = A:GetLibCustomGlow()
+  if lib and lib.ProcGlow_Start then
+    lib.ProcGlow_Start(frame, { key = "overlay", startAnim = true, duration = 1 })
+    frame._overlayGlowOn = true
+  end
+end
+
+local function isSpellOverlayed(spellId, ruleId)
+  spellId = tonumber(spellId) or 0
+  if A._simOverlay and (A._simOverlay.untilTime or 0) > GetTime() then
+    if ruleId and A._simOverlay.ruleId == ruleId then
+      return true
+    end
+    if spellId > 0 and A._simOverlay.spellId == spellId then
+      return true
+    end
+  end
+  if spellId <= 0 then
+    return false
+  end
+  if C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed then
+    return C_SpellActivationOverlay.IsSpellOverlayed(spellId) and true or false
+  end
+  if IsSpellOverlayed then
+    return IsSpellOverlayed(spellId) and true or false
+  end
+  return false
+end
+
+local function hasAnyOverlayFx(fx)
+  return type(fx) == "table" and (fx.pulse or fx.color or fx.shake or fx.glow)
+end
+
+local function restoreOverlayVisuals(frame, rule)
+  if not frame then
+    return
+  end
+  frame:SetScale(1)
+  frame:SetAlpha(1)
+  applyPoint(frame, rule and rule.point)
+  stopOverlayGlow(frame)
+  -- restore base colors after color FX
+  local c = (rule and rule.color) or { 1, 1, 1 }
+  local a = clamp(rule and rule.alpha or 1, 0, 1)
+  if frame.icon then
+    frame.icon:SetVertexColor(c[1], c[2], c[3])
+  end
+  if frame.iconLayer then
+    frame.iconLayer:SetAlpha(a)
+  end
+  if frame.auraLayer then
+    if frame.auraLayer.left then
+      frame.auraLayer.left:SetVertexColor(c[1], c[2], c[3])
+      frame.auraLayer.left:SetAlpha(a)
+    end
+    if frame.auraLayer.right then
+      frame.auraLayer.right:SetVertexColor(c[1], c[2], c[3])
+      frame.auraLayer.right:SetAlpha(a)
+    end
+  end
+  if frame.textLayer and frame.textLayer.label then
+    frame.textLayer.label:SetTextColor(c[1], c[2], c[3], a)
+  end
+end
+
+local function applyOverlayFx(frame, rule, show)
+  if not frame then
+    return
+  end
+  local fx = rule and rule.overlayFx
+  local want = show and hasAnyOverlayFx(fx) and isSpellOverlayed(rule.spellId, rule.id)
+  if not want then
+    if frame._overlayFxActive then
+      frame._overlayFxActive = false
+      frame:SetScript("OnUpdate", nil)
+      restoreOverlayVisuals(frame, rule)
+    end
+    return
+  end
+  frame._overlayFxActive = true
+  frame._overlayFx = fx
+  frame._overlayRule = rule
+  frame._fxT = frame._fxT or 0
+  if fx.glow then
+    startOverlayGlow(frame)
+  else
+    stopOverlayGlow(frame)
+  end
+  if not (fx.pulse or fx.color or fx.shake) then
+    frame:SetScript("OnUpdate", nil)
+    return
+  end
+  frame:SetScript("OnUpdate", function(self, elapsed)
+    if not self._overlayFxActive or not self._overlayFx then
+      return
+    end
+    local fxx = self._overlayFx
+    local rr = self._overlayRule
+    self._fxT = (self._fxT or 0) + elapsed
+    local t = self._fxT
+    local wave = (math.sin(t * 6) + 1) * 0.5 -- 0..1
+    if fxx.pulse then
+      self:SetScale(1 + 0.12 * wave)
+      self:SetAlpha(0.75 + 0.25 * wave)
+    else
+      self:SetScale(1)
+      self:SetAlpha(1)
+    end
+    local base = (rr and rr.color) or { 1, 1, 1 }
+    local ba = clamp(rr and rr.alpha or 1, 0, 1)
+    if fxx.color then
+      local gr, gg, gb = 1, 0.85, 0.2
+      local r = base[1] + (gr - base[1]) * wave
+      local g = base[2] + (gg - base[2]) * wave
+      local b = base[3] + (gb - base[3]) * wave
+      if self.icon then
+        self.icon:SetVertexColor(r, g, b)
+      end
+      if self.auraLayer then
+        if self.auraLayer.left then
+          self.auraLayer.left:SetVertexColor(r, g, b)
+        end
+        if self.auraLayer.right then
+          self.auraLayer.right:SetVertexColor(r, g, b)
+        end
+      end
+      if self.textLayer and self.textLayer.label then
+        self.textLayer.label:SetTextColor(r, g, b, ba)
+      end
+    end
+    if fxx.shake then
+      local px = (rr and rr.point and rr.point[2]) or 0
+      local py = (rr and rr.point and rr.point[3]) or 0
+      local amp = 2 + 2 * wave
+      local ox = (math.random() * 2 - 1) * amp
+      local oy = (math.random() * 2 - 1) * amp
+      self:ClearAllPoints()
+      self:SetPoint("CENTER", UIParent, "CENTER", px + ox, py + oy)
+    else
+      applyPoint(self, rr and rr.point)
+    end
+  end)
+end
+
+local function hasValidTarget(spellId)
+  if not UnitExists("target") or UnitIsDead("target") then
+    return false
+  end
+  if C_Spell and C_Spell.IsSpellInRange then
+    local inRange = C_Spell.IsSpellInRange(spellId)
+    if inRange == false then
+      return false
+    end
+  end
+  return true
 end
 
 local function stopGlow(frame)
@@ -834,6 +1038,9 @@ local function shouldShowRule(rule)
     if rule.combatOnly and not UnitAffectingCombat("player") then
       return false, false, 0, 0, 1
     end
+    if rule.targetOnly and not hasValidTarget(rule.spellId) then
+      return false, false, 0, 0, 1
+    end
   elseif (tonumber(rule.spellId) or 0) <= 0 then
     return false, false, 0, 0, 1
   end
@@ -856,7 +1063,6 @@ local function shouldShowRule(rule)
   elseif showOn == "available" then
     show = isSpellAvailable(rule.spellId)
   else
-    -- ready: solo CD real (sin rango/usabilidad)
     show = not onCd
   end
   return show, onCd, start or 0, duration or 0, modRate or 1
@@ -872,6 +1078,24 @@ end
 
 function A:ClearLivePreview()
   self._livePreview = nil
+  self._simOverlay = nil
+end
+
+function A:SimulateOverlay(ruleId, seconds)
+  seconds = tonumber(seconds) or 2
+  local rule = self:GetRuleById(ruleId)
+  self._simOverlay = {
+    ruleId = ruleId,
+    spellId = rule and rule.spellId or 0,
+    untilTime = GetTime() + seconds,
+  }
+  self:UpdateAllRules()
+  C_Timer.After(seconds + 0.05, function()
+    if A._simOverlay and A._simOverlay.ruleId == ruleId then
+      A._simOverlay = nil
+      A:UpdateAllRules()
+    end
+  end)
 end
 
 function A:UpdateRuleFrame(rule, index)
@@ -890,12 +1114,18 @@ function A:UpdateRuleFrame(rule, index)
   else
     applyIconMode(f, rule, show, onCd, start, duration, modRate, glowKey, not silent)
   end
+  applyOverlayFx(f, rule, show)
 end
 
 local function hideFrame(frame)
   if not frame then
     return
   end
+  if frame._overlayFxActive then
+    frame._overlayFxActive = false
+    frame:SetScript("OnUpdate", nil)
+  end
+  stopOverlayGlow(frame)
   hideAllLayers(frame)
   frame:Hide()
   frame._wasShown = false
@@ -943,6 +1173,12 @@ function A:EnsureEvents()
   ev:RegisterEvent("PLAYER_TARGET_CHANGED")
   ev:RegisterEvent("PLAYER_REGEN_DISABLED")
   ev:RegisterEvent("PLAYER_REGEN_ENABLED")
+  pcall(function()
+    ev:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+  end)
+  pcall(function()
+    ev:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
+  end)
   pcall(function()
     ev:RegisterEvent("SPELL_UPDATE_USABLE")
   end)

@@ -365,6 +365,18 @@ function M:Ensure()
     end
   end)
 
+  wiz.optTarget = CreateFrame("CheckButton", nil, wiz.optsPane, "UICheckButtonTemplate")
+  wiz.optTarget:SetPoint("LEFT", wiz.optCombat.text, "RIGHT", 12, 0)
+  wiz.optTarget.text = wiz.optTarget:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  wiz.optTarget.text:SetPoint("LEFT", wiz.optTarget, "RIGHT", 2, 0)
+  wiz.optTarget.text:SetText("Solo target")
+  wiz.optTarget:SetScript("OnClick", function()
+    if M._wiz then
+      M._wiz.targetOnly = wiz.optTarget:GetChecked() and true or false
+      M:ApplyLive()
+    end
+  end)
+
   -- Common: size / color / alpha / position
   wiz.optSizeMinus = makeButton(wiz.optsPane, "Tam -", 48, 22)
   wiz.optSizeMinus:SetPoint("TOPLEFT", wiz.optDisplay, "BOTTOMLEFT", 0, -8)
@@ -505,9 +517,53 @@ function M:Ensure()
     M:SyncOptsPane()
   end)
 
+  -- Overlay FX (proc dorado de barra)
+  wiz.fxPane = CreateFrame("Frame", nil, wiz.optsPane)
+  wiz.fxPane:SetPoint("TOPLEFT", wiz.optShowOnCommon, "BOTTOMLEFT", 0, -8)
+  wiz.fxPane:SetSize(520, 52)
+  wiz.fxTitle = wiz.fxPane:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  wiz.fxTitle:SetPoint("TOPLEFT", 0, 0)
+  wiz.fxTitle:SetText("Al proc (barra dorada):")
+  wiz.fxHint = wiz.fxPane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  wiz.fxHint:SetPoint("LEFT", wiz.fxTitle, "RIGHT", 8, 0)
+  wiz.fxHint:SetText("Cuando la barra resalta el hechizo en dorado.")
+  local function makeFxCheck(label, key, after)
+    local cb = CreateFrame("CheckButton", nil, wiz.fxPane, "UICheckButtonTemplate")
+    if after then
+      cb:SetPoint("LEFT", after, "RIGHT", 10, 0)
+    else
+      cb:SetPoint("TOPLEFT", wiz.fxTitle, "BOTTOMLEFT", 0, -2)
+    end
+    cb.text = cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    cb.text:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+    cb.text:SetText(label)
+    cb:SetScript("OnClick", function()
+      if not M._wiz then
+        return
+      end
+      M._wiz.overlayFx = M._wiz.overlayFx or { pulse = false, color = false, shake = false, glow = false }
+      M._wiz.overlayFx[key] = cb:GetChecked() and true or false
+      M:ApplyLive()
+    end)
+    return cb
+  end
+  wiz.fxPulse = makeFxCheck("Latir", "pulse", nil)
+  wiz.fxColor = makeFxCheck("Color", "color", wiz.fxPulse.text)
+  wiz.fxShake = makeFxCheck("Vibrar", "shake", wiz.fxColor.text)
+  wiz.fxGlow = makeFxCheck("Glow", "glow", wiz.fxShake.text)
+  wiz.fxTest = makeButton(wiz.fxPane, "Probar FX", 90, 22)
+  wiz.fxTest:SetPoint("LEFT", wiz.fxGlow.text, "RIGHT", 12, 0)
+  wiz.fxTest:SetScript("OnClick", function()
+    if not M._wiz or not M._wiz.editId or not alerts() or not alerts().SimulateOverlay then
+      return
+    end
+    M:ApplyLive()
+    alerts():SimulateOverlay(M._wiz.editId, 2)
+  end)
+
   -- Icon-only controls
   wiz.iconPane = CreateFrame("Frame", nil, wiz.optsPane)
-  wiz.iconPane:SetPoint("TOPLEFT", wiz.optShowOnCommon, "BOTTOMLEFT", 0, -10)
+  wiz.iconPane:SetPoint("TOPLEFT", wiz.fxPane, "BOTTOMLEFT", 0, -10)
   wiz.iconPane:SetSize(500, 80)
   wiz.optGlow = makeButton(wiz.iconPane, "Glow: Proc", 130, 22)
   wiz.optGlow:SetPoint("TOPLEFT", 0, 0)
@@ -530,7 +586,7 @@ function M:Ensure()
 
   -- Aura controls
   wiz.auraPane = CreateFrame("Frame", nil, wiz.optsPane)
-  wiz.auraPane:SetPoint("TOPLEFT", wiz.optShowOnCommon, "BOTTOMLEFT", 0, -10)
+  wiz.auraPane:SetPoint("TOPLEFT", wiz.fxPane, "BOTTOMLEFT", 0, -10)
   wiz.auraPane:SetSize(500, 120)
   wiz.auraPane:Hide()
   wiz.optLayout = makeButton(wiz.auraPane, "Layout: Single", 130, 22)
@@ -558,7 +614,7 @@ function M:Ensure()
 
   -- Text controls
   wiz.textPane = CreateFrame("Frame", nil, wiz.optsPane)
-  wiz.textPane:SetPoint("TOPLEFT", wiz.optShowOnCommon, "BOTTOMLEFT", 0, -10)
+  wiz.textPane:SetPoint("TOPLEFT", wiz.fxPane, "BOTTOMLEFT", 0, -10)
   wiz.textPane:SetSize(500, 80)
   wiz.textPane:Hide()
   local textLbl = wiz.textPane:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -654,6 +710,13 @@ function M:snapshotRule(rule)
       s.point = { v[1], v[2], v[3] }
     elseif k == "color" and type(v) == "table" then
       s.color = { v[1], v[2], v[3] }
+    elseif k == "overlayFx" and type(v) == "table" then
+      s.overlayFx = {
+        pulse = v.pulse == true,
+        color = v.color == true,
+        shake = v.shake == true,
+        glow = v.glow == true,
+      }
     elseif type(v) ~= "table" then
       s[k] = v
     end
@@ -677,6 +740,7 @@ function M:BuildPayloadFromWiz()
     glowType = w.glowType or "Proc",
     sound = wiz.optSound:GetChecked() and true or false,
     combatOnly = wiz.optCombat:GetChecked() and true or false,
+    targetOnly = wiz.optTarget:GetChecked() and true or false,
     display = w.display or "icon",
     color = w.color or { 1, 1, 1 },
     alpha = tonumber(w.alpha) or 1,
@@ -686,6 +750,12 @@ function M:BuildPayloadFromWiz()
     text = wiz.textEdit and wiz.textEdit:GetText() or (w.text or ""),
     fontPath = w.fontPath or "",
     point = w.point or { "CENTER", 0, 120 },
+    overlayFx = {
+      pulse = wiz.fxPulse:GetChecked() and true or false,
+      color = wiz.fxColor:GetChecked() and true or false,
+      shake = wiz.fxShake:GetChecked() and true or false,
+      glow = wiz.fxGlow:GetChecked() and true or false,
+    },
   }
 end
 
@@ -829,6 +899,7 @@ function M:StartWizard(existing)
     glowType = existing and existing.glowType or "Proc",
     sound = existing and existing.sound ~= false,
     combatOnly = existing and existing.combatOnly == true,
+    targetOnly = existing and existing.targetOnly == true,
     display = existing and existing.display or "icon",
     color = existing and existing.color and { existing.color[1], existing.color[2], existing.color[3] } or { 1, 1, 1 },
     alpha = existing and existing.alpha or 1,
@@ -838,6 +909,12 @@ function M:StartWizard(existing)
     text = existing and existing.text or "",
     fontPath = existing and existing.fontPath or "",
     point = point and { point[1], point[2], point[3] } or { "CENTER", 0, 120 },
+    overlayFx = {
+      pulse = existing and existing.overlayFx and existing.overlayFx.pulse == true,
+      color = existing and existing.overlayFx and existing.overlayFx.color == true,
+      shake = existing and existing.overlayFx and existing.overlayFx.shake == true,
+      glow = existing and existing.overlayFx and existing.overlayFx.glow == true,
+    },
   }
   self._wizDirty = false
   self._liveEditing = false
@@ -978,6 +1055,12 @@ function M:SyncOptsPane()
   wiz.optDisplay:SetText("Modo: " .. (dispLabels[w.display or "icon"] or "Icono"))
   wiz.optSound:SetChecked(w.sound ~= false)
   wiz.optCombat:SetChecked(w.combatOnly == true)
+  wiz.optTarget:SetChecked(w.targetOnly == true)
+  local fx = w.overlayFx or {}
+  wiz.fxPulse:SetChecked(fx.pulse == true)
+  wiz.fxColor:SetChecked(fx.color == true)
+  wiz.fxShake:SetChecked(fx.shake == true)
+  wiz.fxGlow:SetChecked(fx.glow == true)
   wiz.optSize:SetText("Tamano: " .. tostring(w.size or 48))
   local c = w.color or { 1, 1, 1 }
   wiz.colorSwatch:SetColorTexture(c[1] or 1, c[2] or 1, c[3] or 1, 1)

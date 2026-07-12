@@ -90,6 +90,13 @@ local function cloneProfileData(src)
               nr.point = { rv[1], rv[2], rv[3] }
             elseif rk == "color" and type(rv) == "table" then
               nr.color = { tonumber(rv[1]) or 1, tonumber(rv[2]) or 1, tonumber(rv[3]) or 1 }
+            elseif rk == "overlayFx" and type(rv) == "table" then
+              nr.overlayFx = {
+                pulse = rv.pulse == true,
+                color = rv.color == true,
+                shake = rv.shake == true,
+                glow = rv.glow == true,
+              }
             elseif type(rv) ~= "table" then
               nr[rk] = rv
             end

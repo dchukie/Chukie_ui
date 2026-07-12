@@ -513,6 +513,16 @@ do
 end
 
 function M.Counts()
+  local lsmN = 0
+  local lsm = M.GetLSM and M.GetLSM()
+  if lsm then
+    for _, mt in ipairs({ "background", "statusbar", "border", "font", "sound" }) do
+      local list = lsm:List(mt)
+      if list then
+        lsmN = lsmN + #list
+      end
+    end
+  end
   return {
     textures = #M.texturesAll,
     shapes = #M.shapes,
@@ -523,7 +533,179 @@ function M.Counts()
     sounds = #M.sounds,
     powerAuras = #M.powerAuras,
     powerAurasSounds = #M.powerAurasSounds,
+    user = #(M.userTextures or {}),
+    lsm = lsmN,
   }
+end
+
+function M.GetLSM()
+  if not LibStub then
+    return nil
+  end
+  return LibStub("LibSharedMedia-3.0", true)
+end
+
+function M.InvalidateCatalogs()
+  M._auraCatalog = nil
+  M._fontPaths = nil
+  M._soundPaths = nil
+  M._presets = nil
+end
+
+local function appendUnique(list, pathStr)
+  if type(pathStr) ~= "string" or pathStr == "" then
+    return
+  end
+  for i = 1, #list do
+    if list[i] == pathStr then
+      return
+    end
+  end
+  list[#list + 1] = pathStr
+end
+
+--- Incorpora Media\Alerts\User\ listado en AlertsUserMedia.lua.
+function M.ApplyUserMedia()
+  M.userTextures = M.userTextures or {}
+  wipe(M.userTextures)
+  local um = ns.AlertsUserMedia
+  if type(um) ~= "table" then
+    return
+  end
+  if type(um.textures) == "table" then
+    for i = 1, #um.textures do
+      local file = um.textures[i]
+      if type(file) == "string" and file ~= "" then
+        file = file:gsub("^\\+", ""):gsub("^/+", "")
+        local full = path("User", file)
+        appendUnique(M.powerAuras, full)
+        appendUnique(M.texturesAll, full)
+        appendUnique(M.userTextures, full)
+      end
+    end
+  end
+  if type(um.fonts) == "table" then
+    for i = 1, #um.fonts do
+      local f = um.fonts[i]
+      if type(f) == "string" and f ~= "" then
+        appendUnique(M.fonts, path("User", f:gsub("^\\+", ""):gsub("^/+", "")))
+      end
+    end
+  end
+  if type(um.sounds) == "table" then
+    for i = 1, #um.sounds do
+      local s = um.sounds[i]
+      if type(s) == "string" and s ~= "" then
+        appendUnique(M.sounds, path("User", s:gsub("^\\+", ""):gsub("^/+", "")))
+      end
+    end
+  end
+end
+
+--- Publica media local en LSM (si está presente) para otros addons.
+function M.RegisterIntoLSM()
+  local lsm = M.GetLSM()
+  if not lsm then
+    return false
+  end
+  local function reg(mt, key, data)
+    pcall(function()
+      lsm:Register(mt, key, data)
+    end)
+  end
+  for i = 1, #M.powerAuras do
+    local p = M.powerAuras[i]
+    local name = p:match("([^\\]+)$") or ("ChukieAura" .. i)
+    reg("background", "Chukie:" .. name, p)
+  end
+  for i = 1, #M.rings do
+    local p = M.rings[i]
+    local name = p:match("([^\\]+)$") or ("ChukieRing" .. i)
+    reg("border", "Chukie:" .. name, p)
+  end
+  for i = 1, #M.statusbars do
+    local p = M.statusbars[i]
+    local name = p:match("([^\\]+)$") or ("ChukieBar" .. i)
+    reg("statusbar", "Chukie:" .. name, p)
+  end
+  for i = 1, #M.fonts do
+    local p = M.fonts[i]
+    local name = p:match("([^\\]+)$") or ("ChukieFont" .. i)
+    reg("font", "Chukie:" .. name, p)
+  end
+  for i = 1, math.min(#M.sounds, 40) do
+    local p = M.sounds[i]
+    local name = p:match("([^\\]+)$") or ("ChukieSound" .. i)
+    reg("sound", "Chukie:" .. name, p)
+  end
+  return true
+end
+
+local function ensureLsmCallbacks()
+  if M._lsmCallbacksBound then
+    return
+  end
+  local lsm = M.GetLSM()
+  if not lsm or type(lsm.RegisterCallback) ~= "function" then
+    return
+  end
+  local ok = pcall(function()
+    lsm.RegisterCallback(M, "LibSharedMedia_Registered", function()
+      M.InvalidateCatalogs()
+    end)
+    if lsm.UnregisterAllCallbacks or true then
+      pcall(function()
+        lsm.RegisterCallback(M, "LibSharedMedia_SetGlobal", function()
+          M.InvalidateCatalogs()
+        end)
+      end)
+    end
+  end)
+  if ok then
+    M._lsmCallbacksBound = true
+  end
+end
+
+function M.IsKnownMediaPath(p)
+  if type(p) ~= "string" or p == "" then
+    return false
+  end
+  local lists = { M.powerAuras, M.shapes, M.rings, M.texturesAll, M.fonts, M.userTextures, M.sounds }
+  for li = 1, #lists do
+    local list = lists[li]
+    if type(list) == "table" then
+      for i = 1, #list do
+        if list[i] == p then
+          return true
+        end
+      end
+    end
+  end
+  local presets = M.GetPresets()
+  for i = 1, #presets do
+    if presets[i].path == p then
+      return true
+    end
+  end
+  -- Cualquier ruta bajo Media\Alerts\ del addon (incl. User).
+  local root = ROOT:lower()
+  if p:lower():sub(1, #root) == root then
+    return true
+  end
+  local lsm = M.GetLSM()
+  if lsm then
+    for _, mt in ipairs({ "background", "statusbar", "border", "font", "sound" }) do
+      local ht = lsm:HashTable(mt)
+      if type(ht) == "table" then
+        for _, data in pairs(ht) do
+          if data == p then
+            return true
+          end
+        end
+      end
+    end
+  end
+  return false
 end
 
 --- Presets curados para el wizard (label + path).
@@ -552,33 +734,72 @@ function M.DefaultAuraPath()
   return (p[1] and p[1].path) or (M.powerAuras[1] or "")
 end
 
-function M.IsKnownMediaPath(p)
-  if type(p) ~= "string" or p == "" then
-    return false
+--- Rutas de fuentes: locales + LSM.
+function M.GetFontPaths()
+  if M._fontPaths then
+    return M._fontPaths
   end
-  local lists = { M.powerAuras, M.shapes, M.rings, M.texturesAll, M.fonts }
-  for li = 1, #lists do
-    local list = lists[li]
+  ensureLsmCallbacks()
+  local out = {}
+  local seen = {}
+  local function add(p)
+    if type(p) ~= "string" or p == "" or seen[p] then
+      return
+    end
+    seen[p] = true
+    out[#out + 1] = p
+  end
+  for i = 1, #M.fonts do
+    add(M.fonts[i])
+  end
+  local lsm = M.GetLSM()
+  if lsm then
+    local list = lsm:List("font") or {}
     for i = 1, #list do
-      if list[i] == p then
-        return true
-      end
+      local fetch = lsm:Fetch("font", list[i], true)
+      add(fetch)
     end
   end
-  local presets = M.GetPresets()
-  for i = 1, #presets do
-    if presets[i].path == p then
-      return true
-    end
-  end
-  return false
+  M._fontPaths = out
+  return out
 end
 
---- Catálogo para el picker de arte (presets primero, luego powerAuras + rings + shapes útiles).
+--- Rutas de sonido: locales + LSM.
+function M.GetSoundPaths()
+  if M._soundPaths then
+    return M._soundPaths
+  end
+  ensureLsmCallbacks()
+  local out = {}
+  local seen = {}
+  local function add(p)
+    if type(p) ~= "string" or p == "" or seen[p] then
+      return
+    end
+    seen[p] = true
+    out[#out + 1] = p
+  end
+  for i = 1, #M.sounds do
+    add(M.sounds[i])
+  end
+  local lsm = M.GetLSM()
+  if lsm then
+    local list = lsm:List("sound") or {}
+    for i = 1, #list do
+      local fetch = lsm:Fetch("sound", list[i], true)
+      add(fetch)
+    end
+  end
+  M._soundPaths = out
+  return out
+end
+
+--- Catálogo para el picker de arte (presets + locales + User + LibSharedMedia).
 function M.GetAuraCatalog()
   if M._auraCatalog then
     return M._auraCatalog
   end
+  ensureLsmCallbacks()
   local out = {}
   local seen = {}
   local function add(label, texPath)
@@ -606,8 +827,51 @@ function M.GetAuraCatalog()
       add(name, p)
     end
   end
+  if type(M.userTextures) == "table" then
+    for i = 1, #M.userTextures do
+      local p = M.userTextures[i]
+      add("User: " .. (p:match("([^\\]+)$") or p), p)
+    end
+  end
+  local lsm = M.GetLSM()
+  if lsm then
+    for _, mt in ipairs({ "background", "statusbar", "border" }) do
+      local list = lsm:List(mt) or {}
+      for i = 1, #list do
+        local key = list[i]
+        local fetch = lsm:Fetch(mt, key, true)
+        if fetch then
+          add("LSM " .. mt .. ": " .. key, fetch)
+        end
+      end
+    end
+  end
   M._auraCatalog = out
   return out
 end
+
+M.ApplyUserMedia()
+M.RegisterIntoLSM()
+ensureLsmCallbacks()
+
+-- LSM a veces carga después (SharedMedia); reintentar al login.
+local boot = CreateFrame("Frame")
+boot:RegisterEvent("PLAYER_LOGIN")
+boot:RegisterEvent("ADDON_LOADED")
+boot:SetScript("OnEvent", function(_, event, name)
+  if event == "ADDON_LOADED" then
+    if name == "LibSharedMedia-3.0" or name == "SharedMedia" or (type(name) == "string" and name:find("SharedMedia")) then
+      M.InvalidateCatalogs()
+      M.RegisterIntoLSM()
+      ensureLsmCallbacks()
+    end
+    return
+  end
+  if event == "PLAYER_LOGIN" then
+    M.InvalidateCatalogs()
+    M.RegisterIntoLSM()
+    ensureLsmCallbacks()
+  end
+end)
 
 ns.AlertsMedia = M

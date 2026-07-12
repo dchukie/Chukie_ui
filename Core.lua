@@ -464,3 +464,14 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     print("  Perfil: " .. tostring(ns.Profile:GetCurrentName()) .. " — " .. (p.enabled and "activado" or "desactivado"))
   end
 end
+
+-- Alias de alertas (también registrado en AlertsManager; aquí junto al help de /chukieui).
+SLASH_CHUKIEAURA1 = "/chukie-aura"
+SLASH_CHUKIEAURA2 = "/chukieaura"
+SlashCmdList["CHUKIEAURA"] = function()
+  if ns.AlertsManager and ns.AlertsManager.Show then
+    ns.AlertsManager:Show()
+  else
+    print("|cffff9900Chukie UI|r: gestor de alertas no disponible.")
+  end
+end

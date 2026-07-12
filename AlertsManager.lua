@@ -349,7 +349,7 @@ function M:Ensure()
   wiz.optSound:SetScript("OnClick", function()
     if M._wiz then
       M._wiz.sound = wiz.optSound:GetChecked() and true or false
-      M:ApplyLive()
+      M:SyncOptsPane()
     end
   end)
 
@@ -377,9 +377,34 @@ function M:Ensure()
     end
   end)
 
+  wiz.soundPane = CreateFrame("Frame", nil, wiz.optsPane)
+  wiz.soundPane:SetPoint("TOPLEFT", wiz.optDisplay, "BOTTOMLEFT", 0, -8)
+  wiz.soundPane:SetSize(520, 24)
+  wiz.optSoundPick = makeButton(wiz.soundPane, "Sonido: (default)", 200, 22)
+  wiz.optSoundPick:SetPoint("LEFT", 0, 0)
+  wiz.optSoundPick:SetScript("OnClick", function()
+    if not M._wiz then
+      return
+    end
+    local list = (media() and media().GetSoundPaths and media().GetSoundPaths()) or (media() and media().sounds) or {}
+    local paths = { "" }
+    for i = 1, #list do
+      paths[#paths + 1] = list[i]
+    end
+    M._wiz.soundPath = nextInList(paths, M._wiz.soundPath or "")
+    M:SyncOptsPane()
+  end)
+  wiz.optSoundTest = makeButton(wiz.soundPane, "Probar", 70, 22)
+  wiz.optSoundTest:SetPoint("LEFT", wiz.optSoundPick, "RIGHT", 6, 0)
+  wiz.optSoundTest:SetScript("OnClick", function()
+    if alerts() and alerts().PlaySoundPreview then
+      alerts():PlaySoundPreview(M._wiz and M._wiz.soundPath)
+    end
+  end)
+
   -- Common: size / color / alpha / position
   wiz.optSizeMinus = makeButton(wiz.optsPane, "Tam -", 48, 22)
-  wiz.optSizeMinus:SetPoint("TOPLEFT", wiz.optDisplay, "BOTTOMLEFT", 0, -8)
+  wiz.optSizeMinus:SetPoint("TOPLEFT", wiz.soundPane, "BOTTOMLEFT", 0, -8)
   wiz.optSizeMinus:SetScript("OnClick", function()
     local steps = (M._wiz.display == "icon") and SIZE_STEPS_ICON or SIZE_STEPS_GFX
     local cur = M._wiz.size or 48
@@ -517,9 +542,61 @@ function M:Ensure()
     M:SyncOptsPane()
   end)
 
+  -- Filtro cargas (habilidad) / stacks (aura)
+  wiz.chargePane = CreateFrame("Frame", nil, wiz.optsPane)
+  wiz.chargePane:SetPoint("TOPLEFT", wiz.optShowOnCommon, "BOTTOMLEFT", 0, -8)
+  wiz.chargePane:SetSize(520, 28)
+  wiz.optCharge = CreateFrame("CheckButton", nil, wiz.chargePane, "UICheckButtonTemplate")
+  wiz.optCharge:SetPoint("LEFT", 0, 0)
+  wiz.optCharge.text = wiz.optCharge:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  wiz.optCharge.text:SetPoint("LEFT", wiz.optCharge, "RIGHT", 2, 0)
+  wiz.optCharge.text:SetText("Filtro cargas/stacks")
+  wiz.optCharge:SetScript("OnClick", function()
+    if not M._wiz then
+      return
+    end
+    M._wiz.chargeFilter = M._wiz.chargeFilter or { enabled = false, op = "gte", value = 1 }
+    M._wiz.chargeFilter.enabled = wiz.optCharge:GetChecked() and true or false
+    M:ApplyLive()
+  end)
+  tip(wiz.optCharge, "CD: cargas del hechizo. Proc: stacks del aura. Operador + valor.")
+  local CHARGE_OPS = { "gte", "gt", "eq", "lte", "lt", "ne" }
+  local CHARGE_OP_LABELS = {
+    eq = "==",
+    ne = "!=",
+    gt = ">",
+    gte = ">=",
+    lt = "<",
+    lte = "<=",
+  }
+  wiz.optChargeOp = makeButton(wiz.chargePane, "Op: >=", 70, 22)
+  wiz.optChargeOp:SetPoint("LEFT", wiz.optCharge.text, "RIGHT", 10, 0)
+  wiz.optChargeOp:SetScript("OnClick", function()
+    if not M._wiz then
+      return
+    end
+    M._wiz.chargeFilter = M._wiz.chargeFilter or { enabled = false, op = "gte", value = 1 }
+    M._wiz.chargeFilter.op = nextInList(CHARGE_OPS, M._wiz.chargeFilter.op or "gte")
+    M:SyncOptsPane()
+  end)
+  wiz.optChargeVal = makeButton(wiz.chargePane, "Valor: 1", 80, 22)
+  wiz.optChargeVal:SetPoint("LEFT", wiz.optChargeOp, "RIGHT", 4, 0)
+  wiz.optChargeVal:SetScript("OnClick", function()
+    if not M._wiz then
+      return
+    end
+    M._wiz.chargeFilter = M._wiz.chargeFilter or { enabled = false, op = "gte", value = 1 }
+    local vals = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }
+    M._wiz.chargeFilter.value = nextInList(vals, tonumber(M._wiz.chargeFilter.value) or 1)
+    M:SyncOptsPane()
+  end)
+  wiz.chargeHint = wiz.chargePane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  wiz.chargeHint:SetPoint("LEFT", wiz.optChargeVal, "RIGHT", 8, 0)
+  wiz.chargeHint:SetText("ej. >= 2 cargas")
+
   -- Overlay FX (proc dorado de barra)
   wiz.fxPane = CreateFrame("Frame", nil, wiz.optsPane)
-  wiz.fxPane:SetPoint("TOPLEFT", wiz.optShowOnCommon, "BOTTOMLEFT", 0, -8)
+  wiz.fxPane:SetPoint("TOPLEFT", wiz.chargePane, "BOTTOMLEFT", 0, -8)
   wiz.fxPane:SetSize(520, 52)
   wiz.fxTitle = wiz.fxPane:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   wiz.fxTitle:SetPoint("TOPLEFT", 0, 0)
@@ -635,10 +712,9 @@ function M:Ensure()
   wiz.optFont:SetPoint("LEFT", wiz.textEdit, "RIGHT", 8, 0)
   wiz.optFont:SetScript("OnClick", function()
     local fonts = { "" }
-    if media() and media().fonts then
-      for i = 1, #media().fonts do
-        fonts[#fonts + 1] = media().fonts[i]
-      end
+    local list = (media() and media().GetFontPaths and media().GetFontPaths()) or (media() and media().fonts) or {}
+    for i = 1, #list do
+      fonts[#fonts + 1] = list[i]
     end
     M._wiz.fontPath = nextInList(fonts, M._wiz.fontPath or "")
     M:SyncOptsPane()
@@ -658,7 +734,7 @@ function M:Ensure()
   wiz.pickerPane:SetFrameLevel(wiz.optsPane:GetFrameLevel() + 10)
   local pickTitle = wiz.pickerPane:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   pickTitle:SetPoint("TOP", 0, -8)
-  pickTitle:SetText("Elegir arte (presets + catálogo)")
+  pickTitle:SetText("Elegir arte (local + User + SharedMedia)")
   local pickClose = makeButton(wiz.pickerPane, "Cerrar", 80, 22)
   pickClose:SetPoint("TOPRIGHT", -8, -6)
   pickClose:SetScript("OnClick", function()
@@ -717,6 +793,12 @@ function M:snapshotRule(rule)
         shake = v.shake == true,
         glow = v.glow == true,
       }
+    elseif k == "chargeFilter" and type(v) == "table" then
+      s.chargeFilter = {
+        enabled = v.enabled == true,
+        op = v.op or "gte",
+        value = math.floor(tonumber(v.value) or 1),
+      }
     elseif type(v) ~= "table" then
       s[k] = v
     end
@@ -739,6 +821,7 @@ function M:BuildPayloadFromWiz()
     swipe = wiz.optSwipe:GetChecked() and true or false,
     glowType = w.glowType or "Proc",
     sound = wiz.optSound:GetChecked() and true or false,
+    soundPath = w.soundPath or "",
     combatOnly = wiz.optCombat:GetChecked() and true or false,
     targetOnly = wiz.optTarget:GetChecked() and true or false,
     display = w.display or "icon",
@@ -755,6 +838,11 @@ function M:BuildPayloadFromWiz()
       color = wiz.fxColor:GetChecked() and true or false,
       shake = wiz.fxShake:GetChecked() and true or false,
       glow = wiz.fxGlow:GetChecked() and true or false,
+    },
+    chargeFilter = {
+      enabled = wiz.optCharge:GetChecked() and true or false,
+      op = (w.chargeFilter and w.chargeFilter.op) or "gte",
+      value = math.floor(tonumber(w.chargeFilter and w.chargeFilter.value) or 1),
     },
   }
 end
@@ -898,6 +986,7 @@ function M:StartWizard(existing)
     swipe = existing and existing.swipe ~= false,
     glowType = existing and existing.glowType or "Proc",
     sound = existing and existing.sound ~= false,
+    soundPath = existing and existing.soundPath or "",
     combatOnly = existing and existing.combatOnly == true,
     targetOnly = existing and existing.targetOnly == true,
     display = existing and existing.display or "icon",
@@ -914,6 +1003,11 @@ function M:StartWizard(existing)
       color = existing and existing.overlayFx and existing.overlayFx.color == true,
       shake = existing and existing.overlayFx and existing.overlayFx.shake == true,
       glow = existing and existing.overlayFx and existing.overlayFx.glow == true,
+    },
+    chargeFilter = {
+      enabled = existing and existing.chargeFilter and existing.chargeFilter.enabled == true,
+      op = existing and existing.chargeFilter and existing.chargeFilter.op or "gte",
+      value = existing and existing.chargeFilter and tonumber(existing.chargeFilter.value) or 1,
     },
   }
   self._wizDirty = false
@@ -1054,6 +1148,16 @@ function M:SyncOptsPane()
   local dispLabels = { icon = "Icono", aura = "Aura", text = "Texto" }
   wiz.optDisplay:SetText("Modo: " .. (dispLabels[w.display or "icon"] or "Icono"))
   wiz.optSound:SetChecked(w.sound ~= false)
+  local soundOn = w.sound ~= false
+  wiz.soundPane:SetShown(soundOn)
+  if soundOn then
+    wiz.optSizeMinus:SetPoint("TOPLEFT", wiz.soundPane, "BOTTOMLEFT", 0, -8)
+    local sp = w.soundPath or ""
+    local label = (sp ~= "" and (sp:match("([^\\]+)$") or sp)) or "(default)"
+    wiz.optSoundPick:SetText("Sonido: " .. label)
+  else
+    wiz.optSizeMinus:SetPoint("TOPLEFT", wiz.optDisplay, "BOTTOMLEFT", 0, -8)
+  end
   wiz.optCombat:SetChecked(w.combatOnly == true)
   wiz.optTarget:SetChecked(w.targetOnly == true)
   local fx = w.overlayFx or {}
@@ -1061,6 +1165,13 @@ function M:SyncOptsPane()
   wiz.fxColor:SetChecked(fx.color == true)
   wiz.fxShake:SetChecked(fx.shake == true)
   wiz.fxGlow:SetChecked(fx.glow == true)
+  local cf = w.chargeFilter or {}
+  wiz.optCharge:SetChecked(cf.enabled == true)
+  local opLabels = { eq = "==", ne = "!=", gt = ">", gte = ">=", lt = "<", lte = "<=" }
+  wiz.optChargeOp:SetText("Op: " .. (opLabels[cf.op or "gte"] or ">="))
+  wiz.optChargeVal:SetText("Valor: " .. tostring(math.floor(tonumber(cf.value) or 1)))
+  local chargeKind = (w.kind == "proc") and "stacks aura" or "cargas hechizo"
+  wiz.chargeHint:SetText("ej. >= 2 (" .. chargeKind .. ")")
   wiz.optSize:SetText("Tamano: " .. tostring(w.size or 48))
   local c = w.color or { 1, 1, 1 }
   wiz.colorSwatch:SetColorTexture(c[1] or 1, c[2] or 1, c[3] or 1, 1)

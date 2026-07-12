@@ -1718,6 +1718,70 @@ function ns.RegisterConfigPanel()
     )
   end
 
+  do
+    -- Valores en centésimas de segundo (5 = 0.05 s) para el dropdown de Settings.
+    local TICK_CS = { 5, 10, 15, 20, 25, 50 }
+    local TICK_LABELS = {
+      [5] = "Muy alta (20 Hz)",
+      [10] = "Alta",
+      [15] = "Media (recomendado)",
+      [20] = "Baja",
+      [25] = "Muy baja",
+      [50] = "Mínima",
+    }
+    local function tickDropdownData()
+      local c = Settings.CreateControlTextContainer()
+      for i = 1, #TICK_CS do
+        local cs = TICK_CS[i]
+        c:Add(cs, TICK_LABELS[cs] or tostring(cs))
+      end
+      return c:GetData()
+    end
+    local function get()
+      local sec = tonumber(alertsDB().tickInterval) or 0.15
+      if ns.Alerts and ns.Alerts.GetTickInterval then
+        sec = ns.Alerts:GetTickInterval()
+      end
+      local cs = math.floor(sec * 100 + 0.5)
+      for i = 1, #TICK_CS do
+        if TICK_CS[i] == cs then
+          return cs
+        end
+      end
+      return 15
+    end
+    local function set(v)
+      v = tonumber(v) or 15
+      local ok = false
+      for i = 1, #TICK_CS do
+        if TICK_CS[i] == v then
+          ok = true
+          break
+        end
+      end
+      if not ok then
+        v = 15
+      end
+      alertsDB().tickInterval = v / 100
+      refreshAlerts()
+    end
+    local setting = Settings.RegisterProxySetting(
+      alertsCategory,
+      "ChukieUi_Alerts_tickInterval",
+      Settings.VarType.Number,
+      "Frecuencia de actualización",
+      15,
+      get,
+      set
+    )
+    Settings.CreateDropdown(
+      alertsCategory,
+      setting,
+      tickDropdownData,
+      "Poll en segundo plano (fin de CD / rango al moverse). Más alto = menos CPU. La respuesta a CD/proc sigue yendo por eventos."
+    )
+  end
+
   alertsLayout:AddInitializer(
     CreateSettingsButtonInitializer(
       "",
@@ -1766,7 +1830,13 @@ function ns.RegisterConfigPanel()
     )
     alertsLayout:AddInitializer(
       CreateSettingsListSectionHeaderInitializer(
-        string.format("LibCustomGlow: %s · reglas en este perfil: %d", glowOk, nRules)
+        string.format(
+          "User %d · LibSharedMedia entries %d · glow %s · reglas %d",
+          tonumber(c.user) or 0,
+          tonumber(c.lsm) or 0,
+          glowOk,
+          nRules
+        )
       )
     )
   end

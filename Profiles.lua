@@ -25,7 +25,7 @@ local function cloneProfileData(src)
     panels = { rightPanel = {} },
     widgets = { minimapBar = {}, rightPanelWidgets = {} },
     cvars = {},
-    alerts = { enabled = false, nextId = 1, rules = {} },
+    alerts = { enabled = false, nextId = 1, rules = {}, tickInterval = 0.15 },
   }
   for k, v in pairs(src.minimapPosition or {}) do
     t.minimapPosition[k] = v
@@ -96,6 +96,12 @@ local function cloneProfileData(src)
                 color = rv.color == true,
                 shake = rv.shake == true,
                 glow = rv.glow == true,
+              }
+            elseif rk == "chargeFilter" and type(rv) == "table" then
+              nr.chargeFilter = {
+                enabled = rv.enabled == true,
+                op = rv.op or "gte",
+                value = math.floor(tonumber(rv.value) or 1),
               }
             elseif type(rv) ~= "table" then
               nr[rk] = rv

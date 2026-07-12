@@ -20,6 +20,7 @@ Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueU
 | **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte (`TeleportCatalog.lua`), ranuras dinámicas 2–4 (`DynamicReservedSlots.lua`). |
 | **Sector amarillo** | `RightStrip.lua`: grilla inferior fija 2x2 (oro abreviado + huecos libres de bolsas), clic para `ToggleAllBags`, estilo Masque opcional y ocultado de la barra de bolsas Blizzard. |
 | **Opciones** | *Esc → Opciones → AddOns → Chukie UI* (`ConfigPanel.lua`, API Settings de Retail). |
+| **Alertas CD/procs** | Reglas apilables, wizard `/chukie-aura`, media en `Media/Alerts/` (+ `User/` y LibSharedMedia opcional). Frecuencia de poll configurable en opciones. |
 
 ## Archivos que carga el cliente
 
@@ -44,6 +45,7 @@ Prioridad aproximada: acción extra → habilidad de zona → ítems especiales 
 
 - `docs/WoW1201_Opciones_Addons.md` — API de opciones Retail y convenciones del proyecto.
 - `docs/ESTADO_Y_RESPALDO.md` — inventario de archivos, limitaciones y empaquetado ZIP.
+- `docs/ALERTS_MEDIA_ATTRIBUTION.md` — licencias y atribución del arte/sonidos de alertas.
 - `releases/README.txt` — uso de `pack_backup.ps1`.
 
 ## Herramientas (desarrollo)

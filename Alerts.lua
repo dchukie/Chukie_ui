@@ -23,6 +23,7 @@ local RULE_DEFAULTS = {
   inverse = false,
   glowType = "Proc",
   sound = true,
+  soundPath = "",
   combatOnly = false,
   targetOnly = false,
   display = "icon",
@@ -39,6 +40,21 @@ local OVERLAY_FX_DEFAULTS = {
   color = false,
   shake = false,
   glow = false,
+}
+
+local CHARGE_OP_OK = {
+  eq = true,
+  ne = true,
+  gt = true,
+  gte = true,
+  lt = true,
+  lte = true,
+}
+
+local CHARGE_FILTER_DEFAULTS = {
+  enabled = false,
+  op = "gte",
+  value = 1,
 }
 
 local function clamp(n, lo, hi)
@@ -91,6 +107,20 @@ local function copyOverlayFx(src)
   return o
 end
 
+local function copyChargeFilter(src)
+  local o = {
+    enabled = false,
+    op = "gte",
+    value = 1,
+  }
+  if type(src) == "table" then
+    o.enabled = src.enabled == true
+    o.op = CHARGE_OP_OK[src.op] and src.op or "gte"
+    o.value = math.floor(clamp(src.value, 0, 99))
+  end
+  return o
+end
+
 local function clampSize(n)
   n = math.floor(tonumber(n) or 48)
   if n < SIZE_MIN then
@@ -109,6 +139,7 @@ local function copyRule(src, index)
   end
   r.color = { 1, 1, 1 }
   r.overlayFx = copyOverlayFx(nil)
+  r.chargeFilter = copyChargeFilter(nil)
   if type(src) == "table" then
     for k, v in pairs(src) do
       if k == "point" then
@@ -117,6 +148,8 @@ local function copyRule(src, index)
         r.color = copyColor(v)
       elseif k == "overlayFx" then
         r.overlayFx = copyOverlayFx(v)
+      elseif k == "chargeFilter" then
+        r.chargeFilter = copyChargeFilter(v)
       elseif type(v) ~= "table" then
         r[k] = v
       end
@@ -133,12 +166,14 @@ local function copyRule(src, index)
   r.edge = r.edge == true
   r.inverse = r.inverse == true
   r.sound = r.sound ~= false
+  r.soundPath = type(r.soundPath) == "string" and r.soundPath or ""
   r.combatOnly = r.combatOnly == true
   r.targetOnly = r.targetOnly == true
   r.display = DISPLAY_OK[r.display] and r.display or "icon"
   r.alpha = clamp(r.alpha, 0, 1)
   r.color = copyColor(r.color)
   r.overlayFx = copyOverlayFx(r.overlayFx)
+  r.chargeFilter = copyChargeFilter(r.chargeFilter)
   r.auraPath = type(r.auraPath) == "string" and r.auraPath or ""
   r.auraLayout = LAYOUT_OK[r.auraLayout] and r.auraLayout or "single"
   r.pairGap = clamp(math.floor(tonumber(r.pairGap) or 80), 20, 400)
@@ -188,6 +223,37 @@ function A:NormalizeRule(rule, index)
   return copyRule(rule, index)
 end
 
+local TICK_INTERVAL_MIN, TICK_INTERVAL_MAX = 0.05, 0.50
+local TICK_INTERVAL_DEFAULT = 0.15
+local TICK_INTERVAL_PRESETS = { 0.05, 0.10, 0.15, 0.20, 0.25, 0.50 }
+
+local function normalizeTickInterval(v)
+  v = tonumber(v) or TICK_INTERVAL_DEFAULT
+  if v < TICK_INTERVAL_MIN then
+    v = TICK_INTERVAL_MIN
+  end
+  if v > TICK_INTERVAL_MAX then
+    v = TICK_INTERVAL_MAX
+  end
+  local best, bestD = TICK_INTERVAL_PRESETS[3], 99
+  for i = 1, #TICK_INTERVAL_PRESETS do
+    local p = TICK_INTERVAL_PRESETS[i]
+    local d = math.abs(p - v)
+    if d < bestD then
+      best, bestD = p, d
+    end
+  end
+  return best
+end
+
+function A:GetTickIntervalPresets()
+  return TICK_INTERVAL_PRESETS
+end
+
+function A:GetTickInterval()
+  return normalizeTickInterval(self:DB().tickInterval)
+end
+
 function A:EnsureSchema(db)
   db = db or {}
   db.enabled = db.enabled == true
@@ -196,6 +262,7 @@ function A:EnsureSchema(db)
   if db.nextId < 1 then
     db.nextId = 1
   end
+  db.tickInterval = normalizeTickInterval(db.tickInterval)
   migrateLegacy(db)
   local out = {}
   local maxId = db.nextId - 1
@@ -281,6 +348,8 @@ function A:UpdateRule(id, partial)
         merged.color = copyColor(v)
       elseif k == "overlayFx" then
         merged.overlayFx = copyOverlayFx(v)
+      elseif k == "chargeFilter" then
+        merged.chargeFilter = copyChargeFilter(v)
       elseif k ~= "id" then
         merged[k] = v
       end
@@ -382,42 +451,50 @@ local function getSpellCooldown(spellId)
       local duration = info.duration
       local modRate = info.modRate
       local onGcd = info.isOnGCD
-      -- Retail 12+: start/duration pueden ser secretos; no usarlos desde addon.
+      -- Retail 12+: start/duration pueden ser secretos; no decidir con ellos.
       if isSecret(start) or isSecret(duration) or isSecret(modRate) then
-        return 0, 0, info.isEnabled ~= false, 1, onGcd == true
+        return 0, 0, info.isEnabled ~= false, 1, onGcd == true, true
       end
-      return tonumber(start) or 0, tonumber(duration) or 0, info.isEnabled ~= false, tonumber(modRate) or 1, onGcd == true
+      return tonumber(start) or 0, tonumber(duration) or 0, info.isEnabled ~= false, tonumber(modRate) or 1, onGcd == true, false
     end
   end
   if GetSpellCooldown then
     local start, duration, enable, modRate = GetSpellCooldown(spellId)
     if isSecret(start) or isSecret(duration) or isSecret(modRate) then
-      return 0, 0, enable ~= 0, 1, false
+      return 0, 0, enable ~= 0, 1, false, true
     end
-    return tonumber(start) or 0, tonumber(duration) or 0, enable ~= 0, tonumber(modRate) or 1, false
+    return tonumber(start) or 0, tonumber(duration) or 0, enable ~= 0, tonumber(modRate) or 1, false, false
   end
-  return 0, 0, true, 1, false
+  return 0, 0, true, 1, false, false
 end
 
 --- CD propio (no GCD): duration significativa y distinta del GCD actual.
+--- 6º retorno: secret=true si Blizzard ocultó los tiempos (no usar para available/ready/cooldown).
 local function isOnRealCooldown(spellId)
-  local start, duration, enabled, modRate, flaggedGcd = getSpellCooldown(spellId)
+  local start, duration, enabled, modRate, flaggedGcd, secret = getSpellCooldown(spellId)
+  if secret then
+    return false, start, duration, enabled, modRate, true
+  end
   if not enabled or not duration or duration <= 0 or not start or start <= 0 then
-    return false, start, duration, enabled, modRate
+    return false, start, duration, enabled, modRate, false
   end
   if flaggedGcd then
-    return false, start, duration, enabled, modRate
+    return false, start, duration, enabled, modRate, false
   end
-  local _, gcdDur = getSpellCooldown(GCD_SPELL_ID)
-  gcdDur = tonumber(gcdDur) or 0
+  local _, gcdDur, _, _, _, gcdSecret = getSpellCooldown(GCD_SPELL_ID)
+  if gcdSecret then
+    gcdDur = 0
+  else
+    gcdDur = tonumber(gcdDur) or 0
+  end
   -- GCD típico ~1–1.5s; si duration ≈ gcd o <= 1.5, tratar como GCD.
   if gcdDur > 0 and duration <= (gcdDur + 0.05) then
-    return false, start, duration, enabled, modRate
+    return false, start, duration, enabled, modRate, false
   end
   if duration <= 1.5 then
-    return false, start, duration, enabled, modRate
+    return false, start, duration, enabled, modRate, false
   end
-  return true, start, duration, enabled, modRate
+  return true, start, duration, enabled, modRate, false
 end
 
 local function isSpellUsableNow(spellId)
@@ -451,6 +528,7 @@ local function isSpellInRangeOk(spellId)
 end
 
 --- Disponible: usable + rango OK + no en CD real (GCD no cuenta).
+--- Si el CD es secreto, no asumir disponible.
 local function isSpellAvailable(spellId)
   if not isSpellUsableNow(spellId) then
     return false
@@ -458,7 +536,10 @@ local function isSpellAvailable(spellId)
   if not isSpellInRangeOk(spellId) then
     return false
   end
-  local onReal = isOnRealCooldown(spellId)
+  local onReal, _, _, _, _, secret = isOnRealCooldown(spellId)
+  if secret then
+    return false
+  end
   return not onReal
 end
 
@@ -498,6 +579,117 @@ local function playerHasAura(spellId)
   return false
 end
 
+--- Stacks del aura en el jugador (0 si no está).
+local function getAuraStacks(spellId)
+  spellId = tonumber(spellId) or 0
+  if spellId <= 0 then
+    return 0
+  end
+  if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+    local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellId)
+    if not aura then
+      return 0
+    end
+    local apps = aura.applications
+    if isSecret(apps) then
+      return nil
+    end
+    apps = tonumber(apps)
+    if not apps or apps < 1 then
+      return 1
+    end
+    return apps
+  end
+  if AuraUtil and AuraUtil.FindAuraBySpellID then
+    local name, _, count = AuraUtil.FindAuraBySpellID(spellId, "player", "HELPFUL")
+    if not name then
+      name, _, count = AuraUtil.FindAuraBySpellID(spellId, "player", "HARMFUL")
+    end
+    if not name then
+      return 0
+    end
+    count = tonumber(count)
+    if not count or count < 1 then
+      return 1
+    end
+    return count
+  end
+  return playerHasAura(spellId) and 1 or 0
+end
+
+--- Cargas actuales del hechizo. Sin sistema de cargas: 1 si no en CD real, 0 si en CD.
+--- nil = desconocido (valor secreto).
+local function getSpellChargeCount(spellId)
+  spellId = tonumber(spellId) or 0
+  if spellId <= 0 then
+    return 0
+  end
+  if C_Spell and C_Spell.GetSpellCharges then
+    local info = C_Spell.GetSpellCharges(spellId)
+    if type(info) == "table" then
+      local cur = info.currentCharges
+      if isSecret(cur) then
+        return nil
+      end
+      return math.floor(tonumber(cur) or 0)
+    end
+  end
+  if GetSpellCharges then
+    local cur = GetSpellCharges(spellId)
+    if cur ~= nil then
+      if isSecret(cur) then
+        return nil
+      end
+      return math.floor(tonumber(cur) or 0)
+    end
+  end
+  local onCd, _, _, _, _, secret = isOnRealCooldown(spellId)
+  if secret then
+    return nil
+  end
+  return onCd and 0 or 1
+end
+
+local function compareNumber(n, op, value)
+  n = tonumber(n)
+  value = tonumber(value) or 0
+  if n == nil then
+    return false
+  end
+  if op == "eq" then
+    return n == value
+  elseif op == "ne" then
+    return n ~= value
+  elseif op == "gt" then
+    return n > value
+  elseif op == "gte" then
+    return n >= value
+  elseif op == "lt" then
+    return n < value
+  elseif op == "lte" then
+    return n <= value
+  end
+  return false
+end
+
+--- Filtro opcional de cargas (CD) o stacks (proc). AND con el resto de condiciones.
+local function passesChargeFilter(rule)
+  local f = rule and rule.chargeFilter
+  if type(f) ~= "table" or not f.enabled then
+    return true
+  end
+  local n
+  if rule.kind == "proc" then
+    n = getAuraStacks(rule.spellId)
+  else
+    n = getSpellChargeCount(rule.spellId)
+  end
+  if n == nil then
+    return false
+  end
+  return compareNumber(n, f.op or "gte", f.value or 1)
+end
+
 local function defaultSoundPath()
   if ns.AlertsMedia and ns.AlertsMedia.sounds and #ns.AlertsMedia.sounds > 0 then
     local prefer = { "RobotBlip.ogg", "AirHorn.ogg", "ErrorBeep.ogg" }
@@ -519,14 +711,37 @@ local function defaultSoundPath()
   return nil
 end
 
-local function playAlertSound(enabled)
+local function resolveSoundPath(soundPath)
+  if type(soundPath) == "string" and soundPath ~= "" then
+    if ns.AlertsMedia and ns.AlertsMedia.GetSoundPaths then
+      local list = ns.AlertsMedia.GetSoundPaths()
+      for i = 1, #list do
+        if list[i] == soundPath then
+          return soundPath
+        end
+      end
+    elseif ns.AlertsMedia and ns.AlertsMedia.IsKnownMediaPath and ns.AlertsMedia.IsKnownMediaPath(soundPath) then
+      return soundPath
+    else
+      -- path explícito aún usable aunque no esté en catálogo
+      return soundPath
+    end
+  end
+  return defaultSoundPath()
+end
+
+local function playAlertSound(enabled, soundPath)
   if not enabled then
     return
   end
-  local path = defaultSoundPath()
+  local path = resolveSoundPath(soundPath)
   if path and PlaySoundFile then
     pcall(PlaySoundFile, path, "Master")
   end
+end
+
+function A:PlaySoundPreview(soundPath)
+  playAlertSound(true, soundPath)
 end
 
 local function stopOverlayGlow(frame)
@@ -902,7 +1117,7 @@ local function applyIconMode(frame, rule, show, onCd, start, duration, modRate, 
   frame.icon:SetVertexColor(c[1] or 1, c[2] or 1, c[3] or 1)
   frame.iconLayer:SetAlpha(clamp(rule.alpha, 0, 1))
   if playSoundIfNew and not frame._wasShown then
-    playAlertSound(rule.sound ~= false)
+    playAlertSound(rule.sound ~= false, rule.soundPath)
   end
   startGlow(frame, rule.glowType, glowKey)
   if rule.kind ~= "proc" and frame.cooldown then
@@ -984,7 +1199,7 @@ local function applyAuraMode(frame, rule, show, playSoundIfNew)
     R:Hide()
   end
   if playSoundIfNew and not frame._wasShown then
-    playAlertSound(rule.sound ~= false)
+    playAlertSound(rule.sound ~= false, rule.soundPath)
   end
   frame._wasShown = true
 end
@@ -1024,7 +1239,7 @@ local function applyTextMode(frame, rule, show, playSoundIfNew)
   local c = rule.color or { 1, 1, 1 }
   label:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, clamp(rule.alpha, 0, 1))
   if playSoundIfNew and not frame._wasShown then
-    playAlertSound(rule.sound ~= false)
+    playAlertSound(rule.sound ~= false, rule.soundPath)
   end
   frame._wasShown = true
 end
@@ -1048,13 +1263,23 @@ local function shouldShowRule(rule)
     if preview then
       return true, false, 0, 0, 1
     end
-    return playerHasAura(rule.spellId), false, 0, 0, 1
+    local show
+    if rule.chargeFilter and rule.chargeFilter.enabled then
+      show = passesChargeFilter(rule)
+    else
+      show = playerHasAura(rule.spellId)
+    end
+    return show, false, 0, 0, 1
   end
-  local onCd, start, duration, enabled, modRate = isOnRealCooldown(rule.spellId)
+  local onCd, start, duration, enabled, modRate, secret = isOnRealCooldown(rule.spellId)
   if preview then
     return true, onCd, start or 0, duration or 0, modRate or 1
   end
   local showOn = rule.showOn or "available"
+  -- CD secreto: no decidir available/ready/cooldown; always sí (sin swipe usable).
+  if secret and showOn ~= "always" then
+    return false, false, 0, 0, 1
+  end
   local show
   if showOn == "always" then
     show = true
@@ -1064,6 +1289,9 @@ local function shouldShowRule(rule)
     show = isSpellAvailable(rule.spellId)
   else
     show = not onCd
+  end
+  if show and not passesChargeFilter(rule) then
+    show = false
   end
   return show, onCd, start or 0, duration or 0, modRate or 1
 end
@@ -1196,16 +1424,23 @@ function A:EnsureEvents()
   end
   ev:SetScript("OnEvent", kickUpdate)
 
-  -- El motor de ActionBar actualiza CD sin evento al expirar; ticker corto para
-  -- “disponible” / fin de CD / rango al moverse (≈20 Hz).
-  if not self._ticker then
-    self._ticker = C_Timer.NewTicker(0.05, function()
-      if not A:IsEnabled() and not (A._livePreview and A._livePreview.ruleId) then
-        return
-      end
-      A:UpdateAllRules()
-    end)
+  self:RestartTicker()
+end
+
+--- Poll en segundo plano (fin de CD / rango). Intervalo por perfil: alerts.tickInterval.
+function A:RestartTicker()
+  if self._ticker then
+    self._ticker:Cancel()
+    self._ticker = nil
   end
+  local interval = self:GetTickInterval()
+  self._tickerInterval = interval
+  self._ticker = C_Timer.NewTicker(interval, function()
+    if not A:IsEnabled() and not (A._livePreview and A._livePreview.ruleId) then
+      return
+    end
+    A:UpdateAllRules()
+  end)
 end
 
 function A:HideAll()
@@ -1220,6 +1455,7 @@ end
 function A:Refresh()
   self:EnsureSchema(self:DB())
   self:EnsureEvents()
+  self:RestartTicker()
   if not self:IsEnabled() and not (self._livePreview and self._livePreview.ruleId) then
     self:HideAll()
     return

@@ -43,6 +43,86 @@ local function spellName(spellId)
   return "#" .. tostring(spellId or 0)
 end
 
+--- Resuelve un spellId aunque no esté en el libro (talentos/auras override).
+local function resolveSpellEntry(spellId)
+  spellId = tonumber(spellId)
+  if not spellId or spellId <= 0 then
+    return nil
+  end
+  if C_Spell and C_Spell.RequestLoadSpellData then
+    pcall(C_Spell.RequestLoadSpellData, spellId)
+  end
+  local name, icon
+  if C_Spell and C_Spell.GetSpellInfo then
+    local info = C_Spell.GetSpellInfo(spellId)
+    if type(info) == "table" then
+      name = info.name
+      icon = info.iconID
+      spellId = tonumber(info.spellID) or spellId
+    elseif type(info) == "string" then
+      name = info
+    end
+  end
+  if (not name or name == "") and GetSpellInfo then
+    name = GetSpellInfo(spellId)
+  end
+  if not name or name == "" then
+    name = spellName(spellId)
+  end
+  if not name or name == "" then
+    name = "#" .. tostring(spellId)
+  end
+  return {
+    spellId = spellId,
+    name = name,
+    nameLower = strlower(name),
+    icon = icon or spellIcon(spellId),
+  }
+end
+
+--- Busca en auras activas (player/target). Útil para talentos «Not In Spellbook».
+local function collectAuraSpellMatches(qLower, out, seen, maxN)
+  maxN = maxN or MAX_RESULTS
+  if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then
+    return
+  end
+  local function scan(unit, filter)
+    if #out >= maxN then
+      return
+    end
+    if unit ~= "player" and not UnitExists(unit) then
+      return
+    end
+    for i = 1, 40 do
+      if #out >= maxN then
+        return
+      end
+      local aura = C_UnitAuras.GetAuraDataByIndex(unit, i, filter)
+      if not aura then
+        break
+      end
+      local sid = tonumber(aura.spellId)
+      local n = aura.name
+      if sid and sid > 0 and n and not seen[sid] then
+        local nl = strlower(n)
+        if qLower == "" or strfind(nl, qLower, 1, true) then
+          seen[sid] = true
+          out[#out + 1] = {
+            spellId = sid,
+            name = n .. "  [" .. unit .. "/" .. filter .. "]",
+            nameLower = nl,
+            icon = aura.icon or spellIcon(sid),
+          }
+        end
+      end
+    end
+  end
+  scan("player", "HELPFUL")
+  scan("player", "HARMFUL")
+  scan("target", "HELPFUL")
+  scan("target", "HARMFUL")
+end
+
 local function colorEq(a, b)
   if type(a) ~= "table" or type(b) ~= "table" then
     return false
@@ -124,36 +204,63 @@ end
 function M:SearchSpells(query)
   query = strtrim(tostring(query or ""))
   local out = {}
+  local seen = {}
+  local function push(entry)
+    if not entry or not entry.spellId or seen[entry.spellId] or #out >= MAX_RESULTS then
+      return
+    end
+    seen[entry.spellId] = true
+    out[#out + 1] = entry
+  end
+
+  -- Query vacía + tipo aura: listar auras activas (fácil encontrar Mass Disintegrate, etc.).
   if query == "" then
+    if self._wiz and self._wiz.kind == "aura" then
+      collectAuraSpellMatches("", out, seen, MAX_RESULTS)
+    end
     return out
   end
-  if query:match("^%d+$") then
-    local id = tonumber(query)
-    local name = spellName(id)
-    out[1] = { spellId = id, name = name, icon = spellIcon(id) }
+
+  -- spellId puro o embebido (#436335 / id 436335)
+  local idOnly = query:match("^#?(%d+)$") or query:match("(%d%d%d%d%d+)")
+  if idOnly and query:match("^#?%d+$") then
+    push(resolveSpellEntry(tonumber(idOnly)))
     return out
   end
+
   local q = strlower(query)
+
+  -- Libro de hechizos
   local idx = self:GetSpellIndex()
   for i = 1, #idx do
     local e = idx[i]
     if strfind(e.nameLower, q, 1, true) then
-      out[#out + 1] = e
-      if #out >= MAX_RESULTS then
-        break
-      end
+      push(e)
     end
   end
+
+  -- Auras activas player/target (talentos override / Not In Spellbook)
+  collectAuraSpellMatches(q, out, seen, MAX_RESULTS)
+
+  -- API por nombre exacto/parcial
   if #out == 0 and C_Spell and C_Spell.GetSpellInfo then
     local info = C_Spell.GetSpellInfo(query)
-    if info and info.spellID then
-      out[1] = {
+    if type(info) == "table" and info.spellID then
+      push({
         spellId = info.spellID,
         name = info.name or query,
         icon = info.iconID,
-      }
+      })
+    elseif type(info) == "number" then
+      push(resolveSpellEntry(info))
     end
   end
+
+  -- Si pegaron un id junto a texto, ofrecerlo igual
+  if idOnly then
+    push(resolveSpellEntry(tonumber(idOnly)))
+  end
+
   return out
 end
 
@@ -216,9 +323,29 @@ function M:Ensure()
 
   local hint = list:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   hint:SetPoint("TOPLEFT", 0, 0)
-  hint:SetPoint("TOPRIGHT", -80, 0)
+  hint:SetPoint("TOPRIGHT", -160, 0)
   hint:SetJustifyH("LEFT")
-  hint:SetText("Reglas del perfil activo. Usá + para agregar CD o proc.")
+  hint:SetText("Reglas del perfil activo. Usá + para agregar CD, proc o aura.")
+  list.hint = hint
+
+  local modBtn = makeButton(list, "Módulo: Off", 100, 24)
+  modBtn:SetPoint("TOPRIGHT", -44, 2)
+  modBtn:SetScript("OnClick", function()
+    if not alerts() then
+      return
+    end
+    alerts():SetEnabled(not alerts():IsEnabled())
+    M:RefreshList()
+  end)
+  modBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Si está Off, las alertas solo se ven en el editor (preview).", 1, 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  modBtn:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+  end)
+  list.modBtn = modBtn
 
   local addBtn = makeButton(list, "+", 36, 24)
   addBtn:SetPoint("TOPRIGHT", 0, 2)
@@ -263,6 +390,19 @@ function M:Ensure()
     M._wiz.kind = "proc"
     M:ShowWizardStep("search")
   end)
+  local auraBtn = makeButton(wiz.typePane, "Aura (buff/debuff)", 160, 28)
+  auraBtn:SetPoint("TOPLEFT", cdBtn, "BOTTOMLEFT", 0, -10)
+  auraBtn:SetScript("OnClick", function()
+    M._wiz.kind = "aura"
+    M._wiz.auraUnit = M._wiz.auraUnit or "player"
+    M._wiz.auraFilter = M._wiz.auraFilter or "both"
+    M._wiz.auraShow = M._wiz.auraShow or "present"
+    M:ShowWizardStep("search")
+  end)
+  local typeHint = wiz.typePane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  typeHint:SetPoint("TOPLEFT", auraBtn, "BOTTOMLEFT", 0, -12)
+  typeHint:SetJustifyH("LEFT")
+  typeHint:SetText("Proc = buff en jugador. Aura = player/target, buff/debuff, presente/ausente.")
   local backList = makeButton(wiz.typePane, "Cancelar", 90, 22)
   backList:SetPoint("BOTTOMLEFT", 0, 0)
   backList:SetScript("OnClick", function()
@@ -276,9 +416,15 @@ function M:Ensure()
   local searchLabel = wiz.searchPane:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   searchLabel:SetPoint("TOPLEFT", 0, -30)
   searchLabel:SetText("Buscar por nombre o spellId:")
+  local searchHint = wiz.searchPane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  searchHint:SetPoint("TOPLEFT", searchLabel, "BOTTOMLEFT", 0, -2)
+  searchHint:SetJustifyH("LEFT")
+  searchHint:SetTextColor(0.75, 0.75, 0.8)
+  searchHint:SetText("Tip: talentos/auras fuera del libro → pegá el spellId (ej. 436335) o dejá vacío en tipo Aura.")
+  wiz.searchHint = searchHint
   local edit = CreateFrame("EditBox", "ChukieUi_AlertsSearchBox", wiz.searchPane, "InputBoxTemplate")
   edit:SetSize(280, 24)
-  edit:SetPoint("TOPLEFT", searchLabel, "BOTTOMLEFT", 8, -8)
+  edit:SetPoint("TOPLEFT", searchHint, "BOTTOMLEFT", 8, -6)
   edit:SetAutoFocus(false)
   edit:SetScript("OnTextChanged", function(self)
     if M._searchTimer then
@@ -542,6 +688,47 @@ function M:Ensure()
     M:SyncOptsPane()
   end)
 
+  -- Opciones kind == "aura" (unidad / filtro / presente|ausente)
+  wiz.auraKindPane = CreateFrame("Frame", nil, wiz.optsPane)
+  wiz.auraKindPane:SetPoint("TOPLEFT", wiz.optPos, "BOTTOMLEFT", 0, -8)
+  wiz.auraKindPane:SetSize(520, 28)
+  wiz.optAuraUnit = makeButton(wiz.auraKindPane, "Unidad: Player", 120, 22)
+  wiz.optAuraUnit:SetPoint("LEFT", 0, 0)
+  wiz.optAuraUnit:SetScript("OnClick", function()
+    if not M._wiz then
+      return
+    end
+    M._wiz.auraUnit = nextInList({ "player", "target" }, M._wiz.auraUnit or "player")
+    M:SyncOptsPane()
+  end)
+  tip(wiz.optAuraUnit, "Player o Target: dónde buscar el buff/debuff.")
+  wiz.optAuraFilter = makeButton(wiz.auraKindPane, "Tipo: Ambos", 110, 22)
+  wiz.optAuraFilter:SetPoint("LEFT", wiz.optAuraUnit, "RIGHT", 6, 0)
+  wiz.optAuraFilter:SetScript("OnClick", function()
+    if not M._wiz then
+      return
+    end
+    M._wiz.auraFilter = nextInList({ "both", "HELPFUL", "HARMFUL" }, M._wiz.auraFilter or "both")
+    M:SyncOptsPane()
+  end)
+  tip(wiz.optAuraFilter, "Buff (HELPFUL), Debuff (HARMFUL) o ambos.")
+  wiz.optAuraShow = makeButton(wiz.auraKindPane, "Cuando: Presente", 130, 22)
+  wiz.optAuraShow:SetPoint("LEFT", wiz.optAuraFilter, "RIGHT", 6, 0)
+  wiz.optAuraShow:SetScript("OnClick", function()
+    if not M._wiz then
+      return
+    end
+    M._wiz.auraShow = nextInList({ "present", "absent", "always" }, M._wiz.auraShow or "present")
+    M:SyncOptsPane()
+  end)
+  tip(wiz.optAuraShow, "Presente / Ausente / Siempre.")
+
+  wiz.auraBackendHint = wiz.optsPane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  wiz.auraBackendHint:SetPoint("TOPLEFT", wiz.auraKindPane, "BOTTOMLEFT", 0, -2)
+  wiz.auraBackendHint:SetPoint("TOPRIGHT", wiz.optsPane, "TOPRIGHT", -8, 0)
+  wiz.auraBackendHint:SetJustifyH("LEFT")
+  wiz.auraBackendHint:SetText("")
+
   -- Filtro cargas (habilidad) / stacks (aura)
   wiz.chargePane = CreateFrame("Frame", nil, wiz.optsPane)
   wiz.chargePane:SetPoint("TOPLEFT", wiz.optShowOnCommon, "BOTTOMLEFT", 0, -8)
@@ -559,7 +746,7 @@ function M:Ensure()
     M._wiz.chargeFilter.enabled = wiz.optCharge:GetChecked() and true or false
     M:ApplyLive()
   end)
-  tip(wiz.optCharge, "CD: cargas del hechizo. Proc: stacks del aura. Operador + valor.")
+  tip(wiz.optCharge, "CD: cargas del hechizo. Proc/Aura: stacks del buff/debuff. Operador + valor.")
   local CHARGE_OPS = { "gte", "gt", "eq", "lte", "lt", "ne" }
   local CHARGE_OP_LABELS = {
     eq = "==",
@@ -844,6 +1031,9 @@ function M:BuildPayloadFromWiz()
       op = (w.chargeFilter and w.chargeFilter.op) or "gte",
       value = math.floor(tonumber(w.chargeFilter and w.chargeFilter.value) or 1),
     },
+    auraUnit = w.auraUnit or "player",
+    auraFilter = w.auraFilter or "both",
+    auraShow = w.auraShow or "present",
   }
 end
 
@@ -907,6 +1097,17 @@ function M:RefreshList()
   for i = 1, #rows do
     rows[i]:Hide()
   end
+  local modOn = alerts() and alerts():IsEnabled()
+  if f.list.modBtn then
+    f.list.modBtn:SetText(modOn and "Módulo: On" or "Módulo: Off")
+  end
+  if f.list.hint then
+    if modOn then
+      f.list.hint:SetText("Reglas del perfil activo. Usá + para agregar CD, proc o aura.")
+    else
+      f.list.hint:SetText("|cffff6666Módulo Off:|r las alertas no se muestran en combate. Activá «Módulo: On».")
+    end
+  end
   local rules = alerts() and alerts():GetRules() or {}
   local y = 0
   local dispLabel = { icon = "Icono", aura = "Aura", text = "Texto" }
@@ -946,7 +1147,12 @@ function M:RefreshList()
     else
       row.icon:SetTexture(spellIcon(rule.spellId) or "Interface\\Icons\\INV_Misc_QuestionMark")
     end
-    local kindLabel = rule.kind == "proc" and "Proc" or "CD"
+    local kindLabel = "CD"
+    if rule.kind == "proc" then
+      kindLabel = "Proc"
+    elseif rule.kind == "aura" then
+      kindLabel = "Aura"
+    end
     local d = dispLabel[rule.display or "icon"] or "Icono"
     row.label:SetText(string.format("[%s·%s] %s (#%d)", kindLabel, d, spellName(rule.spellId), rule.spellId))
     row.toggle:SetText(rule.enabled ~= false and "On" or "Off")
@@ -1009,6 +1215,9 @@ function M:StartWizard(existing)
       op = existing and existing.chargeFilter and existing.chargeFilter.op or "gte",
       value = existing and existing.chargeFilter and tonumber(existing.chargeFilter.value) or 1,
     },
+    auraUnit = existing and existing.auraUnit or "player",
+    auraFilter = existing and existing.auraFilter or "both",
+    auraShow = existing and existing.auraShow or "present",
   }
   self._wizDirty = false
   self._liveEditing = false
@@ -1046,9 +1255,20 @@ function M:ShowWizardStep(step)
     f.title:SetText("Nueva alerta")
   elseif step == "search" then
     self._liveEditing = false
-    wiz.stepText:SetText("Paso 2/3 — Busca el hechizo (" .. (kind == "proc" and "proc" or "CD") .. ")")
+    wiz.stepText:SetText(
+      "Paso 2/3 — Busca el hechizo ("
+        .. (kind == "proc" and "proc" or (kind == "aura" and "aura" or "CD"))
+        .. ")"
+    )
     wiz.searchPane:Show()
     wiz.searchEdit:SetText("")
+    if wiz.searchHint then
+      if kind == "aura" then
+        wiz.searchHint:SetText("Vacío = auras activas (player/target). O pegá spellId (Mass Disintegrate ≈ 436335).")
+      else
+        wiz.searchHint:SetText("Tip: talentos/auras fuera del libro → pegá el spellId (ej. 436335).")
+      end
+    end
     self:RefreshSearchResults("")
     wiz.searchEdit:SetFocus()
     f.title:SetText("Buscar hechizo")
@@ -1142,8 +1362,14 @@ function M:SyncOptsPane()
     return
   end
   local wiz = self:Ensure().wizard
+  local kindTitle = "CD"
+  if w.kind == "proc" then
+    kindTitle = "Proc"
+  elseif w.kind == "aura" then
+    kindTitle = "Aura"
+  end
   local name = spellName(w.spellId)
-  wiz.optsTitle:SetText(string.format("%s — %s (#%d)", w.kind == "proc" and "Proc" or "CD", name, w.spellId or 0))
+  wiz.optsTitle:SetText(string.format("%s — %s (#%d)", kindTitle, name, w.spellId or 0))
 
   local dispLabels = { icon = "Icono", aura = "Aura", text = "Texto" }
   wiz.optDisplay:SetText("Modo: " .. (dispLabels[w.display or "icon"] or "Icono"))
@@ -1170,7 +1396,12 @@ function M:SyncOptsPane()
   local opLabels = { eq = "==", ne = "!=", gt = ">", gte = ">=", lt = "<", lte = "<=" }
   wiz.optChargeOp:SetText("Op: " .. (opLabels[cf.op or "gte"] or ">="))
   wiz.optChargeVal:SetText("Valor: " .. tostring(math.floor(tonumber(cf.value) or 1)))
-  local chargeKind = (w.kind == "proc") and "stacks aura" or "cargas hechizo"
+  local chargeKind = "cargas hechizo"
+  if w.kind == "proc" then
+    chargeKind = "stacks aura"
+  elseif w.kind == "aura" then
+    chargeKind = "stacks (unidad)"
+  end
   wiz.chargeHint:SetText("ej. >= 2 (" .. chargeKind .. ")")
   wiz.optSize:SetText("Tamano: " .. tostring(w.size or 48))
   local c = w.color or { 1, 1, 1 }
@@ -1184,6 +1415,8 @@ function M:SyncOptsPane()
   wiz.auraPane:SetShown(d == "aura")
   wiz.textPane:SetShown(d == "text")
 
+  local isCd = w.kind == "cooldown"
+  local isAura = w.kind == "aura"
   local labels = {
     available = "Disponible",
     ready = "Ready (solo CD)",
@@ -1191,11 +1424,46 @@ function M:SyncOptsPane()
     always = "Siempre",
   }
   wiz.optShowOnCommon:SetText("Mostrar: " .. (labels[w.showOn or "available"] or "Disponible"))
-  wiz.optShowOnCommon:SetShown(w.kind == "cooldown")
+  wiz.optShowOnCommon:SetShown(isCd)
+  wiz.auraKindPane:SetShown(isAura)
+  if isAura then
+    local unitL = (w.auraUnit == "target") and "Target" or "Player"
+    wiz.optAuraUnit:SetText("Unidad: " .. unitL)
+    local filtL = ({ both = "Ambos", HELPFUL = "Buff", HARMFUL = "Debuff" })[w.auraFilter or "both"] or "Ambos"
+    wiz.optAuraFilter:SetText("Tipo: " .. filtL)
+    local showL = ({ present = "Presente", absent = "Ausente", always = "Siempre" })[w.auraShow or "present"] or "Presente"
+    wiz.optAuraShow:SetText("Cuando: " .. showL)
+    if wiz.auraBackendHint then
+      wiz.auraBackendHint:Show()
+      local hasAPI = alerts() and alerts().HasAuraContainerAPI and alerts():HasAuraContainerAPI()
+      local mode = w.auraShow or "present"
+      local stacks = w.chargeFilter and w.chargeFilter.enabled
+      if hasAPI and mode == "present" and not stacks then
+        wiz.auraBackendHint:SetText("|cff66ff66Motor: AuraContainer 12.1|r (Blizzard asigna el buff; icono o arte).")
+      elseif hasAPI then
+        wiz.auraBackendHint:SetText("|cffffcc66Motor: legacy|r (Ausente/Siempre/stacks no van en Container).")
+      else
+        wiz.auraBackendHint:SetText("|cffffcc66Motor: legacy|r (sin AuraContainer en este cliente; auras secretas no se leen).")
+      end
+      wiz.chargePane:SetPoint("TOPLEFT", wiz.auraBackendHint, "BOTTOMLEFT", 0, -6)
+    else
+      wiz.chargePane:SetPoint("TOPLEFT", wiz.auraKindPane, "BOTTOMLEFT", 0, -8)
+    end
+  else
+    if wiz.auraBackendHint then
+      wiz.auraBackendHint:Hide()
+    end
+    wiz.chargePane:SetPoint("TOPLEFT", wiz.optShowOnCommon, "BOTTOMLEFT", 0, -8)
+  end
+  wiz.fxPane:SetShown(isCd)
+  local modeAnchor = isCd and wiz.fxPane or wiz.chargePane
+  wiz.iconPane:SetPoint("TOPLEFT", modeAnchor, "BOTTOMLEFT", 0, -10)
+  wiz.auraPane:SetPoint("TOPLEFT", modeAnchor, "BOTTOMLEFT", 0, -10)
+  wiz.textPane:SetPoint("TOPLEFT", modeAnchor, "BOTTOMLEFT", 0, -10)
 
   if d == "icon" then
     wiz.optSwipe:SetChecked(w.swipe ~= false)
-    wiz.optSwipe:SetShown(w.kind == "cooldown")
+    wiz.optSwipe:SetShown(isCd)
     local glowLabels = { Proc = "Proc", Pixel = "Pixel", buttonOverlay = "Overlay", none = "Ninguno" }
     wiz.optGlow:SetText("Glow: " .. (glowLabels[w.glowType or "Proc"] or "Proc"))
   elseif d == "aura" then
@@ -1274,6 +1542,9 @@ function M:CommitWizard()
   if not w.editId then
     print("|cffff9900Chukie UI|r: no se pudo guardar la alerta.")
     return
+  end
+  if alerts() and alerts().EnsureModuleEnabled then
+    alerts():EnsureModuleEnabled()
   end
   w.isDraft = false
   w.baseline = nil

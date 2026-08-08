@@ -1,4 +1,4 @@
---[[ Módulo Alertas CD/procs — reglas apilables por perfil. ]]
+--[[ Módulo Alertas CD / procs / auras — reglas apilables por perfil. ]]
 
 local _, ns = ...
 
@@ -9,9 +9,12 @@ local MAX_RULES = 32
 local SIZE_MIN, SIZE_MAX = 24, 768
 local SHOW_ON_OK = { cooldown = true, ready = true, always = true, available = true }
 local GLOW_OK = { Proc = true, Pixel = true, buttonOverlay = true, none = true }
-local KIND_OK = { cooldown = true, proc = true }
+local KIND_OK = { cooldown = true, proc = true, aura = true }
 local DISPLAY_OK = { icon = true, aura = true, text = true }
 local LAYOUT_OK = { single = true, pair = true }
+local AURA_UNIT_OK = { player = true, target = true }
+local AURA_FILTER_OK = { HELPFUL = true, HARMFUL = true, both = true }
+local AURA_SHOW_OK = { present = true, absent = true, always = true }
 local GCD_SPELL_ID = 61304
 
 local RULE_DEFAULTS = {
@@ -33,6 +36,10 @@ local RULE_DEFAULTS = {
   pairGap = 80,
   text = "",
   fontPath = "",
+  --- Solo kind == "aura"
+  auraUnit = "player",
+  auraFilter = "both",
+  auraShow = "present",
 }
 
 local OVERLAY_FX_DEFAULTS = {
@@ -179,6 +186,9 @@ local function copyRule(src, index)
   r.pairGap = clamp(math.floor(tonumber(r.pairGap) or 80), 20, 400)
   r.text = type(r.text) == "string" and r.text or ""
   r.fontPath = type(r.fontPath) == "string" and r.fontPath or ""
+  r.auraUnit = AURA_UNIT_OK[r.auraUnit] and r.auraUnit or "player"
+  r.auraFilter = AURA_FILTER_OK[r.auraFilter] and r.auraFilter or "both"
+  r.auraShow = AURA_SHOW_OK[r.auraShow] and r.auraShow or "present"
   r.point = copyPoint(r.point, index)
   return r
 end
@@ -297,6 +307,30 @@ function A:IsEnabled()
   return self:DB().enabled == true
 end
 
+--- Activa el módulo (necesario para que las reglas se evalúen fuera del preview del wizard).
+function A:SetEnabled(on)
+  local db = self:DB()
+  local want = on == true
+  if db.enabled == want then
+    return false
+  end
+  db.enabled = want
+  self:Refresh()
+  return true
+end
+
+--- Si hay reglas guardadas, asegurar que el módulo esté ON (el wizard hace forceShow y engaña).
+function A:EnsureModuleEnabled(silent)
+  if self:IsEnabled() then
+    return false
+  end
+  self:SetEnabled(true)
+  if not silent then
+    print("|cff00ff00Chukie UI|r: módulo Alertas activado (hace falta para verlas fuera del editor).")
+  end
+  return true
+end
+
 function A:GetRules()
   return self:DB().rules
 end
@@ -330,6 +364,14 @@ function A:AddRule(partial)
   rule.id = db.nextId
   db.nextId = db.nextId + 1
   db.rules[#db.rules + 1] = rule
+  -- Sin esto: el preview del wizard se ve, pero al Guardar no aparece nada.
+  if not db.enabled then
+    db.enabled = true
+    if not self._autoEnableWarned then
+      self._autoEnableWarned = true
+      print("|cff00ff00Chukie UI|r: módulo Alertas activado automáticamente.")
+    end
+  end
   self:Refresh()
   return rule
 end
@@ -372,6 +414,9 @@ function A:DeleteRule(id)
   end
   local db = self:DB()
   table.remove(db.rules, idx)
+  if self.ReleaseAuraContainer then
+    self:ReleaseAuraContainer(id)
+  end
   self:Refresh()
   return true
 end
@@ -441,6 +486,231 @@ end
 
 local function isSecret(v)
   return issecretvalue and issecretvalue(v) or false
+end
+
+local function spellAuraIsSecretNow(spellId)
+  if C_Secrets and C_Secrets.ShouldSpellAuraBeSecret then
+    local ok, secret = pcall(C_Secrets.ShouldSpellAuraBeSecret, spellId)
+    return ok and secret == true
+  end
+  return false
+end
+
+local function spellIdMatches(sid, want)
+  if sid == nil or want == nil then
+    return false
+  end
+  if isSecret(sid) then
+    return false
+  end
+  return tonumber(sid) == tonumber(want)
+end
+
+--- Watch por auraInstanceID (NeverSecret): identifica el buff listando auras
+--- cuando spellId o icon son legibles; luego sigue la instancia aunque el spellId se oculte.
+--- unit -> spellId -> { [auraInstanceID] = true }
+A._auraWatch = A._auraWatch or {}
+
+local function wantSpellIcon(spellId)
+  spellId = tonumber(spellId) or 0
+  if spellId <= 0 then
+    return nil
+  end
+  local tex = spellTexture(spellId)
+  if tex and not isSecret(tex) then
+    return tonumber(tex) or tex
+  end
+  return nil
+end
+
+local function auraMatchesWanted(aura, spellId, wantTex)
+  if not aura then
+    return false
+  end
+  if spellIdMatches(aura.spellId, spellId) then
+    return true
+  end
+  -- Fallback 12.0: si el icono del buff no es secreto, comparar FileID del hechizo.
+  local icon = aura.icon
+  if wantTex ~= nil and icon ~= nil and not isSecret(icon) then
+    local ic = tonumber(icon) or icon
+    if ic == wantTex then
+      return true
+    end
+  end
+  return false
+end
+
+local function watchRemember(unit, spellId, instanceId)
+  instanceId = tonumber(instanceId)
+  spellId = tonumber(spellId) or 0
+  if not unit or not instanceId or spellId <= 0 or isSecret(instanceId) then
+    return
+  end
+  A._auraWatch[unit] = A._auraWatch[unit] or {}
+  A._auraWatch[unit][spellId] = A._auraWatch[unit][spellId] or {}
+  A._auraWatch[unit][spellId][instanceId] = true
+end
+
+local function watchForgetInstance(unit, instanceId)
+  instanceId = tonumber(instanceId)
+  if not unit or not instanceId or not A._auraWatch[unit] then
+    return
+  end
+  for spellId, set in pairs(A._auraWatch[unit]) do
+    if set[instanceId] then
+      set[instanceId] = nil
+    end
+  end
+end
+
+local function watchClearUnitSpell(unit, spellId)
+  if A._auraWatch[unit] then
+    A._auraWatch[unit][spellId] = nil
+  end
+end
+
+local function watchHas(unit, spellId)
+  spellId = tonumber(spellId) or 0
+  local set = A._auraWatch[unit] and A._auraWatch[unit][spellId]
+  if not set then
+    return false
+  end
+  local any = false
+  for iid in pairs(set) do
+    any = true
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+      local ok, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, iid)
+      if not ok or not aura then
+        set[iid] = nil
+      else
+        return true
+      end
+    else
+      return true
+    end
+  end
+  return false
+end
+
+local AURA_SCAN_FILTERS = {
+  "HELPFUL",
+  "HARMFUL",
+  "HELPFUL|INCLUDE_NAME_PLATE_ONLY",
+  "HARMFUL|INCLUDE_NAME_PLATE_ONLY",
+  "HELPFUL|PLAYER",
+  "HARMFUL|PLAYER",
+  "HELPFUL|RAID_IN_COMBAT",
+  "HELPFUL|PLAYER|RAID_IN_COMBAT",
+}
+
+local function watchedSpellIds()
+  local out, seen = {}, {}
+  local rules = A.GetRules and A:GetRules() or {}
+  for i = 1, #rules do
+    local r = rules[i]
+    if r and (r.kind == "aura" or r.kind == "proc") then
+      local sid = tonumber(r.spellId) or 0
+      if sid > 0 and not seen[sid] then
+        seen[sid] = true
+        out[#out + 1] = sid
+      end
+    end
+  end
+  return out
+end
+
+--- Reconstruye el watch listando auras del unit (API de listado de Blizzard).
+function A:RebuildAuraWatch(unit)
+  unit = unit or "player"
+  if unit ~= "player" and not UnitExists(unit) then
+    A._auraWatch[unit] = nil
+    return
+  end
+  local spells = watchedSpellIds()
+  for i = 1, #spells do
+    watchClearUnitSpell(unit, spells[i])
+  end
+  if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex or #spells == 0 then
+    return
+  end
+  local want = {}
+  for i = 1, #spells do
+    want[spells[i]] = wantSpellIcon(spells[i])
+  end
+  for li = 1, #AURA_SCAN_FILTERS do
+    local filt = AURA_SCAN_FILTERS[li]
+    for idx = 1, 40 do
+      local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, idx, filt)
+      if not ok or not aura then
+        break
+      end
+      local iid = aura.auraInstanceID
+      if iid and not isSecret(iid) then
+        for si = 1, #spells do
+          local sid = spells[si]
+          if auraMatchesWanted(aura, sid, want[sid]) then
+            watchRemember(unit, sid, iid)
+          end
+        end
+      end
+    end
+  end
+end
+
+function A:IngestUnitAura(unit, updateInfo)
+  if not unit or unit == "" then
+    return
+  end
+  if type(updateInfo) ~= "table" or updateInfo.isFullUpdate then
+    self:RebuildAuraWatch(unit)
+    return
+  end
+  local spells = watchedSpellIds()
+  if #spells == 0 then
+    return
+  end
+  local want = {}
+  for i = 1, #spells do
+    want[spells[i]] = wantSpellIcon(spells[i])
+  end
+  if updateInfo.addedAuras then
+    for i = 1, #updateInfo.addedAuras do
+      local aura = updateInfo.addedAuras[i]
+      if aura and aura.auraInstanceID and not isSecret(aura.auraInstanceID) then
+        for si = 1, #spells do
+          local sid = spells[si]
+          if auraMatchesWanted(aura, sid, want[sid]) then
+            watchRemember(unit, sid, aura.auraInstanceID)
+          end
+        end
+      end
+    end
+  end
+  if updateInfo.updatedAuraInstanceIDs then
+    for i = 1, #updateInfo.updatedAuraInstanceIDs do
+      local iid = updateInfo.updatedAuraInstanceIDs[i]
+      if iid and not isSecret(iid) and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+        local ok, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, iid)
+        if ok and aura then
+          for si = 1, #spells do
+            local sid = spells[si]
+            if auraMatchesWanted(aura, sid, want[sid]) then
+              watchRemember(unit, sid, iid)
+            end
+          end
+        end
+      end
+    end
+  end
+  if updateInfo.removedAuraInstanceIDs then
+    for i = 1, #updateInfo.removedAuraInstanceIDs do
+      local iid = updateInfo.removedAuraInstanceIDs[i]
+      if iid and not isSecret(iid) then
+        watchForgetInstance(unit, iid)
+      end
+    end
+  end
 end
 
 local function getSpellCooldown(spellId)
@@ -565,30 +835,238 @@ local function safeSetCooldown(cd, start, duration, modRate)
   return ok
 end
 
-local function playerHasAura(spellId)
-  if not spellId or spellId <= 0 then
+--- ¿La unidad tiene el aura? filter = HELPFUL | HARMFUL | both.
+local function unitHasAura(unit, spellId, filter)
+  spellId = tonumber(spellId) or 0
+  if spellId <= 0 or not unit or unit == "" then
     return false
   end
-  if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-    return C_UnitAuras.GetPlayerAuraBySpellID(spellId) ~= nil
+  if unit ~= "player" and not UnitExists(unit) then
+    return false
   end
+  filter = filter or "both"
+
+  local function auraMatchesFilter(aura)
+    if not aura then
+      return false
+    end
+    -- isHarmful/isHelpful son NeverSecret en 12.x
+    if filter == "both" then
+      return true
+    end
+    if filter == "HELPFUL" then
+      if aura.isHelpful == true then
+        return true
+      end
+      return aura.isHarmful ~= true
+    end
+    if filter == "HARMFUL" then
+      if aura.isHarmful == true then
+        return true
+      end
+      return aura.isHelpful ~= true
+    end
+    return true
+  end
+
+  -- 1) Lookup directo por spellId (nil != ausente si el aura es secreta en combate).
+  if unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+    local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
+    if ok and aura and auraMatchesFilter(aura) then
+      return true
+    end
+  end
+  if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
+    local ok, data = pcall(C_UnitAuras.GetAuraDataBySpellID, unit, spellId)
+    if ok and data and auraMatchesFilter(data) then
+      return true
+    end
+  end
+  -- GetUnitAuraBySpellID (12.x)
+  if C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID then
+    local ok, data = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellId)
+    if ok and data and auraMatchesFilter(data) then
+      return true
+    end
+  end
+
+  -- 2) Por nombre (mismo RequiresNonSecretAura, pero a veces responde cuando el id no).
+  local name = spellName(spellId)
+  if name and name ~= "" and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
+    local nameFilters
+    if filter == "HELPFUL" then
+      nameFilters = { "HELPFUL", "HELPFUL|INCLUDE_NAME_PLATE_ONLY" }
+    elseif filter == "HARMFUL" then
+      nameFilters = { "HARMFUL", "HARMFUL|INCLUDE_NAME_PLATE_ONLY" }
+    else
+      nameFilters = {
+        "HELPFUL",
+        "HARMFUL",
+        "HELPFUL|INCLUDE_NAME_PLATE_ONLY",
+        "HARMFUL|INCLUDE_NAME_PLATE_ONLY",
+      }
+    end
+    for i = 1, #nameFilters do
+      local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, name, nameFilters[i])
+      if ok and aura and auraMatchesFilter(aura) then
+        return true
+      end
+    end
+  end
+
+  -- 3) Barrido por índice + match spellId o icon FileID (si no son secretos).
+  local wantTex = wantSpellIcon(spellId)
+  if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+    local lists
+    if filter == "HELPFUL" then
+      lists = {
+        "HELPFUL",
+        "HELPFUL|INCLUDE_NAME_PLATE_ONLY",
+        "HELPFUL|PLAYER",
+        "HELPFUL|RAID_IN_COMBAT",
+        "HELPFUL|PLAYER|RAID_IN_COMBAT",
+      }
+    elseif filter == "HARMFUL" then
+      lists = { "HARMFUL", "HARMFUL|INCLUDE_NAME_PLATE_ONLY", "HARMFUL|PLAYER" }
+    else
+      lists = AURA_SCAN_FILTERS
+    end
+    for li = 1, #lists do
+      for i = 1, 40 do
+        local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, lists[li])
+        if not ok or not aura then
+          break
+        end
+        if auraMatchesFilter(aura) and auraMatchesWanted(aura, spellId, wantTex) then
+          if aura.auraInstanceID and not isSecret(aura.auraInstanceID) then
+            watchRemember(unit, spellId, aura.auraInstanceID)
+          end
+          return true
+        end
+      end
+    end
+  end
+
   if AuraUtil and AuraUtil.FindAuraBySpellID then
-    return AuraUtil.FindAuraBySpellID(spellId, "player", "HELPFUL") ~= nil
-      or AuraUtil.FindAuraBySpellID(spellId, "player", "HARMFUL") ~= nil
+    if filter == "HELPFUL" then
+      if AuraUtil.FindAuraBySpellID(spellId, unit, "HELPFUL") ~= nil then
+        return true
+      end
+    elseif filter == "HARMFUL" then
+      if AuraUtil.FindAuraBySpellID(spellId, unit, "HARMFUL") ~= nil then
+        return true
+      end
+    elseif AuraUtil.FindAuraBySpellID(spellId, unit, "HELPFUL") ~= nil
+      or AuraUtil.FindAuraBySpellID(spellId, unit, "HARMFUL") ~= nil
+    then
+      return true
+    end
+  end
+
+  -- 4) Instancia ya identificada (spellId/icon legibles en un update anterior).
+  if watchHas(unit, spellId) then
+    return true
   end
   return false
 end
 
---- Stacks del aura en el jugador (0 si no está).
-local function getAuraStacks(spellId)
+--- Diagnóstico en juego: /chukieui auracheck [spellId]
+function A:DebugAuraCheck(spellId, unit)
+  spellId = tonumber(spellId) or 0
+  unit = unit or "player"
+  self:RebuildAuraWatch(unit)
+  local name = spellName(spellId) or "?"
+  local secret = spellAuraIsSecretNow(spellId)
+  local has = unitHasAura(unit, spellId, "both")
+  local secrecy = "?"
+  if C_Secrets and C_Secrets.GetSpellAuraSecrecy then
+    local ok, s = pcall(C_Secrets.GetSpellAuraSecrecy, spellId)
+    if ok then
+      secrecy = tostring(s)
+    end
+  end
+  local direct = "nil"
+  if unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+    local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
+    direct = (ok and aura) and "table" or "nil"
+  end
+  local wantTex = wantSpellIcon(spellId)
+  local listed, iconHit, sidHit, iconSecretN, sidSecretN = 0, 0, 0, 0, 0
+  if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+    for i = 1, 40 do
+      local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL|INCLUDE_NAME_PLATE_ONLY")
+      if not ok or not aura then
+        break
+      end
+      listed = listed + 1
+      if isSecret(aura.spellId) then
+        sidSecretN = sidSecretN + 1
+      elseif spellIdMatches(aura.spellId, spellId) then
+        sidHit = sidHit + 1
+      end
+      if isSecret(aura.icon) then
+        iconSecretN = iconSecretN + 1
+      elseif wantTex and (tonumber(aura.icon) or aura.icon) == wantTex then
+        iconHit = iconHit + 1
+      end
+    end
+  end
+  local tracked = watchHas(unit, spellId)
+  print(string.format(
+    "|cff00ff00Chukie UI|r auracheck #%d (%s) unit=%s | módulo=%s | has=%s | secretNow=%s | secrecy=%s | GetPlayerAura=%s | combate=%s",
+    spellId,
+    name,
+    unit,
+    tostring(self:IsEnabled()),
+    tostring(has),
+    tostring(secret),
+    secrecy,
+    direct,
+    tostring(UnitAffectingCombat("player"))
+  ))
+  print(string.format(
+    "|cff00ff00Chukie UI|r   listado nameplate: %d | spellIdHit=%d spellIdSecret=%d | iconHit=%d iconSecret=%d | trackedInstance=%s | wantIcon=%s",
+    listed,
+    sidHit,
+    sidSecretN,
+    iconHit,
+    iconSecretN,
+    tostring(tracked),
+    tostring(wantTex)
+  ))
+  if secret and not has then
+    local hasAC = self.HasAuraContainerAPI and self:HasAuraContainerAPI()
+    if hasAC then
+      print("|cffff9900Chukie UI|r   Aura secreta: el listado legacy no la identifica. Usá regla kind=aura «Presente» (motor AuraContainer).")
+    else
+      print("|cffff9900Chukie UI|r   Aura secreta sin AuraContainer en este cliente. Actualizá a 12.1 (Interface 120100) o el motor Container no está disponible.")
+    end
+  end
+  local backend = self.GetAuraDisplayBackend and self:GetAuraDisplayBackend() or "legacy"
+  print(string.format(
+    "|cff00ff00Chukie UI|r   displayBackend=%s | auraContainerAPI=%s",
+    backend,
+    tostring(self.HasAuraContainerAPI and self:HasAuraContainerAPI() or false)
+  ))
+  return has
+end
+
+local function playerHasAura(spellId)
+  return unitHasAura("player", spellId, "both")
+end
+
+--- Stacks del aura en la unidad (0 si no está; nil si secreto).
+local function getUnitAuraStacks(unit, spellId, filter)
   spellId = tonumber(spellId) or 0
   if spellId <= 0 then
     return 0
   end
-  if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-    local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellId)
+  unit = unit or "player"
+  filter = filter or "both"
+
+  local function appsFromAura(aura)
     if not aura then
-      return 0
+      return nil
     end
     local apps = aura.applications
     if isSecret(apps) then
@@ -600,21 +1078,102 @@ local function getAuraStacks(spellId)
     end
     return apps
   end
-  if AuraUtil and AuraUtil.FindAuraBySpellID then
-    local name, _, count = AuraUtil.FindAuraBySpellID(spellId, "player", "HELPFUL")
-    if not name then
-      name, _, count = AuraUtil.FindAuraBySpellID(spellId, "player", "HARMFUL")
+
+  local function matchesFilter(aura)
+    if not aura then
+      return false
     end
-    if not name then
-      return 0
+    if filter == "HELPFUL" and aura.isHarmful == true then
+      return false
     end
-    count = tonumber(count)
-    if not count or count < 1 then
-      return 1
+    if filter == "HARMFUL" and aura.isHarmful ~= true then
+      return false
     end
-    return count
+    return true
   end
-  return playerHasAura(spellId) and 1 or 0
+
+  -- No cortar en nil: Mass Disintegrate y similares a veces fallan en GetPlayerAuraBySpellID.
+  if unit == "player" and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+    local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
+    if ok and aura and matchesFilter(aura) then
+      local n = appsFromAura(aura)
+      return n == nil and nil or n
+    end
+  end
+  if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
+    local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellID, unit, spellId)
+    if ok and aura and matchesFilter(aura) then
+      local n = appsFromAura(aura)
+      return n == nil and nil or n
+    end
+  end
+  if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+    local lists
+    if filter == "HELPFUL" then
+      lists = { "HELPFUL", "HELPFUL|INCLUDE_NAME_PLATE_ONLY", "HELPFUL|PLAYER" }
+    elseif filter == "HARMFUL" then
+      lists = { "HARMFUL", "HARMFUL|INCLUDE_NAME_PLATE_ONLY", "HARMFUL|PLAYER" }
+    else
+      lists = {
+        "HELPFUL",
+        "HARMFUL",
+        "HELPFUL|INCLUDE_NAME_PLATE_ONLY",
+        "HARMFUL|INCLUDE_NAME_PLATE_ONLY",
+        "HELPFUL|PLAYER",
+        "HARMFUL|PLAYER",
+      }
+    end
+    for li = 1, #lists do
+      for i = 1, 40 do
+        local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, lists[li])
+        if not ok or not aura then
+          break
+        end
+        local sid = aura.spellId
+        if not isSecret(sid) and tonumber(sid) == spellId then
+          local n = appsFromAura(aura)
+          return n == nil and nil or n
+        end
+      end
+    end
+  end
+  if AuraUtil and AuraUtil.FindAuraBySpellID then
+    local function try(filt)
+      local name, _, count = AuraUtil.FindAuraBySpellID(spellId, unit, filt)
+      if not name then
+        return false, 0
+      end
+      if isSecret(count) then
+        return true, nil
+      end
+      count = tonumber(count)
+      if not count or count < 1 then
+        return true, 1
+      end
+      return true, count
+    end
+    if filter == "HELPFUL" or filter == "HARMFUL" then
+      local found, n = try(filter)
+      if found then
+        return n
+      end
+    else
+      local found, n = try("HELPFUL")
+      if found then
+        return n
+      end
+      found, n = try("HARMFUL")
+      if found then
+        return n
+      end
+    end
+  end
+  return 0
+end
+
+--- Stacks del aura en el jugador (0 si no está).
+local function getAuraStacks(spellId)
+  return getUnitAuraStacks("player", spellId, "both")
 end
 
 --- Cargas actuales del hechizo. Sin sistema de cargas: 1 si no en CD real, 0 si en CD.
@@ -672,7 +1231,7 @@ local function compareNumber(n, op, value)
   return false
 end
 
---- Filtro opcional de cargas (CD) o stacks (proc). AND con el resto de condiciones.
+--- Filtro opcional de cargas (CD) o stacks (proc/aura). AND con el resto de condiciones.
 local function passesChargeFilter(rule)
   local f = rule and rule.chargeFilter
   if type(f) ~= "table" or not f.enabled then
@@ -681,6 +1240,9 @@ local function passesChargeFilter(rule)
   local n
   if rule.kind == "proc" then
     n = getAuraStacks(rule.spellId)
+  elseif rule.kind == "aura" then
+    local unit = rule.auraUnit == "target" and "target" or "player"
+    n = getUnitAuraStacks(unit, rule.spellId, rule.auraFilter or "both")
   else
     n = getSpellChargeCount(rule.spellId)
   end
@@ -831,6 +1393,15 @@ local function applyOverlayFx(frame, rule, show)
   if not frame then
     return
   end
+  -- Overlay dorado de barra: solo CD (no proc/aura).
+  if rule and (rule.kind == "proc" or rule.kind == "aura") then
+    if frame._overlayFxActive then
+      frame._overlayFxActive = false
+      frame:SetScript("OnUpdate", nil)
+      restoreOverlayVisuals(frame, rule)
+    end
+    return
+  end
   local fx = rule and rule.overlayFx
   local want = show and hasAnyOverlayFx(fx) and isSpellOverlayed(rule.spellId, rule.id)
   if not want then
@@ -969,6 +1540,7 @@ end
 
 function A:EnsureHost()
   if self._host then
+    self._host:Show()
     return self._host
   end
   local host = CreateFrame("Frame", "ChukieUi_AlertsHost", UIParent)
@@ -976,6 +1548,7 @@ function A:EnsureHost()
   host:SetFrameLevel(100)
   host:SetAllPoints(UIParent)
   host:EnableMouse(false)
+  host:Show()
   self._host = host
   return host
 end
@@ -1120,7 +1693,7 @@ local function applyIconMode(frame, rule, show, onCd, start, duration, modRate, 
     playAlertSound(rule.sound ~= false, rule.soundPath)
   end
   startGlow(frame, rule.glowType, glowKey)
-  if rule.kind ~= "proc" and frame.cooldown then
+  if rule.kind ~= "proc" and rule.kind ~= "aura" and frame.cooldown then
     if rule.swipe ~= false then
       frame.cooldown:Show()
       if frame.cooldown.SetDrawSwipe then
@@ -1271,6 +1844,29 @@ local function shouldShowRule(rule)
     end
     return show, false, 0, 0, 1
   end
+  if rule.kind == "aura" then
+    if preview then
+      return true, false, 0, 0, 1
+    end
+    local unit = rule.auraUnit == "target" and "target" or "player"
+    if unit == "target" and not UnitExists("target") then
+      return false, false, 0, 0, 1
+    end
+    local has = unitHasAura(unit, rule.spellId, rule.auraFilter or "both")
+    local mode = rule.auraShow or "present"
+    local show
+    if mode == "always" then
+      show = true
+    elseif mode == "absent" then
+      show = not has
+    else
+      show = has
+    end
+    if show and not passesChargeFilter(rule) then
+      show = false
+    end
+    return show, false, 0, 0, 1
+  end
   local onCd, start, duration, enabled, modRate, secret = isOnRealCooldown(rule.spellId)
   if preview then
     return true, onCd, start or 0, duration or 0, modRate or 1
@@ -1330,6 +1926,14 @@ function A:UpdateRuleFrame(rule, index)
   if not rule or not rule.id then
     return
   end
+  -- 12.1+: AuraContainer maneja show/hide; no evaluar API secreta.
+  if self.SyncAuraContainerRule and self:SyncAuraContainerRule(rule) then
+    local f = self._frames and self._frames[rule.id]
+    if f then
+      hideFrame(f)
+    end
+    return
+  end
   local f = self:EnsureRuleFrame(rule.id)
   local glowKey = "r" .. tostring(rule.id)
   local show, onCd, start, duration, modRate = shouldShowRule(rule)
@@ -1372,6 +1976,9 @@ function A:UpdateAllRules()
     else
       local f = self._frames and self._frames[rule.id]
       hideFrame(f)
+      if self.ReleaseAuraContainer then
+        self:ReleaseAuraContainer(rule.id)
+      end
     end
   end
   if self._frames then
@@ -1380,6 +1987,9 @@ function A:UpdateAllRules()
         hideFrame(f)
       end
     end
+  end
+  if self.ReleaseStaleAuraContainers then
+    self:ReleaseStaleAuraContainers(seen)
   end
 end
 
@@ -1410,7 +2020,8 @@ function A:EnsureEvents()
   pcall(function()
     ev:RegisterEvent("SPELL_UPDATE_USABLE")
   end)
-  ev:RegisterUnitEvent("UNIT_AURA", "player")
+  -- Varios units en una sola llamada (dos RegisterUnitEvent se pisan).
+  ev:RegisterUnitEvent("UNIT_AURA", "player", "target")
   ev:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
   pcall(function()
     ev:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
@@ -1419,10 +2030,17 @@ function A:EnsureEvents()
     if not A:IsEnabled() and not (A._livePreview and A._livePreview.ruleId) then
       return
     end
-    -- Inmediato: sin C_Timer.After (eso retrasaba vs ActionBar).
     A:UpdateAllRules()
   end
-  ev:SetScript("OnEvent", kickUpdate)
+  ev:SetScript("OnEvent", function(_, event, unit, updateInfo)
+    if event == "UNIT_AURA" and A.IngestUnitAura then
+      A:IngestUnitAura(unit, updateInfo)
+    end
+    if event == "PLAYER_ENTERING_WORLD" and A.RebuildAuraWatch then
+      A:RebuildAuraWatch("player")
+    end
+    kickUpdate()
+  end)
 
   self:RestartTicker()
 end
@@ -1444,6 +2062,9 @@ function A:RestartTicker()
 end
 
 function A:HideAll()
+  if self.HideAllAuraContainers then
+    self:HideAllAuraContainers()
+  end
   if not self._frames then
     return
   end

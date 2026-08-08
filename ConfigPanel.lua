@@ -1290,6 +1290,15 @@ function ns.RegisterConfigPanel()
   )
   addBoolActionBars(
     barsCategory,
+    "ChukieUi_AB_hideBlizz",
+    "hideBlizzardArt",
+    "Ocultar arte Blizzard",
+    "Oculta MainActionBar / MultiBars / XP y botones stock (mismo enfoque que Bartender/Dominos). "
+      .. "No toca el micromenú ni las bolsas que gestiona Chukie. Activo por defecto.",
+    true
+  )
+  addBoolActionBars(
+    barsCategory,
     "ChukieUi_AB_skyriding",
     "skyridingPaging",
     "Paging skyriding 1–4 → 8–11",
@@ -1927,7 +1936,7 @@ function ns.RegisterConfigPanel()
     true
   )
 
-  local alertsCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Alertas (CD / procs)")
+  local alertsCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Alertas (CD / procs / auras)")
   local alertsLayout = SettingsPanel:GetLayout(alertsCategory)
 
   local function alertsDB()
@@ -1969,7 +1978,7 @@ function ns.RegisterConfigPanel()
     Settings.CreateCheckbox(
       alertsCategory,
       setting,
-      "Las alertas se apilan por perfil. Usá «Gestionar alertas…» o /chukie-aura para abrir el wizard (cierra Opciones para pantallar limpia)."
+      "Las alertas se apilan por perfil (CD, proc o aura). Usá «Gestionar alertas…» o /chukie-aura para abrir el wizard (cierra Opciones para pantallar limpia)."
     )
   end
 

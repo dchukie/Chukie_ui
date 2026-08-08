@@ -1,6 +1,6 @@
 --[[ Chukie UI — núcleo del addon. Aquí se fusionan opciones por defecto,
      se aplican CVars y puedes ir añadiendo hooks a marcos de la UI.
-     Documentación / cliente objetivo: Retail 12.0.7 (Interface 120007 en Chukie_Ui.toc). ]]
+     Documentación / cliente objetivo: Retail 12.0.7; TOC declara 120100+120007 de cara a 12.1. ]]
 
 local ADDON_NAME, ns = ...
 
@@ -159,6 +159,8 @@ local defaults = {
     applyDefaultKeybinds = true,
     --- Masque: grupo «Chukie UI» → «ActionBars».
     useMasque = true,
+    --- Ocultar arte/barras stock de Blizzard (MainActionBar, MultiBars, etc.).
+    hideBlizzardArt = true,
     rightBar6Enabled = true,
     rightBar6NumButtons = 8,
     --- 2 columnas × 4 filas.
@@ -284,7 +286,7 @@ local defaults = {
   cvars = {
     lootUnderMouse = "1",
   },
-  --- Alertas CD / procs: lista apilable `rules` por perfil.
+  --- Alertas CD / procs / auras: lista apilable `rules` por perfil.
   alerts = {
     enabled = false,
     nextId = 1,
@@ -426,6 +428,32 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     print("|cffff9900Chukie UI|r: apartado Panel derecho no disponible.")
     return
   end
+  do
+    local id = raw:match("^[Aa][Uu][Rr][Aa][Cc][Hh][Ee][Cc][Kk]%s+(%d+)")
+      or raw:match("^[Aa][Uu][Rr][Aa]%s+(%d+)")
+    if id and ns.Alerts and ns.Alerts.DebugAuraCheck then
+      ns.Alerts:DebugAuraCheck(tonumber(id), "player")
+      return
+    end
+    if msg == "auracheck" or msg == "aura" then
+      print("|cffff9900Chukie UI|r: uso — /chukieui auracheck 436336")
+      return
+    end
+  end
+  if msg == "alertas on" or msg == "alerts on" then
+    if ns.Alerts and ns.Alerts.SetEnabled then
+      ns.Alerts:SetEnabled(true)
+      print("|cff00ff00Chukie UI|r: módulo Alertas ON.")
+    end
+    return
+  end
+  if msg == "alertas off" or msg == "alerts off" then
+    if ns.Alerts and ns.Alerts.SetEnabled then
+      ns.Alerts:SetEnabled(false)
+      print("|cff00ff00Chukie UI|r: módulo Alertas OFF.")
+    end
+    return
+  end
   if msg == "botones" then
     if ns.OpenMinimapButtonsPanel and ns.OpenMinimapButtonsPanel() then
       return
@@ -512,9 +540,13 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     end
   end
   print("|cff00ff00Chukie UI|r — /chukieui config | panel | minimapa | botones | mmpos <x> <y> | mmarrow …")
-  print("|cff00ff00Chukie UI|r — alertas: /chukie-aura")
+  print("|cff00ff00Chukie UI|r — alertas: /chukie-aura | /chukieui alertas on | /chukieui auracheck <id>")
   if p then
     print("  Perfil: " .. tostring(ns.Profile:GetCurrentName()) .. " — " .. (p.enabled and "activado" or "desactivado"))
+  end
+  if ns.Alerts then
+    local backend = ns.Alerts.GetAuraDisplayBackend and ns.Alerts:GetAuraDisplayBackend() or "legacy"
+    print("  Alertas módulo: " .. (ns.Alerts:IsEnabled() and "ON" or "OFF") .. " | auras: " .. backend)
   end
 end
 

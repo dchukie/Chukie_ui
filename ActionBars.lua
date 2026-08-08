@@ -28,12 +28,77 @@ local DEFAULT_KEYS = {
 }
 
 local STOCK_BARS_TO_HIDE = {
-  "MainActionBar",
+  "MainMenuBar", -- arte clásico / ≤11.2.5
+  "MainActionBar", -- Retail 11.2.7+ / 12
   "MultiBarBottomLeft",
   "MultiBarBottomRight",
   "MultiBarRight",
   "MultiBarLeft",
+  "MultiBar5",
+  "MultiBar6",
+  "MultiBar7",
+  "MultiBar8",
+  "StanceBar",
+  "PetActionBar",
+  "PossessActionBar",
+  "StatusTrackingBarManager", -- XP/rep bajo la barra principal
 }
+
+local STOCK_BUTTON_PREFIXES = {
+  "ActionButton",
+  "MultiBarBottomLeftButton",
+  "MultiBarBottomRightButton",
+  "MultiBarRightButton",
+  "MultiBarLeftButton",
+  "MultiBar5Button",
+  "MultiBar6Button",
+  "MultiBar7Button",
+  "MultiBar8Button",
+}
+
+local function getBlizzHider()
+  if not AB._blizzHider then
+    local h = CreateFrame("Frame", "ChukieUi_ActionBarBlizzHider")
+    h:Hide()
+    AB._blizzHider = h
+  end
+  return AB._blizzHider
+end
+
+local function hideBarFrame(frame, clearEvents)
+  if not frame then
+    return
+  end
+  if clearEvents and frame.UnregisterAllEvents then
+    pcall(frame.UnregisterAllEvents, frame)
+  end
+  -- Edit Mode sustituye Hide; preferir HideBase para no taint.
+  if frame.HideBase then
+    pcall(frame.HideBase, frame)
+  elseif frame.Hide then
+    pcall(frame.Hide, frame)
+  end
+  if frame.SetParent then
+    pcall(frame.SetParent, frame, getBlizzHider())
+  end
+end
+
+local function hideBarButton(button)
+  if not button then
+    return
+  end
+  if button.SetAttribute then
+    pcall(function()
+      button:SetAttribute("statehidden", true)
+    end)
+  end
+  if button.UnregisterAllEvents then
+    pcall(button.UnregisterAllEvents, button)
+  end
+  if button.Hide then
+    pcall(button.Hide, button)
+  end
+end
 
 local function db()
   local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
@@ -694,42 +759,27 @@ function AB:HideStockBars()
   if InCombatLockdown() then
     return
   end
+  if db().hideBlizzardArt == false then
+    return
+  end
   for i = 1, #STOCK_BARS_TO_HIDE do
-    local f = _G[STOCK_BARS_TO_HIDE[i]]
-    if f then
-      if f.SetAttribute then
-        pcall(function()
-          f:SetAttribute("statehidden", true)
-        end)
-      end
-      if f.Hide then
-        f:Hide()
-      end
-      if f.actionButtons and type(f.actionButtons) == "table" then
-        for _, button in pairs(f.actionButtons) do
-          if button then
-            pcall(function()
-              if button.SetAttribute then
-                button:SetAttribute("statehidden", true)
-              end
-              button:Hide()
-            end)
-          end
-        end
-      end
+    -- clearEvents en MultiBars; MainMenuBar/MainActionBar conservan algunos eventos.
+    local name = STOCK_BARS_TO_HIDE[i]
+    local clearEvents = name ~= "MainMenuBar" and name ~= "MainActionBar"
+    hideBarFrame(_G[name], clearEvents)
+  end
+  for p = 1, #STOCK_BUTTON_PREFIXES do
+    local prefix = STOCK_BUTTON_PREFIXES[p]
+    for i = 1, 12 do
+      hideBarButton(_G[prefix .. i])
     end
   end
-  -- Botones sueltos de la barra principal.
-  for i = 1, 12 do
-    local b = _G["ActionButton" .. i]
-    if b then
-      pcall(function()
-        if b.SetAttribute then
-          b:SetAttribute("statehidden", true)
-        end
-        b:Hide()
-      end)
-    end
+  -- MainMenuBar: eventos que la vuelven a mostrar.
+  if MainMenuBar and MainMenuBar.UnregisterEvent then
+    pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "PLAYER_REGEN_ENABLED")
+    pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "PLAYER_REGEN_DISABLED")
+    pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "ACTIONBAR_SHOWGRID")
+    pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "ACTIONBAR_HIDEGRID")
   end
 end
 

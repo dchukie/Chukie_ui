@@ -1,6 +1,6 @@
 # Chukie UI
 
-Addon de interfaz para **World of Warcraft Retail** (TOC `## Interface: 120007`).
+Addon de interfaz para **World of Warcraft Retail** (TOC `## Interface: 120100, 120007` — hoy 12.0.7; listo para 12.1).
 
 ## Instalación
 
@@ -20,11 +20,11 @@ Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueU
 | **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte (`TeleportCatalog.lua`), ranuras dinámicas 2–4 (`DynamicReservedSlots.lua`). |
 | **Sector amarillo** | `RightStrip.lua`: grilla inferior fija 2x2 (oro abreviado + huecos libres de bolsas), clic para `ToggleAllBags`, estilo Masque opcional y ocultado de la barra de bolsas Blizzard. |
 | **Opciones** | *Esc → Opciones → AddOns → Chukie UI* (`ConfigPanel.lua`, API Settings de Retail). |
-| **Alertas CD/procs** | Reglas apilables, wizard `/chukie-aura`, media en `Media/Alerts/` (+ `User/` y LibSharedMedia opcional). Frecuencia de poll configurable en opciones. |
+| **Alertas CD/procs/auras** | Reglas apilables, wizard `/chukie-aura`. En **12.1** las auras `kind=aura` (presente) usan **AuraContainer** cuando la API existe; en 12.0.7 quedan en path legacy. Media en `Media/Alerts/`. |
 
 ## Archivos que carga el cliente
 
-Orden en `Chukie_Ui.toc`: `Core.lua`, `Profiles.lua`, `PanelCore.lua`, `RightPanel.lua`, `RightStrip.lua`, `MinimapBar.lua`, `TeleportCatalog.lua`, `DynamicReservedSlots.lua`, `RightPanelWidgets.lua`, `ConfigPanel.lua`.
+Orden en `Chukie_Ui.toc`: ver el `.toc` (incluye `ActionBars.lua`, `Alerts*.lua`, paneles, etc.).
 
 - **`Bindings.xml`** (raíz del addon): define enlaces de teclado para las ranuras dinámicas seguras (`ChukieDynAct2` … `ChukieDynAct4`). **No** debe incluirse en el `.toc` (el cliente lo cargaría como Lua). Los textos visibles en *Controles → Teclas rápidas* se asignan en `Core.lua` (`BINDING_NAME_CLICK …`).
 - **`Media/`**: PNG/TGA referenciados por ruta desde Lua; **no** van en el `.toc`.

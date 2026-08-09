@@ -183,15 +183,21 @@ local MICRO_BUTTON_FALLBACK_NAMES = {
   "HousingMicroButton",
   "HousingDashboardMicroButton",
   "HousingDashboardButton",
+  "MainMenuMicroButton",
   -- Midnight 12.0.7+: Landing Page / Omnium Folio (vive en el minimapa, no en MICRO_BUTTONS).
   "ExpansionLandingPageMinimapButton",
-  "MainMenuMicroButton",
 }
 
 local EXTRA_MICROMENU_BUTTON_NAMES = {
   HousingMicroButton = true,
   HousingDashboardMicroButton = true,
   HousingDashboardButton = true,
+  ExpansionLandingPageMinimapButton = true,
+}
+
+--- Iconos cuadrados (no comparten proporción con los micro botones): van al final de la fila
+--- y se escalan por su propio tamaño para no desalinear al resto.
+local TRAILING_MICROMENU_BUTTON_NAMES = {
   ExpansionLandingPageMinimapButton = true,
 }
 
@@ -268,8 +274,10 @@ function MB:GetMicroMenuButtonFrames()
   scanMicroTree(_G.MicroButtonAndBagsBar)
   scanMicroTree(_G.MainMenuBar)
   -- Extras fuera del árbol MicroMenu (p. ej. Omnium Folio en el cluster del minimapa).
-  for name in pairs(EXTRA_MICROMENU_BUTTON_NAMES) do
-    pushFrame(_G[name])
+  for _, name in ipairs(MICRO_BUTTON_FALLBACK_NAMES) do
+    if EXTRA_MICROMENU_BUTTON_NAMES[name] then
+      pushFrame(_G[name])
+    end
   end
   return out
 end
@@ -497,9 +505,22 @@ function MB:LayoutMicroMenuEmbedded()
   local innerH = math.max(14, rowH - 4)
   local gap = math.max(0, tonumber(self:GetMiniMenuSpacing()) or 0)
   local targetW = self:GetMiniMenuIconWidth()
+  local function fitScaleFor(btn)
+    local w0 = btn:GetWidth() or 28
+    local h0 = btn:GetHeight() or 58
+    local l, r = btn:GetHitRectInsets()
+    local insets = (tonumber(l) or 0) + (tonumber(r) or 0)
+    local base = btn.chukieMicroSavedScale or 1
+    local sW = targetW / math.max(w0 - insets, 1)
+    local sH = innerH / math.max(h0, 1)
+    local fit = math.max(0.18, math.min(sW, sH, 2.35))
+    return math.min(2.8, math.max(0.15, fit * base))
+  end
+
   self.microMenuDetached = self.microMenuDetached or {}
   local known = {}
   local visibleButtons = {}
+  local trailingButtons = {}
   for _, b in ipairs(self.microMenuDetached) do
     known[b] = true
   end
@@ -528,35 +549,33 @@ function MB:LayoutMicroMenuEmbedded()
       btn:Show()
       btn:SetScale(1)
       btn:ClearAllPoints()
-      visibleButtons[#visibleButtons + 1] = btn
+      if TRAILING_MICROMENU_BUTTON_NAMES[n] then
+        trailingButtons[#trailingButtons + 1] = btn
+      else
+        visibleButtons[#visibleButtons + 1] = btn
+      end
     end
+  end
+  local normalCount = #visibleButtons
+  for _, btn in ipairs(trailingButtons) do
+    visibleButtons[#visibleButtons + 1] = btn
   end
   local visibleCount = #visibleButtons
   local commonScale = 1
-  local baseL, baseR = 0, 0
   if visibleCount > 0 then
-    local refBtn = visibleButtons[1]
-    local w0 = refBtn:GetWidth() or 28
-    local h0 = refBtn:GetHeight() or 58
-    local l, r = refBtn:GetHitRectInsets()
-    baseL = tonumber(l) or 0
-    baseR = tonumber(r) or 0
-    local base = refBtn.chukieMicroSavedScale or 1
-    local sW = targetW / math.max((w0 - (baseL + baseR)), 1)
-    local sH = innerH / math.max(h0, 1)
-    local fit = math.min(sW, sH, 2.35)
-    fit = math.max(0.18, fit)
-    commonScale = math.min(2.8, math.max(0.15, fit * base))
+    commonScale = fitScaleFor(visibleButtons[1])
   end
   local totalContentWidth = 0
   if visibleCount > 0 then
     totalContentWidth = (visibleCount * targetW) + ((visibleCount - 1) * gap)
   end
   for i, btn in ipairs(visibleButtons) do
-    btn:SetScale(commonScale)
+    local scale = i > normalCount and fitScaleFor(btn) or commonScale
+    btn:SetScale(scale)
     btn:ClearAllPoints()
     local cx = (-totalContentWidth / 2) + (targetW / 2) + ((i - 1) * (targetW + gap))
-    btn:SetPoint("CENTER", mm, "CENTER", cx, 0)
+    --- Los offsets van en la escala del propio botón: compensar para no desalinear la fila.
+    btn:SetPoint("CENTER", mm, "CENTER", cx * (commonScale / scale), 0)
   end
   local width = 48
   if visibleCount > 0 then

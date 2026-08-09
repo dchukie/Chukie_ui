@@ -183,6 +183,8 @@ local MICRO_BUTTON_FALLBACK_NAMES = {
   "HousingMicroButton",
   "HousingDashboardMicroButton",
   "HousingDashboardButton",
+  -- Midnight 12.0.7+: Landing Page / Omnium Folio (vive en el minimapa, no en MICRO_BUTTONS).
+  "ExpansionLandingPageMinimapButton",
   "MainMenuMicroButton",
 }
 
@@ -190,6 +192,7 @@ local EXTRA_MICROMENU_BUTTON_NAMES = {
   HousingMicroButton = true,
   HousingDashboardMicroButton = true,
   HousingDashboardButton = true,
+  ExpansionLandingPageMinimapButton = true,
 }
 
 --- Botones del micromenú de Blizzard (sufijo «MicroButton»). No deben tratarse como iconos LibDBIcon del minimapa.
@@ -264,6 +267,10 @@ function MB:GetMicroMenuButtonFrames()
   scanMicroTree(_G.MicroMenuContainer)
   scanMicroTree(_G.MicroButtonAndBagsBar)
   scanMicroTree(_G.MainMenuBar)
+  -- Extras fuera del árbol MicroMenu (p. ej. Omnium Folio en el cluster del minimapa).
+  for name in pairs(EXTRA_MICROMENU_BUTTON_NAMES) do
+    pushFrame(_G[name])
+  end
   return out
 end
 
@@ -387,6 +394,7 @@ function MB:EnsureMicroMenuHooks()
     end
     MB:LayoutMicroMenuEmbedded()
   end)
+  self:EnsureExpansionLandingPageMicroHooks()
   if MicroMenu and MicroMenu.SetParent then
     -- Blizzard (Edit Mode / ResetMicroMenuPosition) intenta devolver MicroMenu al container.
     hooksecurefunc(MicroMenu, "SetParent", function(menu, parent)
@@ -427,6 +435,47 @@ function MB:EnsureMicroMenuHooks()
   end
 end
 
+function MB:EnsureExpansionLandingPageMicroHooks()
+  if self._elpMicroHooks then
+    return
+  end
+  local elp = _G.ExpansionLandingPageMinimapButton
+  if not elp then
+    return
+  end
+  self._elpMicroHooks = true
+  local function relayoutIfOwned()
+    if MB._layoutingMicroMenu or not chukieOwnsMicromenu() or InCombatLockdown() then
+      return
+    end
+    if not elp.chukieMicroChukieOwned then
+      return
+    end
+    if MB._elpRelayoutQueued then
+      return
+    end
+    MB._elpRelayoutQueued = true
+    C_Timer.After(0, function()
+      MB._elpRelayoutQueued = false
+      if MB._layoutingMicroMenu then
+        return
+      end
+      if chukieOwnsMicromenu() and elp.chukieMicroChukieOwned and MB.LayoutMicroMenuEmbedded then
+        MB:LayoutMicroMenuEmbedded()
+      end
+    end)
+  end
+  if elp.UpdateIcon then
+    hooksecurefunc(elp, "UpdateIcon", relayoutIfOwned)
+  end
+  if elp.SetPoint then
+    hooksecurefunc(elp, "SetPoint", relayoutIfOwned)
+  end
+  if elp.SetSize then
+    hooksecurefunc(elp, "SetSize", relayoutIfOwned)
+  end
+end
+
 function MB:LayoutMicroMenuEmbedded()
   if not self.miniMenuBar or barOpts().minimenuBarEnabled == false then
     return
@@ -435,6 +484,11 @@ function MB:LayoutMicroMenuEmbedded()
     self.microMenuRelayoutAfterCombat = true
     return
   end
+  if self._layoutingMicroMenu then
+    return
+  end
+  self:EnsureExpansionLandingPageMicroHooks()
+  self._layoutingMicroMenu = true
   self._chukieMicroEmbedded = true
   self:BanishBlizzardMicroMenuShell()
   local mm = self.miniMenuBar
@@ -443,7 +497,6 @@ function MB:LayoutMicroMenuEmbedded()
   local innerH = math.max(14, rowH - 4)
   local gap = math.max(0, tonumber(self:GetMiniMenuSpacing()) or 0)
   local targetW = self:GetMiniMenuIconWidth()
-  local x = 0
   self.microMenuDetached = self.microMenuDetached or {}
   local known = {}
   local visibleButtons = {}
@@ -464,6 +517,9 @@ function MB:LayoutMicroMenuEmbedded()
     btn:SetParent(mm)
     btn.chukieMicroChukieOwned = true
     local n = btn:GetName() or ""
+    if n == "ExpansionLandingPageMinimapButton" then
+      btn.chukieStripChrome = nil
+    end
     if not self:IsMinimenuButtonVisible(n) then
       btn:SetScale(btn.chukieMicroSavedScale or 1)
       btn:ClearAllPoints()
@@ -509,6 +565,7 @@ function MB:LayoutMicroMenuEmbedded()
   mm:SetWidth(math.max(width, 48))
   self:PositionMicromenuCentered()
   self:MasqueApplyMicromenu()
+  self._layoutingMicroMenu = false
 end
 
 --- Layout unificado: barras siempre centradas (sin offset manual separado).
@@ -1101,6 +1158,17 @@ function MB:EnsureStripShowHook(f)
   end)
 end
 
+--- Landing Page / Omnium Folio: si está en la fila del micromenú y marcado visible, no stripar.
+local function isMicromenuOwnedVisible(f, frameName)
+  if not f or not f.chukieMicroChukieOwned then
+    return false
+  end
+  if barOpts().minimenuBarEnabled == false then
+    return false
+  end
+  return MB:IsMinimenuButtonVisible(frameName or (f.GetName and f:GetName()))
+end
+
 function MB:HideStrippableFrame(f, frameName)
   if not f or not frameName then
     return
@@ -1113,6 +1181,10 @@ function MB:HideStrippableFrame(f, frameName)
     return
   end
   if (frameName == "MinimapNorthTag" or frameName == "MinimapCompassTexture") and self:ProfileRotateMinimap() then
+    return
+  end
+  if isMicromenuOwnedVisible(f, frameName) then
+    f.chukieStripChrome = nil
     return
   end
   f.chukieStripChrome = true

@@ -161,6 +161,8 @@ local defaults = {
     useMasque = true,
     --- Ocultar arte/barras stock de Blizzard (MainActionBar, MultiBars, etc.).
     hideBlizzardArt = true,
+    --- Hold-and-release / empower (Evoker): pressAndHoldAction + typerelease=actionrelease.
+    pressAndHoldRelease = true,
     rightBar6Enabled = true,
     rightBar6NumButtons = 8,
     --- 2 columnas × 4 filas.

@@ -368,34 +368,52 @@ local function bindingCommand(barId, index)
   return string.format("CLICK ChukieUi_AB%d_B%d:LeftButton", barId, index)
 end
 
-local function addCastOnKeyPress(btn)
-  if btn._hotkeyBind then
+local function pressAndHoldEnabled()
+  return db().pressAndHoldRelease ~= false
+end
+
+--- Evoker empower / hold-cast: Blizzard usa typerelease=actionrelease en el UP.
+local function applyPressHoldMode(frame)
+  if not frame or InCombatLockdown() then
     return
   end
-  local bind = CreateFrame("Button", btn:GetName() .. "Hotkey", btn, "SecureActionButtonTemplate")
-  bind:SetAttribute("type", "action")
-  bind:SetAttribute("useparent-action", true)
-  bind:SetAttribute("useparent-unit", true)
-  bind:SetAttribute("useparent-checkselfcast", true)
-  bind:SetAttribute("useparent-checkfocuscast", true)
-  bind:SetAttribute("useparent-checkmouseovercast", true)
-  bind:RegisterForClicks("AnyUp", "AnyDown")
-  bind:SetScript("PreClick", function(self, _, down)
-    local owner = self:GetParent()
-    if not owner then
-      return
-    end
-    if down then
-      if owner:GetButtonState() == "NORMAL" then
-        owner:SetButtonState("PUSHED")
+  if pressAndHoldEnabled() then
+    frame:SetAttribute("pressAndHoldAction", true)
+    frame:SetAttribute("typerelease", "actionrelease")
+  else
+    frame:SetAttribute("pressAndHoldAction", nil)
+    frame:SetAttribute("typerelease", nil)
+  end
+end
+
+local function addCastOnKeyPress(btn)
+  if not btn._hotkeyBind then
+    local bind = CreateFrame("Button", btn:GetName() .. "Hotkey", btn, "SecureActionButtonTemplate")
+    bind:SetAttribute("type", "action")
+    bind:SetAttribute("useparent-action", true)
+    bind:SetAttribute("useparent-unit", true)
+    bind:SetAttribute("useparent-checkselfcast", true)
+    bind:SetAttribute("useparent-checkfocuscast", true)
+    bind:SetAttribute("useparent-checkmouseovercast", true)
+    bind:RegisterForClicks("AnyUp", "AnyDown")
+    bind:SetScript("PreClick", function(self, _, down)
+      local owner = self:GetParent()
+      if not owner then
+        return
       end
-    else
-      if owner:GetButtonState() == "PUSHED" then
-        owner:SetButtonState("NORMAL")
+      if down then
+        if owner:GetButtonState() == "NORMAL" then
+          owner:SetButtonState("PUSHED")
+        end
+      else
+        if owner:GetButtonState() == "PUSHED" then
+          owner:SetButtonState("NORMAL")
+        end
       end
-    end
-  end)
-  btn._hotkeyBind = bind
+    end)
+    btn._hotkeyBind = bind
+  end
+  applyPressHoldMode(btn._hotkeyBind)
 end
 
 local function updateHotkeyText(btn)
@@ -508,6 +526,7 @@ local function ensureButton(bar, barId, index)
     btn:SetAttribute("statehidden", false)
     btn:RegisterForClicks("AnyUp", "AnyDown")
     btn:EnableMouseWheel(true)
+    applyPressHoldMode(btn)
     setShowGridInsecure(btn, true, SHOWGRID_REASON)
   end
   btn._chukieBarId = barId

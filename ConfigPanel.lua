@@ -269,7 +269,14 @@ local function minimenuVisibilityDB()
   return m.minimenuVisibility
 end
 
+local MINIMENU_DISPLAY_NAMES = {
+  ExpansionLandingPageMinimapButton = "Omnium Folio",
+}
+
 local function minimenuDisplayName(frameName)
+  if MINIMENU_DISPLAY_NAMES[frameName] then
+    return MINIMENU_DISPLAY_NAMES[frameName]
+  end
   local s = tostring(frameName or ""):gsub("MicroButton$", "")
   if s == "" then
     return tostring(frameName)
@@ -306,12 +313,16 @@ local function addMinimenuVisibleCheckbox(category, frameName, tooltip)
     get,
     set
   )
-  Settings.CreateCheckbox(
-    category,
-    setting,
-    tooltip
-      or ("Mostrar «" .. minimenuDisplayName(frameName) .. "» en la fila del micromenú del panel derecho.")
-  )
+  local tip = tooltip
+  if not tip then
+    if frameName == "ExpansionLandingPageMinimapButton" then
+      tip = "Botón de Landing Page / Omnium Folio (cerca del minimapa en Blizzard). "
+        .. "Al activarlo aparece en la fila del micromenú; si está off, queda oculto con «Solo mapa»."
+    else
+      tip = "Mostrar «" .. minimenuDisplayName(frameName) .. "» en la fila del micromenú del panel derecho."
+    end
+  end
+  Settings.CreateCheckbox(category, setting, tip)
 end
 
 local function addBoolPos(category, uniqueId, key, label, tooltip, defaultOn)
@@ -1312,6 +1323,15 @@ function ns.RegisterConfigPanel()
     "Masque en barras de acción",
     "Si Masque está instalado, aplica el grupo «Chukie UI» → «ActionBars» a los botones. "
       .. "Tras cambiar tamaño, Masque re-skinea para que el borde acompañe al botón.",
+    true
+  )
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_pressAndHoldRelease",
+    "pressAndHoldRelease",
+    "Hold and release (empower)",
+    "Mantiene la tecla/clic para empower de Evoker (Fire Breath, Eternity Surge, etc.) y "
+      .. "suelta para castear. Desactivá para el comportamiento anterior de tecla (sin typerelease).",
     true
   )
   do

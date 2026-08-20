@@ -1,6 +1,6 @@
 # Opciones de addons en World of Warcraft Retail 12.0.1
 
-Referencia **acotada a Midnight / Retail** con número de interfaz **120001** (comprueba el tuyo con `/dump select(4, GetBuildInfo())` o `lastAddonVersion` en `_retail_\WTF\Config.wtf`).
+Referencia **acotada a Midnight / Retail** con número de interfaz **120100** (12.1; comprueba el tuyo con `/dump select(4, GetBuildInfo())` o `lastAddonVersion` en `_retail_\WTF\Config.wtf`).
 
 Blizzard sustituyó el antiguo panel «Interfaz» por **Opciones** (`Settings`) en 10.0. Muchas plantillas XML/Lua antiguas (`InterfaceOptionsSmallCheckButtonTemplate`, `InterfaceOptionsCheckButtonTemplate`, etc.) **ya no existen** en el cliente actual: si `CreateFrame(..., "EsaPlantilla")` falla, hay que migrar.
 
@@ -116,13 +116,14 @@ Sirve para UI totalmente custom. **No** reutilices plantillas `InterfaceOptions*
 ## Chukie UI (este repositorio)
 
 - Panel de opciones implementado con **`RegisterVerticalLayoutCategory`** + **`RegisterVerticalLayoutSubcategory`**, **`RegisterAddOnSetting`** / **`RegisterProxySetting`** y **`CreateCheckbox`** / **`CreateSlider`** / **`CreateDropdown`** (Retail 12.x).
-- `## Interface: 120001` en `Chukie_Ui.toc` debe coincidir con el cliente para no marcar el addon como desactualizado.
+- `## Interface: 120100, 120007` en `Chukie_Ui.toc` (12.1 primero; 12.0.7 como compat).
 
 ### Guardado `ChukieUiDB` y perfiles
 
 - **`ChukieUiDB.currentProfile`**: nombre del perfil activo (string).
 - **`ChukieUiDB.profiles`**: tabla `{ [nombre] = { enabled, minimapBar = {...}, cvars = {...} } }`. El perfil **`Default`** es el que recibe la migración desde el formato antiguo y los valores por defecto del addon.
 - Las opciones de juego **no** van duplicadas en la raíz de `ChukieUiDB`: todo lo configurable vive dentro del perfil activo salvo `currentProfile` y `profiles`.
+- **`ChukieUiDB.actionLayouts`**: excepción por ser dato del personaje y no un ajuste — `{ ["Nombre-Reino"] = { ["specID"] = { savedAt = <time>, slots = { [slot] = "spell:123" } } } }`. Lo escribe `ActionBarLayouts.lua` para reponer las barras 1–4 tras un cambio de talentos.
 
 ### `Bindings.xml` (teclas de ranuras dinámicas)
 
@@ -130,4 +131,4 @@ Sirve para UI totalmente custom. **No** reutilices plantillas `InterfaceOptions*
 - El **cuerpo** de cada nodo `<Binding>` se evalúa como **Lua**: debe ser código válido (p. ej. solo `-- noop`), no texto suelto ni literales sueltos que no formen un chunk válido.
 - Los textos que ves en *Controles → Teclas rápidas* se definen en Lua con `_G["BINDING_NAME_CLICK NombreMarco:LeftButton"] = "…"` (en este proyecto: `Core.lua`).
 
-Última revisión orientada a **interface 120001** (documento pensado para ir afinándolo cuando cambie la API en parches posteriores).
+Última revisión orientada a **interface 120100 / 12.1** (documento pensado para ir afinándolo cuando cambie la API en parches posteriores).

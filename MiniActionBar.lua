@@ -161,6 +161,56 @@ local function applyActionCooldown(cd, action)
   end
 end
 
+local PLACEHOLDER_TEXTURE = "Interface\\Icons\\INV_Misc_QuestionMark"
+
+local function actionTextureForSlot(slot)
+  if not GetActionTexture then
+    return nil
+  end
+  local ok, tex = pcall(GetActionTexture, slot)
+  if not ok or not tex or isSecret(tex) then
+    return nil
+  end
+  return tex
+end
+
+--[[ Recarga de UI en combate: WoW no permite crear ni configurar botones de acción
+     seguros hasta salir de la pelea, así que las celdas 2–4 quedaban vacías. Pintamos
+     el icono del propio slot (145–147), apagado, para que se vea qué hay puesto. No es
+     clickeable hasta que termine el combate; eso lo impone Blizzard, no el addon. ]]
+function M:ShowCombatPlaceholders(buttonsById)
+  if not buttonsById then
+    return
+  end
+  for i = 1, #SLOT_DEFS do
+    local def = SLOT_DEFS[i]
+    local slotBtn = buttonsById[def.widgetId]
+    local act = self._buttons and self._buttons[def.widgetId]
+    --- Si el botón seguro ya está en la celda, no hay nada que suplir (y la celda
+    --- pasa a tener un hijo protegido: mejor no tocarla en combate).
+    local attached = act and act.GetParent and act:GetParent() == slotBtn
+    if slotBtn and slotBtn.icon and not attached then
+      slotBtn.icon:SetTexture(actionTextureForSlot(def.slot) or PLACEHOLDER_TEXTURE)
+      slotBtn.icon:SetDesaturated(true)
+      slotBtn.icon:SetVertexColor(0.7, 0.7, 0.7)
+      slotBtn.icon:Show()
+      slotBtn._miniPlaceholder = true
+      pcall(slotBtn.Show, slotBtn)
+    end
+  end
+end
+
+function M:ClearCombatPlaceholder(slotBtn)
+  if not slotBtn or not slotBtn._miniPlaceholder then
+    return
+  end
+  slotBtn._miniPlaceholder = nil
+  if slotBtn.icon then
+    slotBtn.icon:SetDesaturated(false)
+    slotBtn.icon:SetVertexColor(1, 1, 1)
+  end
+end
+
 function M:UpdateButtonVisual(btn)
   if not btn then
     return
@@ -219,6 +269,15 @@ function M:UpdateButtonVisual(btn)
           btn.Count:Show()
           shown = true
         end
+      end
+    end
+    if not shown and ns.CdInfo then
+      -- En combate el conteo es secreto: deducir cargas de los estados no secretos.
+      local st = ns.CdInfo.GetActionState(action)
+      if st.hasCharges and st.count then
+        btn.Count:SetText(st.count)
+        btn.Count:Show()
+        shown = true
       end
     end
     if not shown and GetActionCount then
@@ -355,6 +414,7 @@ function M:HideStockMultiBar5()
 end
 
 function M:EnsureButtons()
+  self:EnsureEventFrame()
   if InCombatLockdown() then
     self._pendingEnsure = true
     return self._buttons
@@ -397,6 +457,7 @@ local function prepareProxySlot(slotBtn)
   if not slotBtn then
     return
   end
+  M:ClearCombatPlaceholder(slotBtn)
   if slotBtn.icon then
     slotBtn.icon:Hide()
   end
@@ -420,8 +481,12 @@ function M:AttachToSlots(buttonsById)
   if not self.IsEnabled() then
     return
   end
+  self:EnsureEventFrame()
+  --- Guardado para poder rearmar al salir de combate sin depender de quién nos llamó.
+  self._lastSlots = buttonsById or self._lastSlots
   if InCombatLockdown() then
     self._pendingAttach = true
+    self:ShowCombatPlaceholders(buttonsById or self._lastSlots)
     return
   end
   self._pendingAttach = nil
@@ -503,18 +568,21 @@ function M:EnsureVisualEvents()
   end
 end
 
+--[[ Se rearma siempre al salir de combate, sin exigir marcas de pendiente: si la UI
+     cargó en pelea los botones seguros no existen y ninguna marca alcanza para saberlo. ]]
 function M:OnRegenEnabled()
-  if self._pendingEnsure or self._pendingAttach or self._pendingHideStock or self._pendingDetach then
-    if self._pendingDetach and not self.IsEnabled() then
+  if not self.IsEnabled() then
+    if self._pendingDetach then
       self:Detach()
     end
-    if self.IsEnabled() then
-      self:EnsureButtons()
-      if ns.RightPanelWidgets and ns.RightPanelWidgets._buttons then
-        self:AttachToSlots(ns.RightPanelWidgets._buttons)
-      end
-    end
+    return
   end
+  self:EnsureButtons()
+  local slots = (ns.RightPanelWidgets and ns.RightPanelWidgets._buttons) or self._lastSlots
+  if slots then
+    self:AttachToSlots(slots)
+  end
+  self:UpdateAllVisuals()
 end
 
 function M:EnsureEventFrame()

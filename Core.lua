@@ -1,6 +1,6 @@
 --[[ Chukie UI — núcleo del addon. Aquí se fusionan opciones por defecto,
      se aplican CVars y puedes ir añadiendo hooks a marcos de la UI.
-     Documentación / cliente objetivo: Retail 12.0.7; TOC declara 120100+120007 de cara a 12.1. ]]
+     Cliente objetivo: Retail 12.1 (Interface 120100); TOC también admite 120007. ]]
 
 local ADDON_NAME, ns = ...
 
@@ -28,7 +28,7 @@ do
     [4] = { "Z", "X", "C", "V" },
   }
   for barId = 1, 4 do
-    for btn = 1, 5 do
+    for btn = 1, 6 do
       local keyHint = labels[barId] and labels[barId][btn]
       local suffix = keyHint and (" (def: " .. keyHint .. ")") or ""
       _G[string.format("BINDING_NAME_CLICK ChukieUi_AB%d_B%d:LeftButton", barId, btn)] =
@@ -108,6 +108,8 @@ local defaults = {
       leftPanelGeneralInputBorderAlphaPercent = 45,
       leftPanelGeneralInputBorderSize = 1,
       leftPanelGeneralInputHorizontalPad = 4,
+      leftPanelGeneralInputOffsetX = 0,
+      leftPanelGeneralInputOffsetY = 0,
       -- Sector amarillo (RightStrip): apariencia de grilla inferior.
       rightStripUseMasque = false,
       rightStripGridScalePercent = 100,
@@ -148,6 +150,8 @@ local defaults = {
     leftEnabled = true,
     --- Botones visibles por barra izquierda (1–12). Dominos suele usar 6.
     leftNumButtons = 6,
+    --- Override por barra (1–4); 0 = usar leftNumButtons.
+    leftNumButtonsPerBar = { 0, 0, 0, 0 },
     leftButtonSize = 36,
     leftSpacing = 2,
     leftBarSpacing = 4,
@@ -155,6 +159,10 @@ local defaults = {
     leftOffsetY = 8,
     --- Skyriding: barras 1–4 → páginas 8–11 ([bonusbar:5]).
     skyridingPaging = true,
+    --- Vehículo / override / possess: la barra 1 muestra esas acciones.
+    vehiclePaging = true,
+    --- Botón de bajarse sobre la barra 1 (reemplaza el de Blizzard).
+    vehicleExitButton = true,
     --- Asignar una vez las teclas por defecto (12345/qwert/asdfg/zxcv) si no hay binds.
     applyDefaultKeybinds = true,
     --- Masque: grupo «Chukie UI» → «ActionBars».
@@ -163,6 +171,11 @@ local defaults = {
     hideBlizzardArt = true,
     --- Hold-and-release / empower (Evoker): pressAndHoldAction + typerelease=actionrelease.
     pressAndHoldRelease = true,
+    --- Guarda el contenido de las barras 1–4 por personaje y especialización
+    --- (ChukieUiDB.actionLayouts, fuera de los perfiles de UI).
+    saveLeftLayout = true,
+    --- Al cambiar talentos / loadout / especialización, repone lo guardado en las barras 1–4.
+    restoreLeftLayoutOnTalents = true,
     rightBar6Enabled = true,
     rightBar6NumButtons = 8,
     --- 2 columnas × 4 filas.
@@ -171,6 +184,22 @@ local defaults = {
     rightBar6Spacing = 2,
     rightBar6OffsetX = 8,
     rightBar6OffsetY = 8,
+  },
+  --- Brújula horizontal encima del minimapa (panel derecho).
+  horizontalCompass = {
+    enabled = true,
+    height = 22,
+    --- Grados visibles a lo ancho de la cinta.
+    fovDegrees = 120,
+    fontSize = 12,
+    showDegreeTicks = true,
+    showTarget = true,
+    showWaypoint = true,
+    showGroup = false,
+    hideWhenNoFacing = false,
+    --- Vertical desde el centro del minimapa (+ arriba / − abajo). 0 se ajusta solo la primera vez
+    --- a «justo encima del mapa» según el tamaño real del minimapa.
+    offsetY = 0,
   },
   minimapBar = {
     enabled = true,
@@ -279,6 +308,8 @@ local defaults = {
     leftPanelGeneralInputBorderAlphaPercent = 45,
     leftPanelGeneralInputBorderSize = 1,
     leftPanelGeneralInputHorizontalPad = 4,
+    leftPanelGeneralInputOffsetX = 0,
+    leftPanelGeneralInputOffsetY = 0,
     -- Sector amarillo (RightStrip): apariencia de grilla inferior.
     rightStripUseMasque = false,
     rightStripGridScalePercent = 100,
@@ -288,15 +319,151 @@ local defaults = {
   cvars = {
     lootUnderMouse = "1",
   },
-  --- Alertas CD / procs / auras: lista apilable `rules` por perfil.
+  --- Alertas: grupos con efectos y condiciones independientes (`rules` legacy es proyección).
   alerts = {
     enabled = false,
     nextId = 1,
     rules = {},
+    groups = {},
+  },
+  --[[ Panel de auras: slots grandes en posición fija, uno por hechizo elegido.
+       Cada slot es un AuraContainer del cliente, así que muestra también las auras
+       que Blizzard oculta al addon, pero por eso mismo el hueco no se compacta. ]]
+  auraPanel = {
+    enabled = false,
+    unlocked = false,
+    point = { "CENTER", 0, -180 },
+    size = 64,
+    spacing = 8,
+    perLine = 6,
+    growth = "right",
+    unit = "player",
+    filter = "HELPFUL",
+    auras = {},
+  },
+  --[[ Grilla de party: cada columna guarda un hechizo y cada celda lo lanza mediante
+       una acción segura sobre la unidad fija de su fila. ]]
+  partyGrid = {
+    enabled = false,
+    unlocked = false,
+    --- Lado de la celda cuadrada: muestra el icono del hechizo de su columna.
+    size = 34,
+    spacing = 2,
+    --- Celdas por jugador (una habilidad por columna) y hacia dónde crecen.
+    columns = 1,
+    columnSpells = {},
+    columnSpacing = 2,
+    growth = "RIGHT",
+    --- Separación respecto a la grilla de Blizzard cuando está pegada.
+    gap = 8,
+    offsetX = 0,
+    offsetY = 0,
+    orientation = "vertical",
+    side = "RIGHT",
+    attachToBlizzard = true,
+    includePlayer = true,
+    showHealth = true,
+    showRole = true,
+    --- Grupo independiente «Chukie UI → PartyGrid» cuando Masque está instalado.
+    useMasque = true,
+    --- Opacidad de la grilla completa (10–100 %). Al moverla se fuerza opaca.
+    alphaPercent = 100,
+    --- Fuera de grupo la grilla se oculta salvo que se pida lo contrario.
+    showSolo = false,
+    --- Posición propia cuando no está pegada a la grilla de Blizzard.
+    point = { "CENTER", -320, 0 },
   },
 }
 
 ns.defaults = defaults
+
+--[[ Estado de cooldown/cargas con valores secretos (Retail 12.x).
+     En combate Blizzard oculta tiempos y currentCharges; solo son NeverSecret
+     isEnabled, isActive, isOnGCD y maxCharges. Con esos booleanos se distinguen
+     tres estados (lleno / recargando / sin cargas), que en habilidades de 2 cargas
+     equivalen al número exacto. Con 3 o más, los intermedios quedan indeterminados. ]]
+do
+  local CdInfo = {}
+  ns.CdInfo = CdInfo
+
+  local function isSecret(v)
+    return issecretvalue and issecretvalue(v) or false
+  end
+
+  local function readBool(v)
+    if v == nil or isSecret(v) then
+      return nil
+    end
+    return v == true
+  end
+
+  --- st = { cdActive, onGcd, hasCharges, maxCharges, chargeActive, empty, count }.
+  --- count es nil si no se puede deducir sin leer valores secretos.
+  function CdInfo.Derive(cdInfo, chargeInfo)
+    local st = {
+      cdActive = false,
+      onGcd = false,
+      hasCharges = false,
+      maxCharges = nil,
+      chargeActive = false,
+      empty = false,
+      count = nil,
+    }
+    if type(cdInfo) == "table" then
+      st.onGcd = readBool(cdInfo.isOnGCD) == true
+      local active = readBool(cdInfo.isActive)
+      st.cdActive = active == true and readBool(cdInfo.isEnabled) ~= false and not st.onGcd
+    end
+    if type(chargeInfo) == "table" and not isSecret(chargeInfo.maxCharges) then
+      local maxCharges = tonumber(chargeInfo.maxCharges)
+      if maxCharges and maxCharges > 1 then
+        st.hasCharges = true
+        st.maxCharges = math.floor(maxCharges)
+        local current
+        if not isSecret(chargeInfo.currentCharges) then
+          current = tonumber(chargeInfo.currentCharges)
+        end
+        local active = readBool(chargeInfo.isActive)
+        if active == nil and current then
+          active = current < st.maxCharges
+        end
+        st.chargeActive = active == true
+        st.empty = st.chargeActive and st.cdActive
+        if current then
+          st.count = math.floor(current)
+          st.empty = st.count <= 0
+        elseif not st.chargeActive then
+          st.count = st.maxCharges
+        elseif st.empty then
+          st.count = 0
+        elseif st.maxCharges == 2 then
+          st.count = 1
+        end
+      end
+    end
+    if not st.hasCharges then
+      st.empty = st.cdActive
+    end
+    return st
+  end
+
+  function CdInfo.GetActionState(action)
+    action = tonumber(action) or 0
+    if action <= 0 or not C_ActionBar then
+      return CdInfo.Derive(nil, nil)
+    end
+    local cdInfo, chargeInfo
+    if C_ActionBar.GetActionCooldown then
+      local ok, info = pcall(C_ActionBar.GetActionCooldown, action)
+      cdInfo = ok and info or nil
+    end
+    if C_ActionBar.GetActionCharges then
+      local ok, info = pcall(C_ActionBar.GetActionCharges, action)
+      chargeInfo = ok and info or nil
+    end
+    return CdInfo.Derive(cdInfo, chargeInfo)
+  end
+end
 
 ChukieUiDB = ChukieUiDB or {}
 
@@ -351,8 +518,17 @@ function ns.OnProfileChanged()
   if ns.ActionBars and ns.ActionBars.Refresh then
     ns.ActionBars:Refresh()
   end
+  if ns.HorizontalCompass and ns.HorizontalCompass.Refresh then
+    ns.HorizontalCompass:Refresh()
+  end
   if ns.Alerts and ns.Alerts.OnProfileChanged then
     ns.Alerts:OnProfileChanged()
+  end
+  if ns.AuraPanel and ns.AuraPanel.Refresh then
+    ns.AuraPanel:Refresh()
+  end
+  if ns.PartyGrid and ns.PartyGrid.Refresh then
+    ns.PartyGrid:Refresh()
   end
 end
 
@@ -442,6 +618,87 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       return
     end
   end
+  if msg == "aurapanel" or msg == "panelauras" or msg == "auras" then
+    if ns.AuraPanel and ns.AuraPanel.ToggleConfig then
+      ns.AuraPanel:ToggleConfig()
+    else
+      print("|cffff9900Chukie UI|r: módulo Panel de auras no disponible.")
+    end
+    return
+  end
+  if msg == "party" or msg == "grilla" or msg == "partygrid" or strmatch(msg, "^party%s") then
+    if not (ns.PartyGrid and ns.PartyGrid.ToggleConfig) then
+      print("|cffff9900Chukie UI|r: módulo Grilla de party no disponible.")
+      return
+    end
+    local what = strtrim(strsub(msg, 6))
+    --- Interruptor sin abrir la ventana: útil para descartar el módulo tras un problema.
+    if what == "on" then
+      if ns.PartyGrid:SetEnabled(true) then
+        print("|cff00ff00Chukie UI|r: grilla de party ON.")
+      end
+    elseif what == "off" then
+      if ns.PartyGrid:SetEnabled(false) then
+        print("|cff00ff00Chukie UI|r: grilla de party OFF.")
+      end
+    elseif what == "diag" then
+      if ns.PartyGrid.PrintDiagnostics then
+        ns.PartyGrid:PrintDiagnostics()
+      end
+    elseif not (ns.OpenFramesConfigPanel and ns.OpenFramesConfigPanel()) then
+      --- Las opciones viven en el menú del addon (Marcos → Party); la ventana propia
+      --- queda como respaldo y para arrastrar la grilla (/chukie-party).
+      ns.PartyGrid:ToggleConfig()
+    end
+    return
+  end
+  if msg == "fix" or msg == "arreglar" then
+    if not (ns.RightPanel and ns.RightPanel.Apply) then
+      print("|cffff9900Chukie UI|r: panel derecho no disponible.")
+    elseif InCombatLockdown and InCombatLockdown() then
+      ns.RightPanel:RequestApplyAfterCombat()
+      print("|cffff9900Chukie UI|r: en combate; el panel se rearma al terminar la pelea.")
+    else
+      ns.RightPanel:Apply()
+      print("|cff00ff00Chukie UI|r: panel derecho rearmado.")
+    end
+    return
+  end
+  if msg == "diagbotones" or msg == "diag botones" then
+    if ns.RightPanel and ns.RightPanel.PrintButtonDiagnostics then
+      ns.RightPanel:PrintButtonDiagnostics()
+    else
+      print("|cffff9900Chukie UI|r: diagnóstico no disponible.")
+    end
+    return
+  end
+  if msg == "diag" or msg == "diagnostico" or msg == "diagnóstico" then
+    if ns.RightPanel and ns.RightPanel.PrintDiagnostics then
+      ns.RightPanel:PrintDiagnostics()
+    else
+      print("|cffff9900Chukie UI|r: diagnóstico no disponible.")
+    end
+    return
+  end
+  if msg == "auracontainer" or msg == "contenedor" then
+    if ns.Alerts and ns.Alerts.DebugAuraContainers then
+      ns.Alerts:DebugAuraContainers()
+    else
+      print("|cffff9900Chukie UI|r: módulo Alertas no disponible.")
+    end
+    return
+  end
+  do
+    local id = raw:match("^[Cc][Dd][Cc][Hh][Ee][Cc][Kk]%s+(%d+)")
+    if id and ns.Alerts and ns.Alerts.DebugCdCheck then
+      ns.Alerts:DebugCdCheck(tonumber(id))
+      return
+    end
+    if msg == "cdcheck" then
+      print("|cffff9900Chukie UI|r: uso — /chukieui cdcheck 410089")
+      return
+    end
+  end
   if msg == "alertas on" or msg == "alerts on" then
     if ns.Alerts and ns.Alerts.SetEnabled then
       ns.Alerts:SetEnabled(true)
@@ -453,6 +710,25 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     if ns.Alerts and ns.Alerts.SetEnabled then
       ns.Alerts:SetEnabled(false)
       print("|cff00ff00Chukie UI|r: módulo Alertas OFF.")
+    end
+    return
+  end
+  if msg == "acciones" or strmatch(msg, "^acciones%s") then
+    local abl = ns.ActionBarLayouts
+    if not abl then
+      print("|cffff9900Chukie UI|r: módulo de guardado de acciones no disponible.")
+      return
+    end
+    local what = strtrim(strsub(msg, 9))
+    if what == "guardar" then
+      abl:SaveNow()
+    elseif what == "restaurar" then
+      abl:RestoreNow()
+    elseif what == "borrar" then
+      abl:ClearSaved()
+    else
+      print("|cff00ff00Chukie UI|r: barras 1–4 — " .. abl:GetStatusText())
+      print("  Uso: /chukieui acciones guardar | restaurar | borrar")
     end
     return
   end
@@ -541,8 +817,13 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       return
     end
   end
-  print("|cff00ff00Chukie UI|r — /chukieui config | panel | minimapa | botones | mmpos <x> <y> | mmarrow …")
-  print("|cff00ff00Chukie UI|r — alertas: /chukie-aura | /chukieui alertas on | /chukieui auracheck <id>")
+  print("|cff00ff00Chukie UI|r — /chukieui config | panel | minimapa | botones | acciones | mmpos <x> <y> | mmarrow …")
+  print(
+    "|cff00ff00Chukie UI|r — alertas: /chukie-aura | /chukieui alertas on | /chukieui auracheck <id> | /chukieui cdcheck <id> | /chukieui auracontainer"
+  )
+  print("|cff00ff00Chukie UI|r — panel de auras: /chukie-auras (o /chukieui aurapanel)")
+  print("|cff00ff00Chukie UI|r — grilla de party clickeable: /chukieui party (menú: Marcos) | /chukie-party (ventana) | /chukieui party on | off | diag")
+  print("|cff00ff00Chukie UI|r — panel derecho: /chukieui diag | /chukieui diagbotones | /chukieui fix")
   if p then
     print("  Perfil: " .. tostring(ns.Profile:GetCurrentName()) .. " — " .. (p.enabled and "activado" or "desactivado"))
   end
@@ -560,5 +841,25 @@ SlashCmdList["CHUKIEAURA"] = function()
     ns.AlertsManager:Show()
   else
     print("|cffff9900Chukie UI|r: gestor de alertas no disponible.")
+  end
+end
+
+SLASH_CHUKIEAURAPANEL1 = "/chukie-auras"
+SLASH_CHUKIEAURAPANEL2 = "/chukieauras"
+SlashCmdList["CHUKIEAURAPANEL"] = function()
+  if ns.AuraPanel and ns.AuraPanel.ToggleConfig then
+    ns.AuraPanel:ToggleConfig()
+  else
+    print("|cffff9900Chukie UI|r: panel de auras no disponible.")
+  end
+end
+
+SLASH_CHUKIEPARTYGRID1 = "/chukie-party"
+SLASH_CHUKIEPARTYGRID2 = "/chukieparty"
+SlashCmdList["CHUKIEPARTYGRID"] = function()
+  if ns.PartyGrid and ns.PartyGrid.ToggleConfig then
+    ns.PartyGrid:ToggleConfig()
+  else
+    print("|cffff9900Chukie UI|r: grilla de party no disponible.")
   end
 end

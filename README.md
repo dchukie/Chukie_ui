@@ -1,6 +1,6 @@
 # Chukie UI
 
-Addon de interfaz para **World of Warcraft Retail** (TOC `## Interface: 120100, 120007` — hoy 12.0.7; listo para 12.1).
+Addon de interfaz para **World of Warcraft Retail** (TOC `## Interface: 120100, 120007` — **12.1** live; compat 12.0.7).
 
 ## Instalación
 
@@ -14,13 +14,15 @@ Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueU
 
 | Área | Descripción |
 |------|-------------|
-| **Minimapa** | Posición del cluster, escala, `rotateMinimap`, flecha del jugador (modos por defecto / fina / ruta personalizada), zoom preferido dentro de los límites del motor. |
+| **Minimapa** | Posición del cluster, escala, `rotateMinimap`, flecha del jugador, **brújula horizontal** (`HorizontalCompass.lua`, posición vertical libre desde el centro del minimapa: encima o debajo), zoom preferido. |
 | **Barra de iconos** | Proxies (LibDBIcon, etc.), política por botón, Masque, micromenú configurable. |
 | **Panel derecho** | `PanelCore.lua` + `RightPanel.lua`: host del minimapa, rejilla de widgets y slot lateral derecho. |
 | **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte (`TeleportCatalog.lua`), ranuras dinámicas 2–4 (`DynamicReservedSlots.lua`). |
 | **Sector amarillo** | `RightStrip.lua`: grilla inferior fija 2x2 (oro abreviado + huecos libres de bolsas), clic para `ToggleAllBags`, estilo Masque opcional y ocultado de la barra de bolsas Blizzard. |
 | **Opciones** | *Esc → Opciones → AddOns → Chukie UI* (`ConfigPanel.lua`, API Settings de Retail). |
-| **Alertas CD/procs/auras** | Reglas apilables, wizard `/chukie-aura`. En **12.1** las auras `kind=aura` (presente) usan **AuraContainer** cuando la API existe; en 12.0.7 quedan en path legacy. Media en `Media/Alerts/`. |
+| **Alertas CD/procs/auras** | Grupos con efectos y condiciones, editor `/chukie-aura`. En **12.1**, un grupo cuya única condición es aura “Presente” y cuyo único efecto visual es icono/textura lo dibuja el cliente (**AuraContainer**), así que también ve las auras que Blizzard oculta; el resto usa el path propio. Media en `Media/Alerts/`. |
+| **Panel de auras** | `AuraPanel.lua`, `/chukie-auras`: un slot grande por aura elegida usando **AuraContainer**, con tamaño, separación, auras por línea, dirección y posición arrastrable. Los slots no se compactan (el addon no sabe cuál está activa). |
+| **Grilla de party por habilidades** | `PartyGrid.lua`. Cada columna guarda un hechizo por perfil y cada celda es un `SecureActionButtonTemplate`: clic izquierdo lo lanza sobre `player`/`party1..4`; clic derecho no hace nada. Asignación desde el libro y movimiento entre columnas por arrastre, icono/cooldown real sin GCD/cargas/usabilidad/rango y tooltip. Soporte Masque en el grupo separado **Chukie UI → PartyGrid** y opacidad del conjunto (10–100 %). Toda configuración se rechaza durante el combate. Opciones en **Marcos → Party** (`/chukieui party`), ventana propia (`/chukie-party`) y estado con `/chukieui party diag`. Por defecto: 1 columna a la derecha de la grilla Blizzard, creciendo a la derecha. |
 
 ## Archivos que carga el cliente
 
@@ -32,6 +34,16 @@ Orden en `Chukie_Ui.toc`: ver el `.toc` (incluye `ActionBars.lua`, `Alerts*.lua`
 ## Ranuras dinámicas (reservadas 2–4)
 
 Prioridad aproximada: acción extra → habilidad de zona → ítems especiales de misiones rastreadas. Se pueden enlazar teclas en **Controles → Teclas rápidas → Add-ons**. Opción en el panel del addon para activar o desactivar el comportamiento.
+
+## Guardado de acciones (barras 1–4)
+
+Blizzard guarda un juego de barras **por loadout de talentos**, así que al cambiar de build las ranuras se pisan. `ActionBarLayouts.lua` guarda qué hay en cada ranura de las barras 1–4 (y sus páginas de skyriding) **por personaje y especialización** y lo vuelve a colocar tras un cambio de talentos, loadout o especialización.
+
+- Opciones en *Barras de acción → Guardar acciones (barras 1–4)*: guardar automático, restaurar al cambiar talentos y botones **Guardar acciones ahora / Restaurar acciones / Borrar guardado**.
+- Comandos: `/chukieui acciones` (estado), `… guardar`, `… restaurar`, `… borrar`.
+- Tipos soportados: hechizo, macro (por nombre), ítem, flyout, montura, mascota de combate y conjunto de equipo.
+- Nunca vacía ranuras (solo repone lo guardado) y siempre actúa fuera de combate y con el cursor libre.
+- Los datos viven en `ChukieUiDB.actionLayouts[personaje-reino][specID]`, fuera de los perfiles de UI, para no perderse al cambiar de perfil.
 
 ## Sector amarillo (franja derecha inferior)
 

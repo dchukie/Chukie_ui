@@ -6,6 +6,8 @@ local A = {}
 ns.Alerts = A
 
 local MAX_RULES = 32
+local MAX_GROUPS = 32
+local MAX_EFFECTS_PER_GROUP = 8
 local SIZE_MIN, SIZE_MAX = 24, 768
 local SHOW_ON_OK = { cooldown = true, ready = true, always = true, available = true }
 local GLOW_OK = { Proc = true, Pixel = true, buttonOverlay = true, none = true }
@@ -16,6 +18,26 @@ local AURA_UNIT_OK = { player = true, target = true }
 local AURA_FILTER_OK = { HELPFUL = true, HARMFUL = true, both = true }
 local AURA_SHOW_OK = { present = true, absent = true, always = true }
 local GCD_SPELL_ID = 61304
+local spellName
+local EFFECT_TYPE_OK = {
+  icon = true,
+  texture = true,
+  text = true,
+  sound = true,
+  bar = true,
+  ring = true,
+  counter = true,
+}
+local EFFECT_STUB = { bar = true, ring = true, counter = true }
+local EFFECT_VISUAL = { icon = true, texture = true, text = true }
+local GROUP_RULE_TYPE_OK = {
+  cooldown = true,
+  aura = true,
+  proc = true,
+  combat = true,
+  target = true,
+  charges = true,
+}
 
 local RULE_DEFAULTS = {
   enabled = true,
@@ -201,6 +223,567 @@ function A.DefaultRule(kind, spellId, index)
   }, index)
 end
 
+local function allocId(db)
+  db.nextId = math.floor(tonumber(db.nextId) or 1)
+  if db.nextId < 1 then
+    db.nextId = 1
+  end
+  local id = db.nextId
+  db.nextId = db.nextId + 1
+  return id
+end
+
+local function copyGroupRule(src)
+  local typ = type(src) == "table" and src.type or nil
+  if not GROUP_RULE_TYPE_OK[typ] then
+    return nil
+  end
+  local r = {
+    id = math.floor(tonumber(src.id) or 0),
+    type = typ,
+    enabled = src.enabled ~= false,
+  }
+  if typ == "cooldown" then
+    r.spellId = math.floor(tonumber(src.spellId) or 0)
+    r.showOn = SHOW_ON_OK[src.showOn] and src.showOn or "available"
+  elseif typ == "aura" then
+    r.spellId = math.floor(tonumber(src.spellId) or 0)
+    r.auraUnit = AURA_UNIT_OK[src.auraUnit] and src.auraUnit or "player"
+    r.auraFilter = AURA_FILTER_OK[src.auraFilter] and src.auraFilter or "both"
+    r.auraShow = AURA_SHOW_OK[src.auraShow] and src.auraShow or "present"
+  elseif typ == "proc" then
+    r.spellId = math.floor(tonumber(src.spellId) or 0)
+  elseif typ == "combat" or typ == "target" then
+    r.on = src.on ~= false
+  elseif typ == "charges" then
+    r.spellId = math.floor(tonumber(src.spellId) or 0)
+    r.op = CHARGE_OP_OK[src.op] and src.op or "gte"
+    r.value = math.floor(clamp(src.value, 0, 99))
+  end
+  return r
+end
+
+local function copyEffect(src, index)
+  local e = {
+    enabled = true,
+    size = 48,
+    alpha = 1,
+    glowType = "Proc",
+    swipe = true,
+    edge = false,
+    inverse = false,
+    auraPath = "",
+    auraLayout = "single",
+    pairGap = 80,
+    text = "",
+    fontPath = "",
+    soundPath = "",
+    playOn = "show",
+    fill = "fill",
+    texture = "",
+    format = "charges",
+  }
+  e.color = { 1, 1, 1 }
+  e.point = copyPoint(nil, index)
+  if type(src) == "table" then
+    for k, v in pairs(src) do
+      if k == "point" then
+        e.point = copyPoint(v, index)
+      elseif k == "color" then
+        e.color = copyColor(v)
+      elseif type(v) ~= "table" then
+        e[k] = v
+      end
+    end
+  end
+  e.id = math.floor(tonumber(e.id) or 0)
+  e.spellId = math.floor(tonumber(e.spellId) or 0)
+  e.type = EFFECT_TYPE_OK[e.type] and e.type or "icon"
+  e.enabled = e.enabled ~= false
+  e.size = clampSize(e.size)
+  e.alpha = clamp(e.alpha, 0, 1)
+  e.color = copyColor(e.color)
+  e.glowType = GLOW_OK[e.glowType] and e.glowType or "Proc"
+  e.swipe = e.swipe ~= false
+  e.edge = e.edge == true
+  e.inverse = e.inverse == true
+  e.auraPath = type(e.auraPath) == "string" and e.auraPath or ""
+  e.auraLayout = LAYOUT_OK[e.auraLayout] and e.auraLayout or "single"
+  e.pairGap = clamp(math.floor(tonumber(e.pairGap) or 80), 20, 400)
+  e.text = type(e.text) == "string" and e.text or ""
+  e.fontPath = type(e.fontPath) == "string" and e.fontPath or ""
+  e.soundPath = type(e.soundPath) == "string" and e.soundPath or ""
+  e.playOn = e.playOn == "show" and "show" or "show"
+  e.fill = (e.fill == "empty") and "empty" or "fill"
+  e.texture = type(e.texture) == "string" and e.texture or ""
+  e.format = type(e.format) == "string" and e.format or "charges"
+  e.point = copyPoint(e.point, index)
+  return e
+end
+
+local function firstVisualEffect(group)
+  if not group or type(group.effects) ~= "table" then
+    return nil
+  end
+  for i = 1, #group.effects do
+    local e = group.effects[i]
+    if e and EFFECT_VISUAL[e.type] then
+      return e, i
+    end
+  end
+  return nil
+end
+
+local function firstSoundEffect(group)
+  if not group or type(group.effects) ~= "table" then
+    return nil
+  end
+  for i = 1, #group.effects do
+    local e = group.effects[i]
+    if e and e.type == "sound" then
+      return e, i
+    end
+  end
+  return nil
+end
+
+local function findGroupRule(group, typ)
+  if not group or type(group.rules) ~= "table" then
+    return nil
+  end
+  for i = 1, #group.rules do
+    local r = group.rules[i]
+    if r and r.type == typ then
+      return r, i
+    end
+  end
+  return nil
+end
+
+local function countVisualEffects(group, enabledOnly)
+  local n = 0
+  if not group or type(group.effects) ~= "table" then
+    return 0
+  end
+  for i = 1, #group.effects do
+    local e = group.effects[i]
+    if e and EFFECT_VISUAL[e.type] then
+      if not enabledOnly or e.enabled ~= false then
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+
+--- Proyección grupo → rule legacy (wizard / AuraContainer / watch).
+local function groupToVirtualRule(group)
+  local r = copyRule(nil, 1)
+  if type(group) ~= "table" then
+    return r
+  end
+  r.id = math.floor(tonumber(group.id) or 0)
+  r.enabled = group.enabled ~= false
+  r.overlayFx = copyOverlayFx(group.overlayFx)
+  r.name = type(group.name) == "string" and group.name or ""
+  r.kind = "cooldown"
+  r.showOn = "available"
+  r.spellId = 0
+  r.combatOnly = false
+  r.targetOnly = false
+  r.chargeFilter = copyChargeFilter(nil)
+  if type(group.rules) == "table" then
+    for i = 1, #group.rules do
+      local gr = group.rules[i]
+      if gr then
+        if (tonumber(r.spellId) or 0) <= 0 and
+          (gr.type == "cooldown" or gr.type == "aura" or gr.type == "proc" or gr.type == "charges")
+        then
+          r.spellId = math.floor(tonumber(gr.spellId) or 0)
+        end
+        if gr.type == "cooldown" then
+          r.kind = "cooldown"
+          r.showOn = SHOW_ON_OK[gr.showOn] and gr.showOn or "available"
+        elseif gr.type == "aura" then
+          r.kind = "aura"
+          r.auraUnit = AURA_UNIT_OK[gr.auraUnit] and gr.auraUnit or "player"
+          r.auraFilter = AURA_FILTER_OK[gr.auraFilter] and gr.auraFilter or "both"
+          r.auraShow = AURA_SHOW_OK[gr.auraShow] and gr.auraShow or "present"
+        elseif gr.type == "proc" then
+          r.kind = "proc"
+        elseif gr.type == "combat" then
+          r.combatOnly = gr.on ~= false
+        elseif gr.type == "target" then
+          r.targetOnly = gr.on ~= false
+        elseif gr.type == "charges" then
+          r.chargeFilter = copyChargeFilter({
+            enabled = true,
+            op = gr.op,
+            value = gr.value,
+          })
+        end
+      end
+    end
+  end
+  local vis = firstVisualEffect(group)
+  if vis then
+    if vis.type == "texture" then
+      r.display = "aura"
+    elseif vis.type == "text" then
+      r.display = "text"
+    else
+      r.display = "icon"
+    end
+    r.size = vis.size
+    r.point = copyPoint(vis.point, 1)
+    r.color = copyColor(vis.color)
+    r.alpha = vis.alpha
+    r.glowType = vis.glowType
+    r.swipe = vis.swipe
+    r.edge = vis.edge
+    r.inverse = vis.inverse
+    r.auraPath = vis.auraPath
+    r.auraLayout = vis.auraLayout
+    r.pairGap = vis.pairGap
+    r.text = vis.text
+    r.fontPath = vis.fontPath
+  end
+  local snd = firstSoundEffect(group)
+  if snd then
+    r.sound = snd.enabled ~= false
+    r.soundPath = snd.soundPath or ""
+  else
+    r.sound = false
+    r.soundPath = ""
+  end
+  return r
+end
+
+local function copyGroup(src, db)
+  local g = {
+    enabled = true,
+    name = "",
+    ruleLogic = "and",
+    rules = {},
+    effects = {},
+  }
+  g.overlayFx = copyOverlayFx(nil)
+  if type(src) == "table" then
+    g.id = math.floor(tonumber(src.id) or 0)
+    g.enabled = src.enabled ~= false
+    g.name = type(src.name) == "string" and src.name or ""
+    g.ruleLogic = src.ruleLogic == "or" and "or" or "and"
+    g.overlayFx = copyOverlayFx(src.overlayFx)
+    if type(src.rules) == "table" then
+      local legacySpellId = 0
+      for i = 1, #src.rules do
+        local old = src.rules[i]
+        if type(old) == "table" and old.type == "spell" then
+          legacySpellId = math.floor(tonumber(old.spellId) or 0)
+          break
+        end
+      end
+      for i = 1, #src.rules do
+        local nr = copyGroupRule(src.rules[i])
+        if nr and #g.rules < MAX_RULES then
+          if (nr.type == "cooldown" or nr.type == "aura" or nr.type == "proc" or nr.type == "charges") and
+            (tonumber(nr.spellId) or 0) <= 0
+          then
+            nr.spellId = legacySpellId
+          end
+          if db and nr.id <= 0 then
+            nr.id = allocId(db)
+          end
+          g.rules[#g.rules + 1] = nr
+        end
+      end
+      -- Rescate del esquema intermedio: si solo quedó la antigua regla
+      -- compartida "spell", convertirla en una condición CD válida.
+      if #g.rules == 0 and legacySpellId > 0 then
+        local nr = copyGroupRule({
+          type = "cooldown",
+          spellId = legacySpellId,
+          showOn = "available",
+        })
+        if db then
+          nr.id = allocId(db)
+        end
+        g.rules[1] = nr
+      end
+    end
+    if type(src.effects) == "table" then
+      for i = 1, math.min(#src.effects, MAX_EFFECTS_PER_GROUP) do
+        local ne = copyEffect(src.effects[i], i)
+        if db and ne.id <= 0 then
+          ne.id = allocId(db)
+        end
+        g.effects[#g.effects + 1] = ne
+      end
+    end
+  end
+  if db and (not g.id or g.id <= 0) then
+    g.id = allocId(db)
+  end
+  if g.name == "" then
+    local sid = 0
+    for i = 1, #g.rules do
+      sid = tonumber(g.rules[i].spellId) or 0
+      if sid > 0 then
+        break
+      end
+    end
+    if sid > 0 then
+      g.name = spellName(sid) or ("Alerta #" .. tostring(g.id))
+    else
+      g.name = "Alerta #" .. tostring(g.id or 0)
+    end
+  end
+  return g
+end
+
+local function makeGroupFromLegacyRule(db, rule)
+  rule = copyRule(rule, 1)
+  local g = {
+    id = (rule.id > 0) and rule.id or allocId(db),
+    enabled = rule.enabled ~= false,
+    name = "",
+    ruleLogic = "and",
+    overlayFx = copyOverlayFx(rule.overlayFx),
+    rules = {},
+    effects = {},
+  }
+  if rule.kind == "aura" then
+    g.rules[#g.rules + 1] = copyGroupRule({
+      type = "aura",
+      spellId = rule.spellId,
+      auraUnit = rule.auraUnit,
+      auraFilter = rule.auraFilter,
+      auraShow = rule.auraShow,
+    })
+  elseif rule.kind == "proc" then
+    g.rules[#g.rules + 1] = copyGroupRule({ type = "proc", spellId = rule.spellId })
+  else
+    g.rules[#g.rules + 1] = copyGroupRule({
+      type = "cooldown",
+      spellId = rule.spellId,
+      showOn = rule.showOn,
+    })
+  end
+  if rule.combatOnly then
+    g.rules[#g.rules + 1] = copyGroupRule({ type = "combat", on = true })
+  end
+  if rule.targetOnly then
+    g.rules[#g.rules + 1] = copyGroupRule({ type = "target", on = true })
+  end
+  if rule.chargeFilter and rule.chargeFilter.enabled then
+    g.rules[#g.rules + 1] = copyGroupRule({
+      type = "charges",
+      spellId = rule.spellId,
+      op = rule.chargeFilter.op,
+      value = rule.chargeFilter.value,
+    })
+  end
+  local etype = "icon"
+  if rule.display == "aura" then
+    etype = "texture"
+  elseif rule.display == "text" then
+    etype = "text"
+  end
+  local vis = copyEffect({
+    type = etype,
+    enabled = true,
+    point = rule.point,
+    size = rule.size,
+    color = rule.color,
+    alpha = rule.alpha,
+    glowType = rule.glowType,
+    swipe = rule.swipe,
+    edge = rule.edge,
+    inverse = rule.inverse,
+    auraPath = rule.auraPath,
+    auraLayout = rule.auraLayout,
+    pairGap = rule.pairGap,
+    text = rule.text,
+    fontPath = rule.fontPath,
+  }, 1)
+  vis.id = allocId(db)
+  g.effects[#g.effects + 1] = vis
+  if rule.sound ~= false then
+    local snd = copyEffect({
+      type = "sound",
+      enabled = true,
+      soundPath = rule.soundPath,
+      playOn = "show",
+    }, 2)
+    snd.id = allocId(db)
+    g.effects[#g.effects + 1] = snd
+  end
+  if type(rule.name) == "string" and rule.name ~= "" then
+    g.name = rule.name
+  elseif rule.spellId and rule.spellId > 0 and spellName then
+    g.name = spellName(rule.spellId) or ("Alerta #" .. tostring(g.id))
+  else
+    g.name = "Alerta #" .. tostring(g.id)
+  end
+  return copyGroup(g, db)
+end
+
+local function applyVirtualToGroup(group, vr, db, effectId)
+  if not group or type(vr) ~= "table" then
+    return group
+  end
+  if vr.enabled ~= nil then
+    group.enabled = vr.enabled ~= false
+  end
+  if type(vr.name) == "string" then
+    if vr.name ~= "" then
+      group.name = vr.name
+    else
+      -- Nombre vacío = volver al automático por hechizo.
+      local sid = math.floor(tonumber(vr.spellId) or 0)
+      group.name = (sid > 0 and spellName and spellName(sid)) or ("Alerta #" .. tostring(group.id or 0))
+    end
+  end
+  if vr.overlayFx then
+    group.overlayFx = copyOverlayFx(vr.overlayFx)
+  end
+  local spellId = math.floor(tonumber(vr.spellId) or 0)
+  local kind = KIND_OK[vr.kind] and vr.kind or "cooldown"
+  -- Quitar kind rules previas y reponer la actual.
+  local kept = {}
+  for i = 1, #group.rules do
+    local gr = group.rules[i]
+    if gr and gr.type ~= "cooldown" and gr.type ~= "aura" and gr.type ~= "proc" then
+      kept[#kept + 1] = gr
+    end
+  end
+  group.rules = kept
+  if kind == "aura" then
+    group.rules[#group.rules + 1] = copyGroupRule({
+      type = "aura",
+      spellId = spellId,
+      auraUnit = vr.auraUnit,
+      auraFilter = vr.auraFilter,
+      auraShow = vr.auraShow,
+    })
+  elseif kind == "proc" then
+    group.rules[#group.rules + 1] = copyGroupRule({ type = "proc", spellId = spellId })
+  else
+    group.rules[#group.rules + 1] = copyGroupRule({
+      type = "cooldown",
+      spellId = spellId,
+      showOn = vr.showOn,
+    })
+  end
+  -- combat / target / charges: quitar y reponer según payload
+  local kept2 = {}
+  for i = 1, #group.rules do
+    local gr = group.rules[i]
+    if gr and gr.type ~= "combat" and gr.type ~= "target" and gr.type ~= "charges" then
+      kept2[#kept2 + 1] = gr
+    end
+  end
+  group.rules = kept2
+  if vr.combatOnly then
+    group.rules[#group.rules + 1] = copyGroupRule({ type = "combat", on = true })
+  end
+  if vr.targetOnly then
+    group.rules[#group.rules + 1] = copyGroupRule({ type = "target", on = true })
+  end
+  if vr.chargeFilter and vr.chargeFilter.enabled then
+    group.rules[#group.rules + 1] = copyGroupRule({
+      type = "charges",
+      spellId = spellId,
+      op = vr.chargeFilter.op,
+      value = vr.chargeFilter.value,
+    })
+  end
+  local targetEffect
+  if effectId then
+    for i = 1, #group.effects do
+      if group.effects[i].id == effectId then
+        targetEffect = group.effects[i]
+        break
+      end
+    end
+  end
+  if not targetEffect or not EFFECT_VISUAL[targetEffect.type] then
+    targetEffect = firstVisualEffect(group)
+  end
+  if targetEffect and EFFECT_VISUAL[targetEffect.type] then
+    if vr.display == "aura" then
+      targetEffect.type = "texture"
+    elseif vr.display == "text" then
+      targetEffect.type = "text"
+    elseif vr.display == "icon" then
+      targetEffect.type = "icon"
+    end
+    if vr.size then
+      targetEffect.size = clampSize(vr.size)
+    end
+    if vr.point then
+      targetEffect.point = copyPoint(vr.point, 1)
+    end
+    if vr.color then
+      targetEffect.color = copyColor(vr.color)
+    end
+    if vr.alpha ~= nil then
+      targetEffect.alpha = clamp(vr.alpha, 0, 1)
+    end
+    if vr.glowType then
+      targetEffect.glowType = GLOW_OK[vr.glowType] and vr.glowType or targetEffect.glowType
+    end
+    if vr.swipe ~= nil then
+      targetEffect.swipe = vr.swipe ~= false
+    end
+    if vr.edge ~= nil then
+      targetEffect.edge = vr.edge == true
+    end
+    if vr.inverse ~= nil then
+      targetEffect.inverse = vr.inverse == true
+    end
+    if vr.auraPath ~= nil then
+      targetEffect.auraPath = type(vr.auraPath) == "string" and vr.auraPath or ""
+    end
+    if vr.auraLayout then
+      targetEffect.auraLayout = LAYOUT_OK[vr.auraLayout] and vr.auraLayout or targetEffect.auraLayout
+    end
+    if vr.pairGap then
+      targetEffect.pairGap = clamp(math.floor(tonumber(vr.pairGap) or 80), 20, 400)
+    end
+    if vr.text ~= nil then
+      targetEffect.text = type(vr.text) == "string" and vr.text or ""
+    end
+    if vr.fontPath ~= nil then
+      targetEffect.fontPath = type(vr.fontPath) == "string" and vr.fontPath or ""
+    end
+  end
+  if vr.sound ~= nil then
+    local snd = firstSoundEffect(group)
+    if vr.sound then
+      if not snd then
+        snd = copyEffect({ type = "sound", enabled = true, soundPath = vr.soundPath or "" }, #group.effects + 1)
+        snd.id = allocId(db)
+        group.effects[#group.effects + 1] = snd
+      else
+        snd.enabled = true
+        if vr.soundPath ~= nil then
+          snd.soundPath = type(vr.soundPath) == "string" and vr.soundPath or ""
+        end
+      end
+    elseif snd then
+      snd.enabled = false
+      if vr.soundPath ~= nil then
+        snd.soundPath = type(vr.soundPath) == "string" and vr.soundPath or ""
+      end
+    end
+  end
+  if (not group.name or group.name == "" or group.name:match("^Alerta #")) and spellId > 0 and spellName then
+    group.name = spellName(spellId) or group.name
+  end
+  return copyGroup(group, db)
+end
+
 local function migrateLegacy(db)
   if type(db.rules) ~= "table" then
     db.rules = {}
@@ -264,40 +847,92 @@ function A:GetTickInterval()
   return normalizeTickInterval(self:DB().tickInterval)
 end
 
+--- Normalizar en cada lectura recreaba las tablas de grupos/efectos/reglas, así que
+--- cualquier referencia que sostuviera el editor quedaba huérfana y sus escrituras
+--- se perdían. Se normaliza una sola vez por tabla de perfil (clave débil).
+local schemaReady = setmetatable({}, { __mode = "k" })
+
 function A:EnsureSchema(db)
   db = db or {}
+  if schemaReady[db] then
+    return db
+  end
   db.enabled = db.enabled == true
   db.rules = db.rules or {}
+  db.groups = db.groups or {}
   db.nextId = math.floor(tonumber(db.nextId) or 1)
   if db.nextId < 1 then
     db.nextId = 1
   end
-  db.tickInterval = normalizeTickInterval(db.tickInterval)
-  migrateLegacy(db)
-  local out = {}
-  local maxId = db.nextId - 1
-  for i = 1, math.min(#db.rules, MAX_RULES) do
-    local r = copyRule(db.rules[i], i)
-    if r.id <= 0 then
-      r.id = db.nextId
-      db.nextId = db.nextId + 1
-    end
-    if r.id > maxId then
-      maxId = r.id
-    end
-    if r.spellId > 0 and KIND_OK[r.kind] then
-      out[#out + 1] = r
+  -- Evitar colisiones al asignar IDs a reglas/efectos de esquemas anteriores.
+  local knownMax = db.nextId - 1
+  for i = 1, #db.groups do
+    local oldGroup = db.groups[i]
+    if type(oldGroup) == "table" then
+      knownMax = math.max(knownMax, math.floor(tonumber(oldGroup.id) or 0))
+      for ri = 1, #(oldGroup.rules or {}) do
+        local oldRule = oldGroup.rules[ri]
+        if type(oldRule) == "table" then
+          knownMax = math.max(knownMax, math.floor(tonumber(oldRule.id) or 0))
+        end
+      end
+      for ei = 1, #(oldGroup.effects or {}) do
+        local oldEffect = oldGroup.effects[ei]
+        if type(oldEffect) == "table" then
+          knownMax = math.max(knownMax, math.floor(tonumber(oldEffect.id) or 0))
+        end
+      end
     end
   end
-  db.rules = out
+  for i = 1, #db.rules do
+    local oldRule = db.rules[i]
+    if type(oldRule) == "table" then
+      knownMax = math.max(knownMax, math.floor(tonumber(oldRule.id) or 0))
+    end
+  end
+  db.nextId = math.max(db.nextId, knownMax + 1)
+  db.tickInterval = normalizeTickInterval(db.tickInterval)
+  migrateLegacy(db)
+  local maxId = db.nextId - 1
+  if #db.groups == 0 and type(db.rules) == "table" then
+    for i = 1, math.min(#db.rules, MAX_GROUPS) do
+      local r = copyRule(db.rules[i], i)
+      if r.id > 0 then
+        maxId = math.max(maxId, r.id)
+      end
+      db.groups[#db.groups + 1] = makeGroupFromLegacyRule(db, r)
+    end
+  end
+  local out = {}
+  for i = 1, math.min(#db.groups, MAX_GROUPS) do
+    local g = copyGroup(db.groups[i], db)
+    if g.id > maxId then
+      maxId = g.id
+    end
+    for ei = 1, #g.effects do
+      if g.effects[ei].id > maxId then
+        maxId = g.effects[ei].id
+      end
+    end
+    for ri = 1, #g.rules do
+      if g.rules[ri].id > maxId then
+        maxId = g.rules[ri].id
+      end
+    end
+    out[#out + 1] = g
+  end
+  db.groups = out
   db.nextId = math.max(db.nextId, maxId + 1)
+  -- Fuente de verdad: groups. rules[] queda vacío (GetRules sintetiza).
+  db.rules = {}
+  schemaReady[db] = true
   return db
 end
 
 function A:DB()
   local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
   if not p then
-    return self:EnsureSchema({ enabled = false, nextId = 1, rules = {} })
+    return self:EnsureSchema({ enabled = false, nextId = 1, rules = {}, groups = {} })
   end
   p.alerts = self:EnsureSchema(p.alerts or {})
   return p.alerts
@@ -331,40 +966,217 @@ function A:EnsureModuleEnabled(silent)
   return true
 end
 
-function A:GetRules()
-  return self:DB().rules
+function A:GetGroups()
+  return self:DB().groups
 end
 
-function A:GetRuleById(id)
+function A:GetGroupById(id)
   id = tonumber(id)
   if not id then
     return nil
   end
-  local rules = self:GetRules()
-  for i = 1, #rules do
-    if rules[i].id == id then
-      return rules[i], i
+  local groups = self:GetGroups()
+  for i = 1, #groups do
+    if groups[i].id == id then
+      return groups[i], i
     end
   end
   return nil
 end
 
-function A:AddRule(partial)
+function A:AddGroup(partial)
   local db = self:DB()
-  if #db.rules >= MAX_RULES then
-    return nil, "Máximo " .. MAX_RULES .. " alertas por perfil."
+  if #db.groups >= MAX_GROUPS then
+    return nil, "Máximo " .. MAX_GROUPS .. " alertas por perfil."
   end
-  local rule = copyRule(partial, #db.rules + 1)
-  if rule.spellId <= 0 then
-    return nil, "Falta spellId."
+  local g = copyGroup(type(partial) == "table" and partial or {}, db)
+  -- En altas nuevas no se aceptan IDs externos: todo sale del mismo allocId.
+  g.id = allocId(db)
+  for i = 1, #g.rules do
+    g.rules[i].id = allocId(db)
   end
-  if not KIND_OK[rule.kind] then
-    return nil, "Tipo inválido."
+  for i = 1, #g.effects do
+    g.effects[i].id = allocId(db)
   end
-  rule.id = db.nextId
-  db.nextId = db.nextId + 1
-  db.rules[#db.rules + 1] = rule
-  -- Sin esto: el preview del wizard se ve, pero al Guardar no aparece nada.
+  if type(partial) ~= "table" or type(partial.name) ~= "string" or partial.name == "" then
+    local sid = 0
+    for i = 1, #g.rules do
+      sid = tonumber(g.rules[i].spellId) or 0
+      if sid > 0 then
+        break
+      end
+    end
+    g.name = (sid > 0 and spellName(sid)) or ("Alerta #" .. tostring(g.id))
+  end
+  local hasIcon = false
+  for i = 1, #g.effects do
+    if g.effects[i].type == "icon" then
+      hasIcon = true
+      break
+    end
+  end
+  if not hasIcon then
+    if #g.effects >= MAX_EFFECTS_PER_GROUP then
+      table.remove(g.effects, #g.effects)
+    end
+    local icon = copyEffect({ type = "icon" }, 1)
+    icon.id = allocId(db)
+    table.insert(g.effects, 1, icon)
+  end
+  db.groups[#db.groups + 1] = g
+  db.enabled = true
+  self:Refresh()
+  return g
+end
+
+local function updateGroupRecord(self, id, partial)
+  local group, idx = self:GetGroupById(id)
+  if not group then
+    return nil, "Grupo no encontrado."
+  end
+  if type(partial) == "table" then
+    if partial.name ~= nil then
+      group.name = type(partial.name) == "string" and partial.name or group.name
+    end
+    if partial.enabled ~= nil then
+      group.enabled = partial.enabled ~= false
+    end
+    if partial.ruleLogic ~= nil then
+      group.ruleLogic = partial.ruleLogic == "or" and "or" or "and"
+    end
+    if partial.overlayFx ~= nil then
+      group.overlayFx = copyOverlayFx(partial.overlayFx)
+    end
+  end
+  local db = self:DB()
+  db.groups[idx] = copyGroup(group, db)
+  self:Refresh()
+  return db.groups[idx]
+end
+
+function A:DeleteGroup(id)
+  local _, idx = self:GetGroupById(id)
+  if not idx then
+    return false
+  end
+  local db = self:DB()
+  table.remove(db.groups, idx)
+  if self.ReleaseAuraContainer then
+    self:ReleaseAuraContainer(id)
+  end
+  self:Refresh()
+  return true
+end
+
+function A:GetGroupRuleById(groupId, ruleId)
+  local group = self:GetGroupById(groupId)
+  ruleId = tonumber(ruleId)
+  if not group or not ruleId then
+    return nil
+  end
+  for i = 1, #group.rules do
+    if group.rules[i].id == ruleId then
+      return group.rules[i], i, group
+    end
+  end
+  return nil
+end
+
+function A:AddGroupRule(groupId, partial)
+  local group, idx = self:GetGroupById(groupId)
+  if not group then
+    return nil, "Grupo no encontrado."
+  end
+  if #group.rules >= MAX_RULES then
+    return nil, "Máximo " .. MAX_RULES .. " reglas por grupo."
+  end
+  local rule = copyGroupRule(partial)
+  if not rule then
+    return nil, "Tipo de regla inválido."
+  end
+  local db = self:DB()
+  rule.id = allocId(db)
+  group.rules[#group.rules + 1] = rule
+  db.groups[idx] = copyGroup(group, db)
+  self:Refresh()
+  return db.groups[idx].rules[#db.groups[idx].rules]
+end
+
+function A:UpdateGroupRule(groupId, ruleId, partial)
+  local rule, ridx, group = self:GetGroupRuleById(groupId, ruleId)
+  if not rule then
+    return nil, "Regla de grupo no encontrada."
+  end
+  local merged = {}
+  for k, v in pairs(rule) do
+    merged[k] = v
+  end
+  if type(partial) == "table" then
+    for k, v in pairs(partial) do
+      if k ~= "id" then
+        merged[k] = v
+      end
+    end
+  end
+  local normalized = copyGroupRule(merged)
+  if not normalized then
+    return nil, "Tipo de regla inválido."
+  end
+  normalized.id = rule.id
+  group.rules[ridx] = normalized
+  local db = self:DB()
+  local _, gidx = self:GetGroupById(groupId)
+  db.groups[gidx] = copyGroup(group, db)
+  self:Refresh()
+  return db.groups[gidx].rules[ridx]
+end
+
+function A:DeleteGroupRule(groupId, ruleId)
+  local _, ridx, group = self:GetGroupRuleById(groupId, ruleId)
+  if not group then
+    return false
+  end
+  local _, gidx = self:GetGroupById(groupId)
+  table.remove(group.rules, ridx)
+  local db = self:DB()
+  db.groups[gidx] = copyGroup(group, db)
+  self:Refresh()
+  return true
+end
+
+function A:GetEffectById(groupId, effectId)
+  local group = self:GetGroupById(groupId)
+  effectId = tonumber(effectId)
+  if not group or not effectId then
+    return nil
+  end
+  for i = 1, #group.effects do
+    if group.effects[i].id == effectId then
+      return group.effects[i], i, group
+    end
+  end
+  return nil
+end
+
+--- Proyección legacy: un "rule" por grupo (efecto visual primario + reglas).
+function A:GetRules()
+  local groups = self:GetGroups()
+  local out = {}
+  for i = 1, #groups do
+    out[i] = groupToVirtualRule(groups[i])
+  end
+  return out
+end
+
+function A:GetRuleById(id)
+  local group, idx = self:GetGroupById(id)
+  if not group then
+    return nil
+  end
+  return groupToVirtualRule(group), idx
+end
+
+local function ensureModuleOn(self, db)
   if not db.enabled then
     db.enabled = true
     if not self._autoEnableWarned then
@@ -372,16 +1184,36 @@ function A:AddRule(partial)
       print("|cff00ff00Chukie UI|r: módulo Alertas activado automáticamente.")
     end
   end
+end
+
+function A:AddRule(partial)
+  local db = self:DB()
+  if #db.groups >= MAX_GROUPS then
+    return nil, "Máximo " .. MAX_GROUPS .. " alertas por perfil."
+  end
+  local rule = copyRule(partial, #db.groups + 1)
+  if rule.spellId <= 0 then
+    return nil, "Falta spellId."
+  end
+  if not KIND_OK[rule.kind] then
+    return nil, "Tipo inválido."
+  end
+  local group = makeGroupFromLegacyRule(db, rule)
+  db.groups[#db.groups + 1] = group
+  ensureModuleOn(self, db)
   self:Refresh()
-  return rule
+  return groupToVirtualRule(group)
 end
 
 function A:UpdateRule(id, partial)
-  local rule, idx = self:GetRuleById(id)
-  if not rule then
+  local group, idx = self:GetGroupById(id)
+  if not group then
     return nil, "Regla no encontrada."
   end
-  local merged = copyRule(rule, idx)
+  if #(group.rules or {}) > 1 then
+    return nil, "Este grupo usa reglas nativas; editá cada condición con UpdateGroupRule."
+  end
+  local merged = groupToVirtualRule(group)
   if type(partial) == "table" then
     for k, v in pairs(partial) do
       if k == "point" then
@@ -392,31 +1224,93 @@ function A:UpdateRule(id, partial)
         merged.overlayFx = copyOverlayFx(v)
       elseif k == "chargeFilter" then
         merged.chargeFilter = copyChargeFilter(v)
-      elseif k ~= "id" then
+      elseif k ~= "id" and k ~= "_effectId" then
         merged[k] = v
       end
     end
   end
   merged = copyRule(merged, idx)
-  merged.id = rule.id
+  merged.id = group.id
   if merged.spellId <= 0 then
     return nil, "Falta spellId."
   end
-  self:DB().rules[idx] = merged
+  local effectId = type(partial) == "table" and tonumber(partial._effectId) or nil
+  local db = self:DB()
+  db.groups[idx] = applyVirtualToGroup(group, merged, db, effectId)
   self:Refresh()
-  return merged
+  return groupToVirtualRule(db.groups[idx])
 end
 
 function A:DeleteRule(id)
-  local _, idx = self:GetRuleById(id)
+  local _, idx = self:GetGroupById(id)
   if not idx then
     return false
   end
   local db = self:DB()
-  table.remove(db.rules, idx)
+  table.remove(db.groups, idx)
   if self.ReleaseAuraContainer then
     self:ReleaseAuraContainer(id)
   end
+  self:Refresh()
+  return true
+end
+
+function A:AddEffect(groupId, partial)
+  local group, idx = self:GetGroupById(groupId)
+  if not group then
+    return nil, "Grupo no encontrado."
+  end
+  if #group.effects >= MAX_EFFECTS_PER_GROUP then
+    return nil, "Máximo " .. MAX_EFFECTS_PER_GROUP .. " efectos por grupo."
+  end
+  local db = self:DB()
+  local e = copyEffect(partial, #group.effects + 1)
+  e.id = allocId(db)
+  if EFFECT_STUB[e.type] then
+    e.enabled = false
+  end
+  group.effects[#group.effects + 1] = e
+  db.groups[idx] = copyGroup(group, db)
+  self:Refresh()
+  return e
+end
+
+function A:UpdateEffect(groupId, effectId, partial)
+  local e, eidx, group = self:GetEffectById(groupId, effectId)
+  if not e or not group then
+    return nil, "Efecto no encontrado."
+  end
+  local _, gidx = self:GetGroupById(groupId)
+  if type(partial) == "table" then
+    for k, v in pairs(partial) do
+      if k == "point" then
+        e.point = copyPoint(v, eidx)
+      elseif k == "color" then
+        e.color = copyColor(v)
+      elseif k ~= "id" then
+        e[k] = v
+      end
+    end
+  end
+  group.effects[eidx] = copyEffect(e, eidx)
+  local db = self:DB()
+  db.groups[gidx] = copyGroup(group, db)
+  self:Refresh()
+  return db.groups[gidx].effects[eidx]
+end
+
+function A:DeleteEffect(groupId, effectId)
+  local e, eidx, group = self:GetEffectById(groupId, effectId)
+  if not e or not group then
+    return false
+  end
+  if EFFECT_VISUAL[e.type] and countVisualEffects(group, false) <= 1 then
+    return false, "Hace falta al menos un efecto visual."
+  end
+  local _, gidx = self:GetGroupById(groupId)
+  table.remove(group.effects, eidx)
+  local db = self:DB()
+  db.groups[gidx] = copyGroup(group, db)
   self:Refresh()
   return true
 end
@@ -469,7 +1363,7 @@ local function spellTexture(spellId)
   return nil
 end
 
-local function spellName(spellId)
+spellName = function(spellId)
   if C_Spell and C_Spell.GetSpellName then
     return C_Spell.GetSpellName(spellId)
   end
@@ -486,6 +1380,24 @@ end
 
 local function isSecret(v)
   return issecretvalue and issecretvalue(v) or false
+end
+
+--- Test booleano seguro: los payloads de UNIT_AURA traen campos secretos en 12.x y
+--- evaluarlos directo en un `if` lanza error ("boolean test on a secret value").
+local function truthy(v)
+  if v == nil or isSecret(v) then
+    return false
+  end
+  return v and true or false
+end
+
+--- Devuelve el valor solo si es legible. Hay que filtrar antes de cualquier `if v`,
+--- `tonumber(v)` o comparación, porque tocar un secreto en esas posiciones da error.
+local function plain(v)
+  if isSecret(v) then
+    return nil
+  end
+  return v
 end
 
 local function spellAuraIsSecretNow(spellId)
@@ -542,9 +1454,9 @@ local function auraMatchesWanted(aura, spellId, wantTex)
 end
 
 local function watchRemember(unit, spellId, instanceId)
-  instanceId = tonumber(instanceId)
+  instanceId = tonumber(plain(instanceId))
   spellId = tonumber(spellId) or 0
-  if not unit or not instanceId or spellId <= 0 or isSecret(instanceId) then
+  if not unit or not instanceId or spellId <= 0 then
     return
   end
   A._auraWatch[unit] = A._auraWatch[unit] or {}
@@ -553,7 +1465,7 @@ local function watchRemember(unit, spellId, instanceId)
 end
 
 local function watchForgetInstance(unit, instanceId)
-  instanceId = tonumber(instanceId)
+  instanceId = tonumber(plain(instanceId))
   if not unit or not instanceId or not A._auraWatch[unit] then
     return
   end
@@ -606,14 +1518,17 @@ local AURA_SCAN_FILTERS = {
 
 local function watchedSpellIds()
   local out, seen = {}, {}
-  local rules = A.GetRules and A:GetRules() or {}
-  for i = 1, #rules do
-    local r = rules[i]
-    if r and (r.kind == "aura" or r.kind == "proc") then
-      local sid = tonumber(r.spellId) or 0
-      if sid > 0 and not seen[sid] then
-        seen[sid] = true
-        out[#out + 1] = sid
+  local groups = A.GetGroups and A:GetGroups() or {}
+  for gi = 1, #groups do
+    local rules = groups[gi].rules or {}
+    for ri = 1, #rules do
+      local r = rules[ri]
+      if r and r.enabled ~= false and (r.type == "aura" or r.type == "proc") then
+        local sid = tonumber(r.spellId) or 0
+        if sid > 0 and not seen[sid] then
+          seen[sid] = true
+          out[#out + 1] = sid
+        end
       end
     end
   end
@@ -642,15 +1557,18 @@ function A:RebuildAuraWatch(unit)
     local filt = AURA_SCAN_FILTERS[li]
     for idx = 1, 40 do
       local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, idx, filt)
-      if not ok or not aura then
+      if not ok then
+        -- Un aura secreta hace fallar la llamada: seguir con el resto de la lista.
+      elseif not aura then
         break
-      end
-      local iid = aura.auraInstanceID
-      if iid and not isSecret(iid) then
-        for si = 1, #spells do
-          local sid = spells[si]
-          if auraMatchesWanted(aura, sid, want[sid]) then
-            watchRemember(unit, sid, iid)
+      else
+        local iid = plain(aura.auraInstanceID)
+        if iid then
+          for si = 1, #spells do
+            local sid = spells[si]
+            if auraMatchesWanted(aura, sid, want[sid]) then
+              watchRemember(unit, sid, iid)
+            end
           end
         end
       end
@@ -662,7 +1580,8 @@ function A:IngestUnitAura(unit, updateInfo)
   if not unit or unit == "" then
     return
   end
-  if type(updateInfo) ~= "table" or updateInfo.isFullUpdate then
+  -- isFullUpdate puede venir secreto: si no se puede leer, se relista todo.
+  if type(updateInfo) ~= "table" or isSecret(updateInfo.isFullUpdate) or truthy(updateInfo.isFullUpdate) then
     self:RebuildAuraWatch(unit)
     return
   end
@@ -674,23 +1593,24 @@ function A:IngestUnitAura(unit, updateInfo)
   for i = 1, #spells do
     want[spells[i]] = wantSpellIcon(spells[i])
   end
-  if updateInfo.addedAuras then
+  if truthy(updateInfo.addedAuras) then
     for i = 1, #updateInfo.addedAuras do
       local aura = updateInfo.addedAuras[i]
-      if aura and aura.auraInstanceID and not isSecret(aura.auraInstanceID) then
+      local iid = aura and plain(aura.auraInstanceID)
+      if iid then
         for si = 1, #spells do
           local sid = spells[si]
           if auraMatchesWanted(aura, sid, want[sid]) then
-            watchRemember(unit, sid, aura.auraInstanceID)
+            watchRemember(unit, sid, iid)
           end
         end
       end
     end
   end
-  if updateInfo.updatedAuraInstanceIDs then
+  if truthy(updateInfo.updatedAuraInstanceIDs) then
     for i = 1, #updateInfo.updatedAuraInstanceIDs do
-      local iid = updateInfo.updatedAuraInstanceIDs[i]
-      if iid and not isSecret(iid) and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+      local iid = plain(updateInfo.updatedAuraInstanceIDs[i])
+      if iid and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
         local ok, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, iid)
         if ok and aura then
           for si = 1, #spells do
@@ -703,10 +1623,10 @@ function A:IngestUnitAura(unit, updateInfo)
       end
     end
   end
-  if updateInfo.removedAuraInstanceIDs then
+  if truthy(updateInfo.removedAuraInstanceIDs) then
     for i = 1, #updateInfo.removedAuraInstanceIDs do
-      local iid = updateInfo.removedAuraInstanceIDs[i]
-      if iid and not isSecret(iid) then
+      local iid = plain(updateInfo.removedAuraInstanceIDs[i])
+      if iid then
         watchForgetInstance(unit, iid)
       end
     end
@@ -738,101 +1658,210 @@ local function getSpellCooldown(spellId)
   return 0, 0, true, 1, false, false
 end
 
---- CD propio (no GCD): duration significativa y distinta del GCD actual.
---- 6º retorno: secret=true si Blizzard ocultó los tiempos (no usar para available/ready/cooldown).
-local function isOnRealCooldown(spellId)
-  local start, duration, enabled, modRate, flaggedGcd, secret = getSpellCooldown(spellId)
-  if secret then
-    return false, start, duration, enabled, modRate, true
+--- Booleano de la API: nil si no existe o si viene como valor secreto.
+local function readBool(v)
+  if v == nil or isSecret(v) then
+    return nil
   end
-  if not enabled or not duration or duration <= 0 or not start or start <= 0 then
-    return false, start, duration, enabled, modRate, false
+  return v == true
+end
+
+--- Heurística antigua por tiempos (clientes sin isActive). nil = tiempos ocultos.
+local function legacyOnRealCooldown(spellId)
+  local start, duration, enabled, _, flaggedGcd, secret = getSpellCooldown(spellId)
+  if secret then
+    return nil
+  end
+  if not enabled or duration <= 0 or start <= 0 then
+    return false
   end
   if flaggedGcd then
-    return false, start, duration, enabled, modRate, false
+    return false
   end
   local _, gcdDur, _, _, _, gcdSecret = getSpellCooldown(GCD_SPELL_ID)
-  if gcdSecret then
-    gcdDur = 0
-  else
-    gcdDur = tonumber(gcdDur) or 0
-  end
+  gcdDur = (not gcdSecret) and (tonumber(gcdDur) or 0) or 0
   -- GCD típico ~1–1.5s; si duration ≈ gcd o <= 1.5, tratar como GCD.
   if gcdDur > 0 and duration <= (gcdDur + 0.05) then
-    return false, start, duration, enabled, modRate, false
+    return false
   end
   if duration <= 1.5 then
-    return false, start, duration, enabled, modRate, false
+    return false
   end
-  return true, start, duration, enabled, modRate, false
+  return true
+end
+
+--- Estado de CD/cargas leyendo solo campos NeverSecret (isEnabled, isActive, isOnGCD,
+--- maxCharges). Nunca toca startTime/duration, así que funciona igual en combate.
+--- Campos: cdActive, onGcd, hasCharges, maxCharges, chargeActive, empty, count.
+--- count es nil cuando no se puede deducir (más de 2 cargas y recarga en curso).
+local function getSpellCdState(spellId)
+  spellId = tonumber(spellId) or 0
+  local st = {
+    cdActive = false,
+    onGcd = false,
+    hasCharges = false,
+    maxCharges = nil,
+    chargeActive = false,
+    empty = false,
+    count = nil,
+  }
+  if spellId <= 0 then
+    return st
+  end
+
+  local cdActiveRaw
+  if C_Spell and C_Spell.GetSpellCooldown then
+    local ok, info = pcall(C_Spell.GetSpellCooldown, spellId)
+    if ok and type(info) == "table" then
+      local active = readBool(info.isActive)
+      st.onGcd = readBool(info.isOnGCD) == true
+      if active ~= nil then
+        cdActiveRaw = active and readBool(info.isEnabled) ~= false
+      end
+    end
+  end
+  if cdActiveRaw == nil then
+    local legacy = legacyOnRealCooldown(spellId)
+    if legacy ~= nil then
+      cdActiveRaw = legacy
+      st.onGcd = false
+    end
+  end
+  st.cdActive = cdActiveRaw == true and not st.onGcd
+
+  if C_Spell and C_Spell.GetSpellCharges then
+    local ok, info = pcall(C_Spell.GetSpellCharges, spellId)
+    if ok and type(info) == "table" and not isSecret(info.maxCharges) then
+      local maxCharges = tonumber(info.maxCharges)
+      if maxCharges and maxCharges > 1 then
+        st.hasCharges = true
+        st.maxCharges = math.floor(maxCharges)
+        local current
+        if not isSecret(info.currentCharges) then
+          current = tonumber(info.currentCharges)
+        end
+        local active = readBool(info.isActive)
+        if active == nil and current then
+          active = current < st.maxCharges
+        end
+        st.chargeActive = active == true
+        -- Sin cargas: además de la recarga, el CD normal del hechizo está activo.
+        st.empty = st.chargeActive and st.cdActive
+        if current then
+          st.count = math.floor(current)
+          st.empty = st.count <= 0
+        elseif not st.chargeActive then
+          st.count = st.maxCharges
+        elseif st.empty then
+          st.count = 0
+        elseif st.maxCharges == 2 then
+          st.count = 1
+        end
+      end
+    end
+  end
+
+  if not st.hasCharges then
+    st.empty = st.cdActive
+    st.count = st.cdActive and 0 or 1
+  end
+
+  return st
 end
 
 local function isSpellUsableNow(spellId)
   if C_Spell and C_Spell.IsSpellUsable then
-    local ok = C_Spell.IsSpellUsable(spellId)
-    return ok and true or false
+    local ok, usable = pcall(C_Spell.IsSpellUsable, spellId)
+    if not ok or isSecret(usable) then
+      return true
+    end
+    return usable and true or false
   end
   if IsUsableSpell then
-    local ok = IsUsableSpell(spellId)
-    return ok and true or false
+    local ok, usable = pcall(IsUsableSpell, spellId)
+    if not ok or isSecret(usable) then
+      return true
+    end
+    return usable and true or false
   end
   return true
 end
 
 local function isSpellInRangeOk(spellId)
   if C_Spell and C_Spell.IsSpellInRange then
-    local inRange = C_Spell.IsSpellInRange(spellId)
+    local ok, inRange = pcall(C_Spell.IsSpellInRange, spellId)
     -- nil = N/A (sin target / no aplica) → ok
-    if inRange == false then
+    if ok and not isSecret(inRange) and inRange == false then
       return false
     end
     return true
   end
   if IsSpellInRange then
-    local r = IsSpellInRange(spellId, "target")
-    if r == 0 then
+    local ok, r = pcall(IsSpellInRange, spellId, "target")
+    if ok and not isSecret(r) and r == 0 then
       return false
     end
   end
   return true
 end
 
---- Disponible: usable + rango OK + no en CD real (GCD no cuenta).
---- Si el CD es secreto, no asumir disponible.
-local function isSpellAvailable(spellId)
+--- Disponible: usable + rango OK + al menos una carga (o sin CD real).
+local function isSpellAvailable(spellId, st)
   if not isSpellUsableNow(spellId) then
     return false
   end
   if not isSpellInRangeOk(spellId) then
     return false
   end
-  local onReal, _, _, _, _, secret = isOnRealCooldown(spellId)
-  if secret then
-    return false
-  end
-  return not onReal
+  st = st or getSpellCdState(spellId)
+  return not st.empty
 end
 
-local function safeSetCooldown(cd, start, duration, modRate)
+local function clearCooldown(cd)
+  if cd then
+    pcall(function()
+      cd:Clear()
+    end)
+  end
+end
+
+--- Swipe del CD. En 12.x los duration objects son la única vía admitida para
+--- configurar un Cooldown con datos secretos: el widget los resuelve internamente
+--- sin exponer tiempos, así que el swipe también anima en combate.
+--- Con cargas se dibuja la recarga de la próxima (con 0 cargas equivale al CD completo).
+local function applySpellCooldownVisual(cd, spellId, hasCharges)
   if not cd then
-    return false
+    return
   end
-  if isSecret(start) or isSecret(duration) or isSecret(modRate) then
-    pcall(function()
-      cd:Clear()
-    end)
-    return false
+  spellId = tonumber(spellId) or 0
+  if spellId <= 0 then
+    clearCooldown(cd)
+    return
   end
-  start = tonumber(start) or 0
-  duration = tonumber(duration) or 0
-  modRate = tonumber(modRate) or 1
-  local ok = pcall(cd.SetCooldown, cd, start, duration, modRate)
-  if not ok then
-    pcall(function()
-      cd:Clear()
-    end)
+  if cd.SetCooldownFromDurationObject and C_Spell then
+    local getter = hasCharges and C_Spell.GetSpellChargeDuration or C_Spell.GetSpellCooldownDuration
+    if getter then
+      local ok, dur
+      if hasCharges then
+        ok, dur = pcall(getter, spellId)
+      else
+        ok, dur = pcall(getter, spellId, true)
+      end
+      if ok and dur and pcall(cd.SetCooldownFromDurationObject, cd, dur) then
+        return
+      end
+      clearCooldown(cd)
+      return
+    end
   end
-  return ok
+  local start, duration, enabled, modRate, _, secret = getSpellCooldown(spellId)
+  if secret or not enabled or duration <= 0 or start <= 0 then
+    clearCooldown(cd)
+    return
+  end
+  if not pcall(cd.SetCooldown, cd, start, duration, modRate or 1) then
+    clearCooldown(cd)
+  end
 end
 
 --- ¿La unidad tiene el aura? filter = HELPFUL | HARMFUL | both.
@@ -934,13 +1963,12 @@ local function unitHasAura(unit, spellId, filter)
     for li = 1, #lists do
       for i = 1, 40 do
         local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, lists[li])
-        if not ok or not aura then
+        if not ok then
+          -- Aura secreta en ese índice: no cortar, puede haber más adelante.
+        elseif not aura then
           break
-        end
-        if auraMatchesFilter(aura) and auraMatchesWanted(aura, spellId, wantTex) then
-          if aura.auraInstanceID and not isSecret(aura.auraInstanceID) then
-            watchRemember(unit, spellId, aura.auraInstanceID)
-          end
+        elseif auraMatchesFilter(aura) and auraMatchesWanted(aura, spellId, wantTex) then
+          watchRemember(unit, spellId, aura.auraInstanceID)
           return true
         end
       end
@@ -970,6 +1998,57 @@ local function unitHasAura(unit, spellId, filter)
   return false
 end
 
+--- ¿Se puede confiar en un "no lo tiene"? Con auras secretas todas las vías de
+--- lectura fallan igual que si el buff no estuviera, así que la ausencia no se
+--- puede afirmar y las condiciones que dependen de ella no deben dispararse.
+local function auraAbsenceIsReliable(unit, spellId)
+  spellId = tonumber(spellId) or 0
+  if spellId <= 0 then
+    return true
+  end
+  -- En builds sin la API de secretos no hay forma de distinguir: se mantiene el
+  -- comportamiento clásico y la ausencia se toma como válida.
+  return not spellAuraIsSecretNow(spellId)
+end
+
+--- ¿El cliente oculta el aura de este hechizo ahora? Lo usa el editor para avisar
+--- que una condición basada en la ausencia del aura no se puede evaluar.
+function A:IsSpellAuraSecret(spellId)
+  return spellAuraIsSecretNow(spellId)
+end
+
+--- Diagnóstico en juego: /chukieui cdcheck [spellId]
+--- Muestra qué se puede saber del CD/cargas sin leer valores secretos.
+function A:DebugCdCheck(spellId)
+  spellId = tonumber(spellId) or 0
+  if spellId <= 0 then
+    print("|cffff9900Chukie UI|r: uso — /chukieui cdcheck 410089")
+    return
+  end
+  local st = getSpellCdState(spellId)
+  local exact = "no"
+  if C_Spell and C_Spell.GetSpellCharges then
+    local ok, info = pcall(C_Spell.GetSpellCharges, spellId)
+    if ok and type(info) == "table" and not isSecret(info.currentCharges) then
+      exact = "sí"
+    end
+  end
+  print(string.format(
+    "|cff00ff00Chukie UI|r cdcheck #%d (%s) | combate=%s | cargas=%s max=%s | recargando=%s | CD=%s (gcd=%s) | sinCargas=%s | conteo=%s (exacto=%s)",
+    spellId,
+    tostring(spellName(spellId) or "?"),
+    tostring(UnitAffectingCombat("player") and true or false),
+    tostring(st.hasCharges),
+    tostring(st.maxCharges),
+    tostring(st.chargeActive),
+    tostring(st.cdActive),
+    tostring(st.onGcd),
+    tostring(st.empty),
+    tostring(st.count),
+    exact
+  ))
+end
+
 --- Diagnóstico en juego: /chukieui auracheck [spellId]
 function A:DebugAuraCheck(spellId, unit)
   spellId = tonumber(spellId) or 0
@@ -995,19 +2074,23 @@ function A:DebugAuraCheck(spellId, unit)
   if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
     for i = 1, 40 do
       local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL|INCLUDE_NAME_PLATE_ONLY")
-      if not ok or not aura then
-        break
-      end
-      listed = listed + 1
-      if isSecret(aura.spellId) then
+      if not ok then
+        -- La llamada falla en las auras secretas: contarlas y seguir.
         sidSecretN = sidSecretN + 1
-      elseif spellIdMatches(aura.spellId, spellId) then
-        sidHit = sidHit + 1
-      end
-      if isSecret(aura.icon) then
-        iconSecretN = iconSecretN + 1
-      elseif wantTex and (tonumber(aura.icon) or aura.icon) == wantTex then
-        iconHit = iconHit + 1
+      elseif not aura then
+        break
+      else
+        listed = listed + 1
+        if isSecret(aura.spellId) then
+          sidSecretN = sidSecretN + 1
+        elseif spellIdMatches(aura.spellId, spellId) then
+          sidHit = sidHit + 1
+        end
+        if isSecret(aura.icon) then
+          iconSecretN = iconSecretN + 1
+        elseif wantTex and (tonumber(aura.icon) or aura.icon) == wantTex then
+          iconHit = iconHit + 1
+        end
       end
     end
   end
@@ -1126,13 +2209,16 @@ local function getUnitAuraStacks(unit, spellId, filter)
     for li = 1, #lists do
       for i = 1, 40 do
         local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, lists[li])
-        if not ok or not aura then
+        if not ok then
+          -- Aura secreta en ese índice: seguir con el resto de la lista.
+        elseif not aura then
           break
-        end
-        local sid = aura.spellId
-        if not isSecret(sid) and tonumber(sid) == spellId then
-          local n = appsFromAura(aura)
-          return n == nil and nil or n
+        else
+          local sid = plain(aura.spellId)
+          if sid and tonumber(sid) == spellId then
+            local n = appsFromAura(aura)
+            return n == nil and nil or n
+          end
         end
       end
     end
@@ -1177,36 +2263,13 @@ local function getAuraStacks(spellId)
 end
 
 --- Cargas actuales del hechizo. Sin sistema de cargas: 1 si no en CD real, 0 si en CD.
---- nil = desconocido (valor secreto).
+--- nil = no deducible (en combate, con más de 2 cargas y recarga en curso).
 local function getSpellChargeCount(spellId)
   spellId = tonumber(spellId) or 0
   if spellId <= 0 then
     return 0
   end
-  if C_Spell and C_Spell.GetSpellCharges then
-    local info = C_Spell.GetSpellCharges(spellId)
-    if type(info) == "table" then
-      local cur = info.currentCharges
-      if isSecret(cur) then
-        return nil
-      end
-      return math.floor(tonumber(cur) or 0)
-    end
-  end
-  if GetSpellCharges then
-    local cur = GetSpellCharges(spellId)
-    if cur ~= nil then
-      if isSecret(cur) then
-        return nil
-      end
-      return math.floor(tonumber(cur) or 0)
-    end
-  end
-  local onCd, _, _, _, _, secret = isOnRealCooldown(spellId)
-  if secret then
-    return nil
-  end
-  return onCd and 0 or 1
+  return getSpellCdState(spellId).count
 end
 
 local function compareNumber(n, op, value)
@@ -1232,7 +2295,9 @@ local function compareNumber(n, op, value)
 end
 
 --- Filtro opcional de cargas (CD) o stacks (proc/aura). AND con el resto de condiciones.
-local function passesChargeFilter(rule)
+--- En cooldowns, si el conteo no es deducible se ignora el filtro en vez de ocultar
+--- la alerta (Blizzard oculta el número exacto de cargas en combate).
+local function passesChargeFilter(rule, st)
   local f = rule and rule.chargeFilter
   if type(f) ~= "table" or not f.enabled then
     return true
@@ -1244,7 +2309,14 @@ local function passesChargeFilter(rule)
     local unit = rule.auraUnit == "target" and "target" or "player"
     n = getUnitAuraStacks(unit, rule.spellId, rule.auraFilter or "both")
   else
-    n = getSpellChargeCount(rule.spellId)
+    if st then
+      n = st.count
+    else
+      n = getSpellChargeCount(rule.spellId)
+    end
+    if n == nil then
+      return true
+    end
   end
   if n == nil then
     return false
@@ -1581,9 +2653,18 @@ function A:EnsureRuleFrame(ruleId)
     cd:SetHideCountdownNumbers(true)
   end
   iconLayer.cooldown = cd
+  local chargeText = iconLayer:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  chargeText:SetPoint("BOTTOMRIGHT", iconLayer, "BOTTOMRIGHT", -3, 2)
+  chargeText:SetJustifyH("RIGHT")
+  chargeText:SetTextColor(1, 1, 1, 1)
+  chargeText:SetShadowColor(0, 0, 0, 1)
+  chargeText:SetShadowOffset(1, -1)
+  chargeText:Hide()
+  iconLayer.chargeText = chargeText
   f.iconLayer = iconLayer
   f.icon = icon
   f.cooldown = cd
+  f.chargeText = chargeText
 
   -- Aura layer (single or pair)
   local auraLayer = CreateFrame("Frame", nil, f)
@@ -1626,6 +2707,9 @@ end
 local function hideAllLayers(frame)
   if frame.iconLayer then
     frame.iconLayer:Hide()
+    if frame.chargeText then
+      frame.chargeText:Hide()
+    end
   end
   if frame.auraLayer then
     frame.auraLayer:Hide()
@@ -1641,14 +2725,15 @@ local function hideAllLayers(frame)
     frame.cooldown:Clear()
     frame.cooldown:Hide()
   end
-  frame._cdStart = nil
-  frame._cdDur = nil
   frame._displayMode = nil
 end
 
 local function hideLayersExcept(frame, keep)
   if keep ~= "icon" and frame.iconLayer then
     frame.iconLayer:Hide()
+    if frame.chargeText then
+      frame.chargeText:Hide()
+    end
   end
   if keep ~= "aura" and frame.auraLayer then
     frame.auraLayer:Hide()
@@ -1665,12 +2750,10 @@ local function hideLayersExcept(frame, keep)
       frame.cooldown:Clear()
       frame.cooldown:Hide()
     end
-    frame._cdStart = nil
-    frame._cdDur = nil
   end
 end
 
-local function applyIconMode(frame, rule, show, onCd, start, duration, modRate, glowKey, playSoundIfNew)
+local function applyIconMode(frame, rule, show, st, glowKey, playSoundIfNew)
   local size = tonumber(rule.size) or 48
   frame:SetSize(size, size)
   applyPoint(frame, rule.point)
@@ -1689,6 +2772,16 @@ local function applyIconMode(frame, rule, show, onCd, start, duration, modRate, 
   local c = rule.color or { 1, 1, 1 }
   frame.icon:SetVertexColor(c[1] or 1, c[2] or 1, c[3] or 1)
   frame.iconLayer:SetAlpha(clamp(rule.alpha, 0, 1))
+  if frame.chargeText then
+    -- En combate el número exacto solo se puede deducir hasta 2 cargas.
+    local n = st and st.hasCharges and st.count or nil
+    if rule.kind == "cooldown" and n ~= nil then
+      frame.chargeText:SetText(tostring(n))
+      frame.chargeText:Show()
+    else
+      frame.chargeText:Hide()
+    end
+  end
   if playSoundIfNew and not frame._wasShown then
     playAlertSound(rule.sound ~= false, rule.soundPath)
   end
@@ -1705,24 +2798,10 @@ local function applyIconMode(frame, rule, show, onCd, start, duration, modRate, 
       if frame.cooldown.SetReverse then
         frame.cooldown:SetReverse(rule.inverse == true)
       end
-      if onCd then
-        -- Solo SetCooldown si cambió (como ActionBar; evita reiniciar el swipe).
-        if frame._cdStart ~= start or frame._cdDur ~= duration then
-          frame._cdStart = start
-          frame._cdDur = duration
-          safeSetCooldown(frame.cooldown, start, duration, modRate or 1)
-        end
-      else
-        if frame._cdStart ~= nil then
-          frame.cooldown:Clear()
-          frame._cdStart = nil
-          frame._cdDur = nil
-        end
-      end
+      applySpellCooldownVisual(frame.cooldown, rule.spellId, st and st.hasCharges)
     else
       frame.cooldown:Hide()
-      frame._cdStart = nil
-      frame._cdDur = nil
+      clearCooldown(frame.cooldown)
     end
   end
   frame._wasShown = true
@@ -1817,40 +2896,39 @@ local function applyTextMode(frame, rule, show, playSoundIfNew)
   frame._wasShown = true
 end
 
+--- Devuelve show y, en reglas de cooldown, el estado no secreto de CD/cargas.
 local function shouldShowRule(rule)
-  local preview = A._livePreview and A._livePreview.ruleId == rule.id and A._livePreview.forceShow
+  local pv = A._livePreview
+  local preview = pv and pv.forceShow and (pv.groupId == rule.id or pv.ruleId == rule.id)
   if not preview then
     if not A:IsEnabled() or rule.enabled == false or (tonumber(rule.spellId) or 0) <= 0 then
-      return false, false, 0, 0, 1
+      return false
     end
     if rule.combatOnly and not UnitAffectingCombat("player") then
-      return false, false, 0, 0, 1
+      return false
     end
     if rule.targetOnly and not hasValidTarget(rule.spellId) then
-      return false, false, 0, 0, 1
+      return false
     end
   elseif (tonumber(rule.spellId) or 0) <= 0 then
-    return false, false, 0, 0, 1
+    return false
   end
   if rule.kind == "proc" then
     if preview then
-      return true, false, 0, 0, 1
+      return true
     end
-    local show
     if rule.chargeFilter and rule.chargeFilter.enabled then
-      show = passesChargeFilter(rule)
-    else
-      show = playerHasAura(rule.spellId)
+      return passesChargeFilter(rule)
     end
-    return show, false, 0, 0, 1
+    return playerHasAura(rule.spellId)
   end
   if rule.kind == "aura" then
     if preview then
-      return true, false, 0, 0, 1
+      return true
     end
     local unit = rule.auraUnit == "target" and "target" or "player"
     if unit == "target" and not UnitExists("target") then
-      return false, false, 0, 0, 1
+      return false
     end
     local has = unitHasAura(unit, rule.spellId, rule.auraFilter or "both")
     local mode = rule.auraShow or "present"
@@ -1865,39 +2943,157 @@ local function shouldShowRule(rule)
     if show and not passesChargeFilter(rule) then
       show = false
     end
-    return show, false, 0, 0, 1
+    return show
   end
-  local onCd, start, duration, enabled, modRate, secret = isOnRealCooldown(rule.spellId)
+  local st = getSpellCdState(rule.spellId)
   if preview then
-    return true, onCd, start or 0, duration or 0, modRate or 1
+    return true, st
   end
   local showOn = rule.showOn or "available"
-  -- CD secreto: no decidir available/ready/cooldown; always sí (sin swipe usable).
-  if secret and showOn ~= "always" then
-    return false, false, 0, 0, 1
-  end
   local show
   if showOn == "always" then
     show = true
   elseif showOn == "cooldown" then
-    show = onCd
-  elseif showOn == "available" then
-    show = isSpellAvailable(rule.spellId)
+    -- Con cargas, «en CD» significa que alguna carga está recargando.
+    if st.hasCharges then
+      show = st.chargeActive
+    else
+      show = st.cdActive
+    end
+  elseif showOn == "ready" then
+    -- Con cargas, «lista» significa cargas al máximo.
+    if st.hasCharges then
+      show = not st.chargeActive
+    else
+      show = not st.cdActive
+    end
   else
-    show = not onCd
+    show = isSpellAvailable(rule.spellId, st)
   end
-  if show and not passesChargeFilter(rule) then
+  if show and not passesChargeFilter(rule, st) then
     show = false
   end
-  return show, onCd, start or 0, duration or 0, modRate or 1
+  return show, st
 end
 
-function A:SetLivePreview(ruleId, on)
-  if on and ruleId then
-    self._livePreview = { ruleId = ruleId, forceShow = true }
-  else
-    self._livePreview = nil
+local function basicTargetExists()
+  return UnitExists("target") and not UnitIsDead("target")
+end
+
+local function evaluateGroupRule(rule)
+  if not rule or rule.enabled == false then
+    return nil
   end
+  local typ = rule.type
+  if typ == "combat" then
+    local active = UnitAffectingCombat("player") and true or false
+    return active == (rule.on ~= false)
+  elseif typ == "target" then
+    return basicTargetExists() == (rule.on ~= false)
+  end
+
+  local spellId = math.floor(tonumber(rule.spellId) or 0)
+  if spellId <= 0 then
+    return false
+  end
+  local st = getSpellCdState(spellId)
+  st.spellId = spellId
+
+  if typ == "proc" then
+    return playerHasAura(spellId), st
+  elseif typ == "aura" then
+    local unit = rule.auraUnit == "target" and "target" or "player"
+    local has = unitHasAura(unit, spellId, rule.auraFilter or "both")
+    local mode = rule.auraShow or "present"
+    if mode == "always" then
+      return true, st
+    elseif mode == "absent" then
+      -- "No lo veo" no es "no lo tiene": con un aura secreta no se afirma ausencia.
+      if not has and not auraAbsenceIsReliable(unit, spellId) then
+        return false, st
+      end
+      return not has, st
+    end
+    return has, st
+  elseif typ == "charges" then
+    -- Un valor secreto no debe convertirse en true, especialmente con OR.
+    -- nil hace que esta condición sea neutral; si es la única, el grupo queda oculto.
+    if st.count == nil then
+      return nil, st
+    end
+    return compareNumber(st.count, rule.op or "gte", rule.value or 1), st
+  elseif typ == "cooldown" then
+    local mode = rule.showOn or "available"
+    if mode == "always" then
+      return true, st
+    elseif mode == "cooldown" then
+      if st.hasCharges then
+        return st.chargeActive, st
+      end
+      return st.cdActive, st
+    elseif mode == "ready" then
+      if st.hasCharges then
+        return not st.chargeActive, st
+      end
+      return not st.cdActive, st
+    end
+    return isSpellAvailable(spellId, st), st
+  end
+  return false, st
+end
+
+--- Evalúa exclusivamente las reglas nativas del grupo.
+--- Retorna show y un estado de hechizo no secreto útil para la presentación.
+function A:EvaluateGroupRules(group)
+  if type(group) ~= "table" or type(group.rules) ~= "table" then
+    return false, nil
+  end
+  local useOr = group.ruleLogic == "or"
+  local evaluated = 0
+  local firstState
+  local anyTrue = false
+  for i = 1, #group.rules do
+    local ok, st = evaluateGroupRule(group.rules[i])
+    if ok ~= nil then
+      evaluated = evaluated + 1
+      if st and not firstState then
+        firstState = st
+      end
+      if ok then
+        anyTrue = true
+      elseif not useOr then
+        return false, firstState
+      end
+    end
+  end
+  if evaluated == 0 then
+    return false, firstState
+  end
+  if useOr then
+    return anyTrue, firstState
+  end
+  return true, firstState
+end
+
+function A:SetLivePreview(groupId, effectId)
+  if not groupId then
+    self._livePreview = nil
+    return
+  end
+  if effectId == false then
+    self._livePreview = nil
+    return
+  end
+  local eid
+  if type(effectId) == "number" then
+    eid = effectId
+  end
+  self._livePreview = {
+    groupId = groupId,
+    ruleId = groupId,
+    effectId = eid,
+    forceShow = true,
+  }
 end
 
 function A:ClearLivePreview()
@@ -1922,33 +3118,6 @@ function A:SimulateOverlay(ruleId, seconds)
   end)
 end
 
-function A:UpdateRuleFrame(rule, index)
-  if not rule or not rule.id then
-    return
-  end
-  -- 12.1+: AuraContainer maneja show/hide; no evaluar API secreta.
-  if self.SyncAuraContainerRule and self:SyncAuraContainerRule(rule) then
-    local f = self._frames and self._frames[rule.id]
-    if f then
-      hideFrame(f)
-    end
-    return
-  end
-  local f = self:EnsureRuleFrame(rule.id)
-  local glowKey = "r" .. tostring(rule.id)
-  local show, onCd, start, duration, modRate = shouldShowRule(rule)
-  local silent = self._livePreview and self._livePreview.ruleId == rule.id
-  local display = rule.display or "icon"
-  if display == "aura" then
-    applyAuraMode(f, rule, show, not silent)
-  elseif display == "text" then
-    applyTextMode(f, rule, show, not silent)
-  else
-    applyIconMode(f, rule, show, onCd, start, duration, modRate, glowKey, not silent)
-  end
-  applyOverlayFx(f, rule, show)
-end
-
 local function hideFrame(frame)
   if not frame then
     return
@@ -1963,33 +3132,359 @@ local function hideFrame(frame)
   frame._wasShown = false
 end
 
+--- Traduce el grupo al formato que espera el AuraContainer, o nil si no se puede
+--- delegar. Solo encaja "mostrar este aura mientras esté puesta": Blizzard decide
+--- el show/hide (por eso funciona con auras secretas) y nosotros solo presentamos,
+--- así que cualquier condición extra, el sonido o varios efectos lo descartan.
+local function containerRuleForGroup(group)
+  if type(group) ~= "table" then
+    return nil
+  end
+  local auraRule
+  local rules = group.rules or {}
+  for i = 1, #rules do
+    local r = rules[i]
+    if r and r.enabled ~= false then
+      if r.type ~= "aura" or auraRule then
+        return nil
+      end
+      auraRule = r
+    end
+  end
+  if not auraRule or (auraRule.auraShow or "present") ~= "present" then
+    return nil
+  end
+  if (math.floor(tonumber(auraRule.spellId) or 0)) <= 0 then
+    return nil
+  end
+  local effect
+  local effects = group.effects or {}
+  for i = 1, #effects do
+    local e = effects[i]
+    if e and e.enabled ~= false then
+      if e.type == "sound" then
+        return nil
+      end
+      if EFFECT_VISUAL[e.type] then
+        if effect then
+          return nil
+        end
+        effect = e
+      end
+    end
+  end
+  if not effect or effect.type == "text" then
+    return nil
+  end
+  return {
+    id = group.id,
+    kind = "aura",
+    enabled = group.enabled ~= false,
+    spellId = math.floor(tonumber(auraRule.spellId) or 0),
+    auraShow = "present",
+    auraUnit = auraRule.auraUnit == "target" and "target" or "player",
+    auraFilter = auraRule.auraFilter or "both",
+    display = effect.type == "texture" and "aura" or "icon",
+    size = effect.size,
+    point = effect.point,
+    color = effect.color,
+    alpha = effect.alpha,
+    auraPath = effect.auraPath,
+    auraLayout = effect.auraLayout,
+    pairGap = effect.pairGap,
+  }
+end
+
+--- Para la UI: si el grupo encaja en la ruta que dibuja el cliente y si esa ruta
+--- está disponible en este cliente (en combate no se puede comprobar).
+function A:GroupUsesAuraContainer(group)
+  if not containerRuleForGroup(group) then
+    return false, false
+  end
+  return true, (self.HasAuraContainerAPI and self:HasAuraContainerAPI()) or false
+end
+
+--- Diagnóstico en juego: /chukieui auracontainer
+--- Dice qué grupos puede dibujar el cliente y cuáles tienen contenedor vivo.
+function A:DebugAuraContainers()
+  print(string.format(
+    "|cff00ff00Chukie UI|r auracontainer | backend=%s | api=%s | combate=%s",
+    tostring(self.GetAuraDisplayBackend and self:GetAuraDisplayBackend() or "?"),
+    tostring(self.HasAuraContainerAPI and self:HasAuraContainerAPI() or false),
+    tostring(UnitAffectingCombat("player") and true or false)
+  ))
+  local groups = self:GetGroups() or {}
+  if #groups == 0 then
+    print("|cff00ff00Chukie UI|r   sin grupos en el perfil.")
+    return
+  end
+  for i = 1, #groups do
+    local g = groups[i]
+    local cRule = containerRuleForGroup(g)
+    local live = self._auraContainers and self._auraContainers[g.id]
+    local extra = ""
+    if cRule then
+      extra = string.format(
+        " | aura #%d en %s, %s de %s px",
+        cRule.spellId,
+        cRule.auraUnit,
+        cRule.display == "aura" and "textura" or "icono",
+        tostring(math.floor(tonumber(cRule.size) or 48))
+      )
+    end
+    print(string.format(
+      "|cff00ff00Chukie UI|r   #%d %s | delegable=%s | contenedor=%s%s",
+      g.id,
+      (g.name and g.name ~= "" and g.name) or "?",
+      cRule and "sí" or "no",
+      live and "sí" or "no",
+      extra
+    ))
+  end
+end
+
+local function firstGroupSpellId(group)
+  for i = 1, #(group.rules or {}) do
+    local sid = math.floor(tonumber(group.rules[i].spellId) or 0)
+    if sid > 0 then
+      return sid
+    end
+  end
+  return 0
+end
+
+local function viewForEffect(group, effect)
+  local vr = groupToVirtualRule(group)
+  vr.spellId = math.floor(tonumber(effect.spellId) or 0)
+  if vr.spellId <= 0 then
+    vr.spellId = firstGroupSpellId(group)
+  end
+  for i = 1, #(group.rules or {}) do
+    local gr = group.rules[i]
+    if gr and tonumber(gr.spellId) == vr.spellId then
+      if gr.type == "aura" or gr.type == "proc" or gr.type == "cooldown" then
+        vr.kind = gr.type
+      elseif gr.type == "charges" then
+        vr.kind = "cooldown"
+      end
+      break
+    end
+  end
+  if effect.type == "texture" then
+    vr.display = "aura"
+  elseif effect.type == "text" then
+    vr.display = "text"
+  else
+    vr.display = "icon"
+  end
+  vr.size = effect.size
+  vr.point = copyPoint(effect.point, 1)
+  vr.color = copyColor(effect.color)
+  vr.alpha = effect.alpha
+  vr.glowType = effect.glowType
+  vr.swipe = effect.swipe
+  vr.edge = effect.edge
+  vr.inverse = effect.inverse
+  vr.auraPath = effect.auraPath
+  vr.auraLayout = effect.auraLayout
+  vr.pairGap = effect.pairGap
+  vr.text = effect.text
+  vr.fontPath = effect.fontPath
+  vr.sound = false
+  return vr
+end
+
+local function hideGroupEffects(group)
+  if not group or type(group.effects) ~= "table" then
+    return
+  end
+  for i = 1, #group.effects do
+    local e = group.effects[i]
+    local f = A._frames and A._frames[e.id]
+    if f then
+      hideFrame(f)
+    end
+  end
+  if A._groupShown then
+    A._groupShown[group.id] = nil
+  end
+end
+
+local function renderEffect(group, effect, show, st, silent)
+  if EFFECT_STUB[effect.type] or effect.type == "sound" then
+    return
+  end
+  local view = viewForEffect(group, effect)
+  if (not st or st.spellId ~= view.spellId) and view.spellId > 0 then
+    st = getSpellCdState(view.spellId)
+    st.spellId = view.spellId
+  end
+  local f = A:EnsureRuleFrame(effect.id)
+  local glowKey = "g" .. tostring(group.id) .. "e" .. tostring(effect.id)
+  if not show then
+    hideFrame(f)
+    return
+  end
+  if view.display == "aura" then
+    applyAuraMode(f, view, true, false)
+  elseif view.display == "text" then
+    applyTextMode(f, view, true, false)
+  else
+    applyIconMode(f, view, true, st, glowKey, false)
+  end
+  applyOverlayFx(f, view, true)
+end
+
+function A:UpdateRuleFrame(rule, index)
+  if not rule or not rule.id then
+    return
+  end
+  local group = self:GetGroupById(rule.id)
+  if group then
+    self:UpdateGroup(group)
+    return
+  end
+  if self.SyncAuraContainerRule and self:SyncAuraContainerRule(rule) then
+    local f = self._frames and self._frames[rule.id]
+    if f then
+      hideFrame(f)
+    end
+    return
+  end
+  local f = self:EnsureRuleFrame(rule.id)
+  local glowKey = "r" .. tostring(rule.id)
+  local show, st = shouldShowRule(rule)
+  local silent = self._livePreview and self._livePreview.forceShow and self._livePreview.ruleId == rule.id
+  local display = rule.display or "icon"
+  if display == "aura" then
+    applyAuraMode(f, rule, show, not silent)
+  elseif display == "text" then
+    applyTextMode(f, rule, show, not silent)
+  else
+    applyIconMode(f, rule, show, st, glowKey, not silent)
+  end
+  applyOverlayFx(f, rule, show)
+end
+
+function A:UpdateGroup(group, partial)
+  -- API pública CRUD y ruta interna de render comparten nombre por compatibilidad.
+  if type(group) ~= "table" then
+    return updateGroupRecord(self, group, partial)
+  end
+  if not group then
+    return
+  end
+  local pv = self._livePreview
+  local forcing = pv and pv.forceShow and pv.groupId == group.id
+  local enabled = self:IsEnabled()
+  if not forcing and (not enabled or group.enabled == false) then
+    hideGroupEffects(group)
+    if self.ReleaseAuraContainer then
+      self:ReleaseAuraContainer(group.id)
+    end
+    return
+  end
+  -- Delegación al cliente: hay que resolverla antes de evaluar, porque el sentido
+  -- de esta ruta es justamente que el aura puede ser ilegible para el addon.
+  if not forcing then
+    local cRule = containerRuleForGroup(group)
+    if cRule and self.SyncAuraContainerRule and self:SyncAuraContainerRule(cRule) then
+      hideGroupEffects(group)
+      self._groupShown = self._groupShown or {}
+      self._groupShown[group.id] = nil
+      return
+    end
+  end
+  if self.ReleaseAuraContainer then
+    self:ReleaseAuraContainer(group.id)
+  end
+
+  local show, st = self:EvaluateGroupRules(group)
+  if forcing then
+    show = true
+    local previewSpellId = firstGroupSpellId(group)
+    if not st and previewSpellId > 0 then
+      st = getSpellCdState(previewSpellId)
+      st.spellId = previewSpellId
+    end
+    st = st or { hasCharges = false, count = 1, cdActive = false }
+    if st.count == nil then
+      st.count = 1
+    end
+  end
+  if not show then
+    hideGroupEffects(group)
+    if self.ReleaseAuraContainer then
+      self:ReleaseAuraContainer(group.id)
+    end
+    return
+  end
+  local filterId = forcing and pv.effectId or nil
+  local anyShown = false
+  for i = 1, #group.effects do
+    local e = group.effects[i]
+    local want = true
+    if filterId then
+      want = e.id == filterId
+    elseif e.enabled == false then
+      want = false
+    end
+    if not want or e.type == "sound" or EFFECT_STUB[e.type] then
+      local f = self._frames and self._frames[e.id]
+      if f then
+        hideFrame(f)
+      end
+    else
+      renderEffect(group, e, true, st, forcing)
+      if EFFECT_VISUAL[e.type] then
+        anyShown = true
+      end
+    end
+  end
+  self._groupShown = self._groupShown or {}
+  if anyShown and not forcing then
+    local snd = firstSoundEffect(group)
+    if snd and snd.enabled ~= false and not self._groupShown[group.id] then
+      playAlertSound(true, snd.soundPath)
+    end
+    self._groupShown[group.id] = true
+  elseif not anyShown then
+    self._groupShown[group.id] = nil
+  end
+end
+
 function A:UpdateAllRules()
   local db = self:DB()
   local enabled = self:IsEnabled()
-  local previewId = self._livePreview and self._livePreview.ruleId
-  local seen = {}
-  for i = 1, #db.rules do
-    local rule = db.rules[i]
-    seen[rule.id] = true
-    if enabled or rule.id == previewId then
-      self:UpdateRuleFrame(rule, i)
+  local pv = self._livePreview
+  local previewId = pv and pv.forceShow and (pv.groupId or pv.ruleId)
+  local seenEffects = {}
+  local seenGroups = {}
+  local groups = db.groups or {}
+  for i = 1, #groups do
+    local group = groups[i]
+    seenGroups[group.id] = true
+    for ei = 1, #group.effects do
+      seenEffects[group.effects[ei].id] = true
+    end
+    if enabled or group.id == previewId then
+      self:UpdateGroup(group)
     else
-      local f = self._frames and self._frames[rule.id]
-      hideFrame(f)
+      hideGroupEffects(group)
       if self.ReleaseAuraContainer then
-        self:ReleaseAuraContainer(rule.id)
+        self:ReleaseAuraContainer(group.id)
       end
     end
   end
   if self._frames then
     for id, f in pairs(self._frames) do
-      if not seen[id] then
+      if not seenEffects[id] then
         hideFrame(f)
       end
     end
   end
   if self.ReleaseStaleAuraContainers then
-    self:ReleaseStaleAuraContainers(seen)
+    self:ReleaseStaleAuraContainers(seenGroups)
   end
 end
 
@@ -2027,7 +3522,7 @@ function A:EnsureEvents()
     ev:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
   end)
   local function kickUpdate()
-    if not A:IsEnabled() and not (A._livePreview and A._livePreview.ruleId) then
+    if not A:IsEnabled() and not (A._livePreview and A._livePreview.forceShow) then
       return
     end
     A:UpdateAllRules()
@@ -2054,7 +3549,7 @@ function A:RestartTicker()
   local interval = self:GetTickInterval()
   self._tickerInterval = interval
   self._ticker = C_Timer.NewTicker(interval, function()
-    if not A:IsEnabled() and not (A._livePreview and A._livePreview.ruleId) then
+    if not A:IsEnabled() and not (A._livePreview and A._livePreview.forceShow) then
       return
     end
     A:UpdateAllRules()
@@ -2077,7 +3572,7 @@ function A:Refresh()
   self:EnsureSchema(self:DB())
   self:EnsureEvents()
   self:RestartTicker()
-  if not self:IsEnabled() and not (self._livePreview and self._livePreview.ruleId) then
+  if not self:IsEnabled() and not (self._livePreview and self._livePreview.forceShow) then
     self:HideAll()
     return
   end
@@ -2093,5 +3588,8 @@ function A:OnProfileChanged()
 end
 
 A.MAX_RULES = MAX_RULES
+A.MAX_GROUPS = MAX_GROUPS
 A.SIZE_MIN = SIZE_MIN
 A.SIZE_MAX = SIZE_MAX
+A.EFFECT_STUB = EFFECT_STUB
+A.EFFECT_VISUAL = EFFECT_VISUAL

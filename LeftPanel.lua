@@ -873,6 +873,10 @@ function LP:Refresh()
   d.leftPanelGeneralInputHeight = inputH
   local inputPadX = math.max(0, math.min(24, math.floor((tonumber(d.leftPanelGeneralInputHorizontalPad) or 4) + 0.5)))
   d.leftPanelGeneralInputHorizontalPad = inputPadX
+  local inputOffX = math.max(-600, math.min(600, math.floor((tonumber(d.leftPanelGeneralInputOffsetX) or 0) + 0.5)))
+  local inputOffY = math.max(-600, math.min(600, math.floor((tonumber(d.leftPanelGeneralInputOffsetY) or 0) + 0.5)))
+  d.leftPanelGeneralInputOffsetX = inputOffX
+  d.leftPanelGeneralInputOffsetY = inputOffY
   self:EnsureGeneralInputBox()
   if self._generalInput then
     self._generalInput:SetParent(self._group)
@@ -883,13 +887,19 @@ function LP:Refresh()
     if freeH >= 8 then
       local h = math.max(8, math.min(inputH, freeH))
       local inputY = freeTop + math.floor((freeH - h) / 2)
-      self._generalInput:SetPoint("TOPLEFT", self._group, "TOPLEFT", l3x + inputPadX, -inputY)
-      self._generalInput:SetPoint("TOPRIGHT", self._group, "TOPLEFT", l3x + l3w - inputPadX, -inputY)
+      self._generalInput:SetPoint("TOPLEFT", self._group, "TOPLEFT", l3x + inputPadX + inputOffX, -inputY + inputOffY)
+      self._generalInput:SetPoint(
+        "TOPRIGHT",
+        self._group,
+        "TOPLEFT",
+        l3x + l3w - inputPadX + inputOffX,
+        -inputY + inputOffY
+      )
       self._generalInput:SetHeight(h)
     else
       -- Fallback seguro si no hay banda inferior libre suficiente.
-      self._generalInput:SetPoint("BOTTOMLEFT", self._feedGeneral.holder, "BOTTOMLEFT", inputPadX, 4)
-      self._generalInput:SetPoint("BOTTOMRIGHT", self._feedGeneral.holder, "BOTTOMRIGHT", -inputPadX, 4)
+      self._generalInput:SetPoint("BOTTOMLEFT", self._feedGeneral.holder, "BOTTOMLEFT", inputPadX + inputOffX, 4 + inputOffY)
+      self._generalInput:SetPoint("BOTTOMRIGHT", self._feedGeneral.holder, "BOTTOMRIGHT", -inputPadX + inputOffX, 4 + inputOffY)
       self._generalInput:SetHeight(inputH)
     end
     self._generalInput:SetShown(showPanel)

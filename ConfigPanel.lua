@@ -1,5 +1,5 @@
 --[[ Panel de opciones: Esc → Opciones → AddOns → Chukie UI
-     Retail 12.0.7 (Interface 120007): categoría raíz + subcategorías verticales (p. ej. Panel derecho).
+     Retail 12.1 (Interface 120100): categoría raíz + subcategorías verticales (p. ej. Panel derecho).
      Controles: RegisterProxySetting + CreateCheckbox / CreateSlider. ]]
 
 local _, ns = ...
@@ -113,6 +113,41 @@ local function addIntSliderActionBars(category, uniqueId, key, label, tooltip, m
   )
   local options = Settings.CreateSliderOptions(minV, maxV, step)
   Settings.CreateSlider(category, setting, options, tooltip)
+end
+
+--- Botones de una barra izquierda concreta; 0 = usar el valor general.
+local function addLeftBarNumButtonsSlider(category, barId)
+  local function per()
+    local d = actionBarsDB()
+    d.leftNumButtonsPerBar = d.leftNumButtonsPerBar or {}
+    return d.leftNumButtonsPerBar
+  end
+  local function get()
+    local v = tonumber(per()[barId]) or 0
+    return math.max(0, math.min(12, v))
+  end
+  local function set(v)
+    per()[barId] = math.floor(v + 0.5)
+    refreshActionBars()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_AB_leftNumBar" .. barId,
+    Settings.VarType.Number,
+    "Botones barra " .. barId,
+    0,
+    get,
+    set
+  )
+  local options = Settings.CreateSliderOptions(0, 12, 1)
+  Settings.CreateSlider(
+    category,
+    setting,
+    options,
+    "Cuántos botones en la barra " .. barId .. ". En 0 usa «Botones por barra». "
+      .. "Los botones se agregan a la derecha, sin mover los que ya están. "
+      .. "Hasta el botón 6 se puede asignar tecla en Esc → Teclado → Chukie UI - Barras 1–4."
+  )
 end
 
 local function addBoolProxy(category, uniqueId, key, label, tooltip, defaultOn)
@@ -346,6 +381,78 @@ local function addBoolPos(category, uniqueId, key, label, tooltip, defaultOn)
     set
   )
   Settings.CreateCheckbox(category, setting, tooltip)
+end
+
+local function compassDB()
+  if ns.Profile and ns.Profile.GetHorizontalCompassModel then
+    return ns.Profile:GetHorizontalCompassModel()
+  end
+  local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
+  if not p then
+    return {}
+  end
+  p.horizontalCompass = p.horizontalCompass or {}
+  return p.horizontalCompass
+end
+
+local function refreshCompass()
+  if ns.RightPanel and ns.RightPanel.RequestApply then
+    ns.RightPanel:RequestApply(0)
+  elseif ns.RightPanel and ns.RightPanel.Apply then
+    ns.RightPanel:Apply()
+  elseif ns.HorizontalCompass and ns.HorizontalCompass.Refresh then
+    ns.HorizontalCompass:Refresh()
+  end
+end
+
+local function addBoolCompass(category, uniqueId, key, label, tooltip, defaultOn)
+  local function get()
+    local v = compassDB()[key]
+    if v == nil then
+      return defaultOn ~= false
+    end
+    return v == true or v == 1
+  end
+  local function set(v)
+    compassDB()[key] = (v == true or v == 1)
+    refreshCompass()
+  end
+  local defaultToken = (defaultOn ~= false) and Settings.Default.True or Settings.Default.False
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Boolean,
+    label,
+    defaultToken,
+    get,
+    set
+  )
+  Settings.CreateCheckbox(category, setting, tooltip)
+end
+
+local function addIntSliderCompass(category, uniqueId, key, label, tooltip, minV, maxV, step, defaultNum)
+  local function get()
+    local v = tonumber(compassDB()[key])
+    if not v then
+      return defaultNum
+    end
+    return math.max(minV, math.min(maxV, v))
+  end
+  local function set(v)
+    compassDB()[key] = math.floor(v + 0.5)
+    refreshCompass()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Number,
+    label,
+    defaultNum,
+    get,
+    set
+  )
+  local options = Settings.CreateSliderOptions(minV, maxV, step)
+  Settings.CreateSlider(category, setting, options, tooltip)
 end
 
 local function addBoolPosSub(category, uniqueId, tableKey, subKey, label, tooltip, defaultOn)
@@ -987,9 +1094,107 @@ function ns.RegisterConfigPanel()
     "ChukieUi_MMPos_rotateMinimap",
     "rotateMinimap",
     "Rotar el mapa con la dirección del personaje",
-    "Equivale al CVar rotateMinimap de Blizzard: el mapa gira y la flecha del jugador queda fija hacia arriba. Si «Solo mapa» está activo, Chukie mostrará la brújula (MinimapCompassTexture) en lugar de ocultarla. Si cambias esto en Opciones de Blizzard, el siguiente refresco de Chukie puede volver a alinear el CVar con esta casilla.",
+    "Equivale al CVar rotateMinimap de Blizzard: el mapa gira y la flecha del jugador queda fija hacia arriba. Si «Solo mapa» está activo, Chukie mostrará la brújula (MinimapCompassTexture) en lugar de ocultarla. Si cambias esto en Opciones de Blizzard, el siguiente refresco de Chukie puede volver a alinear el CVar con esta casilla. "
+      .. "En mazmorras/bandas GetPlayerFacing no responde: con esta opción activa la brújula horizontal puede seguir funcionando.",
     false
   )
+
+  minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Brújula horizontal"))
+  addBoolCompass(
+    minimapCategory,
+    "ChukieUi_HC_enabled",
+    "enabled",
+    "Activar brújula horizontal",
+    "Línea de rumbo encima del minimapa: el centro es hacia dónde mirás; N/E/S/O se desplazan. "
+      .. "Si no hay rumbo (p. ej. instancia sin rotar mapa), congela el último valor o se oculta según la opción de abajo.",
+    true
+  )
+  addIntSliderCompass(
+    minimapCategory,
+    "ChukieUi_HC_height",
+    "height",
+    "Altura (px)",
+    "Altura de la franja de la brújula (también se reserva encima del minimapa).",
+    14,
+    48,
+    1,
+    22
+  )
+  addIntSliderCompass(
+    minimapCategory,
+    "ChukieUi_HC_fov",
+    "fovDegrees",
+    "Campo visual (°)",
+    "Cuántos grados caben a lo ancho de la cinta (más bajo = más zoom en el rumbo).",
+    60,
+    180,
+    5,
+    120
+  )
+  addIntSliderCompass(
+    minimapCategory,
+    "ChukieUi_HC_fontSize",
+    "fontSize",
+    "Tamaño de fuente",
+    "Tamaño de las letras N/NE/E/…",
+    8,
+    24,
+    1,
+    12
+  )
+  addIntSliderCompass(
+    minimapCategory,
+    "ChukieUi_HC_offsetY",
+    "offsetY",
+    "Offset Y",
+    "Posición vertical medida desde el CENTRO del minimapa (px): valores altos la suben encima del mapa, "
+      .. "valores negativos la bajan hasta quedar debajo del minimapa. 0 = justo sobre el centro del mapa.",
+    -160,
+    160,
+    1,
+    0
+  )
+  addBoolCompass(
+    minimapCategory,
+    "ChukieUi_HC_ticks",
+    "showDegreeTicks",
+    "Marcas de grados",
+    "Rayitas cada 15° entre los cardinales.",
+    true
+  )
+  addBoolCompass(
+    minimapCategory,
+    "ChukieUi_HC_target",
+    "showTarget",
+    "Marcador del target",
+    "Marca roja hacia el objetivo actual si hay posición de mapa válida. Sin dato o en secreto: no se muestra (sin error).",
+    true
+  )
+  addBoolCompass(
+    minimapCategory,
+    "ChukieUi_HC_waypoint",
+    "showWaypoint",
+    "Marcador de waypoint / misión",
+    "Marca azul hacia el punto rastreado (SuperTrack) o waypoint de misión, si la API lo permite.",
+    true
+  )
+  addBoolCompass(
+    minimapCategory,
+    "ChukieUi_HC_group",
+    "showGroup",
+    "Marcadores de grupo",
+    "Marcas verdes hacia miembros de party/raid con posición de mapa. Desactivado por defecto.",
+    false
+  )
+  addBoolCompass(
+    minimapCategory,
+    "ChukieUi_HC_hideNoFacing",
+    "hideWhenNoFacing",
+    "Ocultar si no hay rumbo",
+    "Si GetPlayerFacing no responde y no se puede leer el anillo del minimapa, oculta la cinta en lugar de congelar el último rumbo.",
+    false
+  )
+
   minimapLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Flecha del jugador"))
   addPlayerArrowSettings(minimapCategory)
 
@@ -1318,6 +1523,24 @@ function ns.RegisterConfigPanel()
   )
   addBoolActionBars(
     barsCategory,
+    "ChukieUi_AB_vehicle",
+    "vehiclePaging",
+    "Barra de vehículo en la barra 1",
+    "En vehículos, misiones con barra propia (override) y posesión, la barra 1 muestra esas acciones "
+      .. "y vuelve sola al salir. Tiene prioridad sobre el paging de skyriding.",
+    true
+  )
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_vehicleExit",
+    "vehicleExitButton",
+    "Botón de bajarse sobre la barra 1",
+    "Muestra el botón de salida (vehículo, taxi y posesión) justo encima de la barra 1, un tercio "
+      .. "más grande que sus botones, y oculta el de Blizzard. Requiere /reload para volver al de Blizzard.",
+    true
+  )
+  addBoolActionBars(
+    barsCategory,
     "ChukieUi_AB_useMasque",
     "useMasque",
     "Masque en barras de acción",
@@ -1378,12 +1601,15 @@ function ns.RegisterConfigPanel()
     "ChukieUi_AB_leftNum",
     "leftNumButtons",
     "Botones por barra",
-    "Cuántos botones mostrar en cada fila (1–12).",
+    "Cuántos botones mostrar en cada fila (1–12). Cada barra puede sobrescribirlo abajo.",
     1,
     12,
     1,
     6
   )
+  for barId = 1, 4 do
+    addLeftBarNumButtonsSlider(barsCategory, barId)
+  end
   addIntSliderActionBars(
     barsCategory,
     "ChukieUi_AB_leftSize",
@@ -1439,6 +1665,82 @@ function ns.RegisterConfigPanel()
     1,
     8
   )
+
+  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Guardar acciones (barras 1–4)"))
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_saveLeftLayout",
+    "saveLeftLayout",
+    "Guardar acciones de las barras 1–4",
+    "Recuerda qué hay en cada ranura de las barras 1–4 (y sus páginas de skyriding) por personaje "
+      .. "y especialización. Se guarda solo cuando arrastrás algo, no durante un cambio de talentos.",
+    true
+  )
+  addBoolActionBars(
+    barsCategory,
+    "ChukieUi_AB_restoreLeftLayout",
+    "restoreLeftLayoutOnTalents",
+    "Restaurar al cambiar talentos",
+    "Blizzard guarda un juego de barras por loadout de talentos: al cambiar de build las ranuras se pisan. "
+      .. "Con esto activo, unos segundos después vuelve a colocar lo guardado. Nunca vacía ranuras: solo repone "
+      .. "lo que estaba guardado, y siempre fuera de combate.",
+    true
+  )
+  do
+    local function layouts()
+      return ns.ActionBarLayouts
+    end
+    barsLayout:AddInitializer(
+      CreateSettingsButtonInitializer(
+        "",
+        "Guardar acciones ahora",
+        function()
+          local m = layouts()
+          if not m then
+            return
+          end
+          m:SaveNow()
+          print("|cff00ff00Chukie UI|r: " .. m:GetStatusText())
+        end,
+        "Toma una foto de las barras 1–4 tal como están y la guarda para este personaje y especialización.",
+        true,
+        nil,
+        nil
+      )
+    )
+    barsLayout:AddInitializer(
+      CreateSettingsButtonInitializer(
+        "",
+        "Restaurar acciones",
+        function()
+          local m = layouts()
+          if m then
+            m:RestoreNow()
+          end
+        end,
+        "Vuelve a colocar las acciones guardadas en las barras 1–4. Fuera de combate y con el cursor vacío.",
+        true,
+        nil,
+        nil
+      )
+    )
+    barsLayout:AddInitializer(
+      CreateSettingsButtonInitializer(
+        "",
+        "Borrar guardado",
+        function()
+          local m = layouts()
+          if m then
+            m:ClearSaved()
+          end
+        end,
+        "Olvida las acciones guardadas de esta especialización. No toca las barras actuales.",
+        true,
+        nil,
+        nil
+      )
+    )
+  end
 
   barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Panel derecho (barra 6)"))
   addBoolActionBars(
@@ -1828,6 +2130,28 @@ function ns.RegisterConfigPanel()
     1,
     4
   )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputOffsetX",
+    "leftPanelGeneralInputOffsetX",
+    "Mover entrada chat X (px)",
+    "Desplaza la caja de entrada en horizontal sin cambiar su ancho. Positivo = hacia la derecha.",
+    -600,
+    600,
+    1,
+    0
+  )
+  addIntSliderPos(
+    leftCategory,
+    "ChukieUi_MMPos_leftPanelGeneralInputOffsetY",
+    "leftPanelGeneralInputOffsetY",
+    "Mover entrada chat Y (px)",
+    "Desplaza la caja de entrada en vertical respecto de la banda L3/L4. Positivo = hacia arriba.",
+    -600,
+    600,
+    1,
+    0
+  )
   leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Suscripciones L3 (chat humano)"))
   addBoolPosSub(
     leftCategory,
@@ -1955,6 +2279,490 @@ function ns.RegisterConfigPanel()
     "CHAT_MSG_COMMUNITIES_CHANNEL.",
     true
   )
+
+  local framesCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Marcos")
+  local framesLayout = SettingsPanel:GetLayout(framesCategory)
+
+  framesLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Party: grilla clickeable"))
+  do
+    local function partyDB()
+      if ns.PartyGrid and ns.PartyGrid.DB then
+        return ns.PartyGrid:DB()
+      end
+      local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
+      if not p then
+        return {}
+      end
+      if type(p.partyGrid) ~= "table" then
+        --- Ni siquiera crear el esquema está permitido en combate.
+        if InCombatLockdown and InCombatLockdown() then
+          return {}
+        end
+        p.partyGrid = {}
+      end
+      return p.partyGrid
+    end
+    --[[ Cada control queda anotado con su lector: cuando PartyGrid rechaza un cambio en
+         combate, reescribe el valor real en el control y así el panel no queda mostrando
+         algo que nunca se guardó. ]]
+    local function registerPartySetting(setting, get)
+      if ns.PartyGrid and ns.PartyGrid.RegisterSetting then
+        ns.PartyGrid:RegisterSetting(setting, get)
+      end
+      return setting
+    end
+
+    --- Ese rebote no es una edición del usuario: el setter tiene que dejarlo pasar.
+    local function settingsLocked()
+      return (ns.PartyGrid and ns.PartyGrid.SettingsLocked and ns.PartyGrid:SettingsLocked()) == true
+    end
+
+    --- Layout recoloca y redimensiona; Refresh además crea, vigila u oculta las celdas.
+    local function relayout()
+      if ns.PartyGrid and ns.PartyGrid.Layout then
+        ns.PartyGrid:Layout()
+      end
+    end
+
+    --- Rangos y listas los publica PartyGrid: los valores de reserva son solo por si el
+    --- módulo no cargó (ahí las opciones no hacen nada, pero tampoco rompen el panel).
+    local limits = (ns.PartyGrid and ns.PartyGrid.LIMITS) or {}
+    local function range(name, lo, hi)
+      local r = limits[name]
+      if type(r) == "table" and tonumber(r[1]) and tonumber(r[2]) then
+        return r[1], r[2]
+      end
+      return lo, hi
+    end
+
+    local function addBool(uniqueId, key, label, tooltip, defaultOn, apply)
+      local function get()
+        local v = partyDB()[key]
+        if v == nil then
+          return defaultOn ~= false
+        end
+        return v == true or v == 1
+      end
+      local function set(v)
+        if settingsLocked() then
+          return
+        end
+        if ns.PartyGrid and ns.PartyGrid.SetOption then
+          ns.PartyGrid:SetOption(key, (v == true or v == 1), apply == relayout and "layout" or "refresh")
+        end
+      end
+      local defaultToken = (defaultOn ~= false) and Settings.Default.True or Settings.Default.False
+      local setting = Settings.RegisterProxySetting(
+        framesCategory,
+        uniqueId,
+        Settings.VarType.Boolean,
+        label,
+        defaultToken,
+        get,
+        set
+      )
+      registerPartySetting(setting, get)
+      Settings.CreateCheckbox(framesCategory, setting, tooltip)
+    end
+
+    local function addInt(uniqueId, key, label, tooltip, minV, maxV, step, defaultNum)
+      local function get()
+        local v = tonumber(partyDB()[key])
+        if not v then
+          return defaultNum
+        end
+        return math.max(minV, math.min(maxV, v))
+      end
+      local function set(v)
+        if settingsLocked() then
+          return
+        end
+        if ns.PartyGrid and ns.PartyGrid.SetOption then
+          ns.PartyGrid:SetOption(key, math.floor(v + 0.5), "layout")
+        end
+      end
+      local setting = Settings.RegisterProxySetting(
+        framesCategory,
+        uniqueId,
+        Settings.VarType.Number,
+        label,
+        defaultNum,
+        get,
+        set
+      )
+      registerPartySetting(setting, get)
+      Settings.CreateSlider(framesCategory, setting, Settings.CreateSliderOptions(minV, maxV, step), tooltip)
+    end
+
+    --- Listas por índice numérico, como el resto de los desplegables del panel.
+    local function addListDropdown(uniqueId, key, label, tooltip, values, labels, currentGetter)
+      local function dropdownData()
+        local c = Settings.CreateControlTextContainer()
+        for i = 1, #values do
+          c:Add(i, labels[values[i]] or values[i])
+        end
+        return c:GetData()
+      end
+      local function get()
+        local current = currentGetter()
+        for i = 1, #values do
+          if values[i] == current then
+            return i
+          end
+        end
+        return 1
+      end
+      local function set(v)
+        if settingsLocked() then
+          return
+        end
+        if ns.PartyGrid and ns.PartyGrid.SetOption then
+          ns.PartyGrid:SetOption(key, values[tonumber(v) or 1] or values[1], "layout")
+        end
+      end
+      local setting = Settings.RegisterProxySetting(
+        framesCategory,
+        uniqueId,
+        Settings.VarType.Number,
+        label,
+        1,
+        get,
+        set
+      )
+      registerPartySetting(setting, get)
+      Settings.CreateDropdown(framesCategory, setting, dropdownData, tooltip)
+    end
+
+    do
+      local function get()
+        return partyDB().enabled == true
+      end
+      local function set(v)
+        if settingsLocked() then
+          return
+        end
+        --- Apagarla también es configurar: en combate se rechaza igual que encenderla.
+        local on = (v == true or v == 1)
+        if ns.PartyGrid and ns.PartyGrid.SetEnabled then
+          ns.PartyGrid:SetEnabled(on)
+        end
+      end
+      local setting = Settings.RegisterProxySetting(
+        framesCategory,
+        "ChukieUi_PartyGrid_enabled",
+        Settings.VarType.Boolean,
+        "Activar grilla de party clickeable",
+        Settings.Default.False,
+        get,
+        set
+      )
+      registerPartySetting(setting, get)
+      Settings.CreateCheckbox(
+        framesCategory,
+        setting,
+        "Cada columna lanza su propio hechizo sobre player/party1..4. Clic izquierdo ejecuta; clic derecho no tiene acción. Toda configuración se rechaza durante el combate."
+      )
+    end
+
+    do
+      local lo, hi = range("size", 16, 100)
+      addInt(
+        "ChukieUi_PartyGrid_size",
+        "size",
+        "Tamaño de celda (px)",
+        "Lado de la celda: es cuadrada, pensada para llevar el icono de un debuff por unidad.",
+        lo,
+        hi,
+        1,
+        34
+      )
+    end
+
+    do
+      local lo, hi = range("spacing", 0, 20)
+      addInt(
+        "ChukieUi_PartyGrid_spacing",
+        "spacing",
+        "Separación entre jugadores (px)",
+        "Solo se aplica a las filas que van en columna propia; las que se anclan a una fila de Blizzard siguen su altura.",
+        lo,
+        hi,
+        1,
+        2
+      )
+    end
+
+    do
+      local lo, hi = range("columns", 1, 8)
+      addInt(
+        "ChukieUi_PartyGrid_columns",
+        "columns",
+        "Columnas por jugador",
+        "Cada columna lleva una habilidad distinta y todas sus celdas la lanzan sobre la unidad de su fila. Este cambio se rechaza durante el combate.",
+        lo,
+        hi,
+        1,
+        1
+      )
+    end
+
+    do
+      local lo, hi = range("columnSpacing", 0, 20)
+      addInt(
+        "ChukieUi_PartyGrid_columnSpacing",
+        "columnSpacing",
+        "Separación entre columnas (px)",
+        "Hueco entre las celdas de un mismo jugador.",
+        lo,
+        hi,
+        1,
+        2
+      )
+    end
+
+    do
+      local lo, hi = range("alphaPercent", 10, 100)
+      addInt(
+        "ChukieUi_PartyGrid_alphaPercent",
+        "alphaPercent",
+        "Opacidad de la grilla (%)",
+        "Transparencia de la grilla completa: se aplica al conjunto, así que afecta iconos, vida, cooldown, rol y bordes por igual. Mientras la estés moviendo se muestra opaca.",
+        lo,
+        hi,
+        5,
+        100
+      )
+    end
+
+    addListDropdown(
+      "ChukieUi_PartyGrid_growth",
+      "growth",
+      "Las columnas crecen",
+      "Desde la celda anclada a cada jugador, hacia dónde se agregan las columnas siguientes. Con la grilla a la derecha de la de Blizzard, lo natural es hacia la derecha.",
+      (ns.PartyGrid and ns.PartyGrid.GROWTHS) or { "RIGHT", "LEFT", "DOWN", "UP" },
+      (ns.PartyGrid and ns.PartyGrid.GROWTH_LABELS) or {},
+      function()
+        if ns.PartyGrid and ns.PartyGrid.Growth then
+          return ns.PartyGrid:Growth()
+        end
+        return partyDB().growth or "RIGHT"
+      end
+    )
+
+    addListDropdown(
+      "ChukieUi_PartyGrid_orientation",
+      "orientation",
+      "Orientación (jugadores)",
+      "Cómo se apilan los jugadores cuando la grilla no está anclada fila a fila a la de Blizzard: en columna (vertical) o en fila (horizontal).",
+      (ns.PartyGrid and ns.PartyGrid.ORIENTATIONS) or { "vertical", "horizontal" },
+      (ns.PartyGrid and ns.PartyGrid.ORIENTATION_LABELS) or {},
+      function()
+        if ns.PartyGrid and ns.PartyGrid.Orientation then
+          return ns.PartyGrid:Orientation()
+        end
+        return partyDB().orientation or "vertical"
+      end
+    )
+
+    addBool(
+      "ChukieUi_PartyGrid_includePlayer",
+      "includePlayer",
+      "Incluir al jugador",
+      "Suma una celda para «player». Sin esto la grilla solo lleva party1..4.",
+      true
+    )
+
+    addBool(
+      "ChukieUi_PartyGrid_showHealth",
+      "showHealth",
+      "Barra de vida",
+      "Barra de fondo con color de clase. La vida se pasa tal cual al widget: en 12.1 puede venir como valor secreto, así que el addon nunca la lee.",
+      true
+    )
+
+    addBool(
+      "ChukieUi_PartyGrid_showRole",
+      "showRole",
+      "Icono de rol",
+      "Icono de tanque, sanador o daño en la esquina inferior izquierda, para dejar el centro de la celda libre.",
+      true
+    )
+
+    addBool(
+      "ChukieUi_PartyGrid_useMasque",
+      "useMasque",
+      "Usar Masque",
+      "Registra las celdas en el grupo independiente «Chukie UI → PartyGrid». Podés asignarle una skin distinta a ActionBars y RightStrip.",
+      true
+    )
+
+    framesLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Party: habilidades por columna"))
+    framesLayout:AddInitializer(
+      CreateSettingsListSectionHeaderInitializer(
+        "Arrastrá hechizos del libro sobre las celdas. La ventana propia muestra nombre e ID; los botones siguientes limpian una columna fuera de combate."
+      )
+    )
+    for column = 1, 8 do
+      local columnIndex = column
+      if Settings.CreateTextBox then
+        local function getAssigned()
+          local spellId = ns.PartyGrid and ns.PartyGrid.ColumnSpell and ns.PartyGrid:ColumnSpell(columnIndex)
+          if not spellId then
+            return "(vacía)"
+          end
+          local info
+          if C_Spell and C_Spell.GetSpellInfo then
+            local ok, value = pcall(C_Spell.GetSpellInfo, spellId)
+            info = ok and value or nil
+          end
+          return ((type(info) == "table" and info.name) or "Hechizo") .. " (" .. spellId .. ")"
+        end
+        --- Caja de solo lectura: escribir a mano no asigna nada, se avisa y se repone el
+        --- texto real. El rebote de sincronización no vuelve a entrar acá.
+        local function rejectEdit(value)
+          if settingsLocked() or value == getAssigned() then
+            return
+          end
+          print("|cffff9900Chukie UI|r: asigná hechizos arrastrándolos sobre una celda de PartyGrid.")
+          if ns.PartyGrid and ns.PartyGrid.RefreshSettings then
+            ns.PartyGrid:RefreshSettings()
+          end
+        end
+        local assignedSetting = Settings.RegisterProxySetting(
+          framesCategory,
+          "ChukieUi_PartyGrid_columnSpell" .. columnIndex,
+          Settings.VarType.String,
+          "Habilidad columna " .. columnIndex .. " (solo lectura)",
+          "",
+          getAssigned,
+          rejectEdit
+        )
+        registerPartySetting(assignedSetting, getAssigned)
+        Settings.CreateTextBox(
+          framesCategory,
+          assignedSetting,
+          "Muestra el hechizo guardado por perfil. Para cambiarlo, arrastrá un hechizo sobre cualquier celda de la columna."
+        )
+      end
+      framesLayout:AddInitializer(
+        CreateSettingsButtonInitializer(
+          "Columna " .. columnIndex,
+          "Limpiar",
+          function()
+            if ns.PartyGrid and ns.PartyGrid.SetColumnSpell then
+              local spellId = ns.PartyGrid:ColumnSpell(columnIndex)
+              if spellId then
+                ns.PartyGrid:SetColumnSpell(columnIndex, nil)
+              else
+                print("|cff00ff00Chukie UI|r: la columna " .. columnIndex .. " ya está vacía.")
+              end
+            end
+          end,
+          "Borra la habilidad asignada a esta columna. En combate se rechaza sin modificar el perfil.",
+          true,
+          nil,
+          nil
+        )
+      )
+    end
+
+    framesLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Party: posición"))
+
+    addBool(
+      "ChukieUi_PartyGrid_attachToBlizzard",
+      "attachToBlizzard",
+      "Pegada a la grilla de Blizzard",
+      "La grilla cuelga del marco de party de Blizzard: aparece y desaparece con él, y cada celda se ancla enfrente de la fila de su unidad. Sin esto queda en posición propia, arrastrable.",
+      true,
+      relayout
+    )
+
+    addListDropdown(
+      "ChukieUi_PartyGrid_side",
+      "side",
+      "Lado (pegada a Blizzard)",
+      "De qué lado de la grilla de Blizzard se coloca. A izquierda o derecha se ancla celda a celda; arriba y abajo van en fila.",
+      (ns.PartyGrid and ns.PartyGrid.SIDES) or { "RIGHT", "LEFT", "TOP", "BOTTOM" },
+      (ns.PartyGrid and ns.PartyGrid.SIDE_LABELS) or {},
+      function()
+        if ns.PartyGrid and ns.PartyGrid.Side then
+          return ns.PartyGrid:Side()
+        end
+        return partyDB().side or "RIGHT"
+      end
+    )
+
+    do
+      local lo, hi = range("gap", -60, 300)
+      addInt(
+        "ChukieUi_PartyGrid_gap",
+        "gap",
+        "Distancia a la grilla de Blizzard (px)",
+        "Separación respecto de su marco. Solo cuenta con «Pegada a la grilla de Blizzard» activo.",
+        lo,
+        hi,
+        1,
+        8
+      )
+    end
+
+    do
+      local lo, hi = range("offset", -400, 400)
+      addInt(
+        "ChukieUi_PartyGrid_offsetX",
+        "offsetX",
+        "Ajuste X (px)",
+        "Corrección horizontal sobre la posición calculada.",
+        lo,
+        hi,
+        1,
+        0
+      )
+      addInt(
+        "ChukieUi_PartyGrid_offsetY",
+        "offsetY",
+        "Ajuste Y (px)",
+        "Corrección vertical sobre la posición calculada.",
+        lo,
+        hi,
+        1,
+        0
+      )
+    end
+
+    addBool(
+      "ChukieUi_PartyGrid_showSolo",
+      "showSolo",
+      "Mostrar en solitario",
+      "Sin grupo la grilla se oculta salvo que pidas lo contrario. Pegada a la de Blizzard no cambia nada: manda su marco.",
+      false,
+      relayout
+    )
+
+    framesLayout:AddInitializer(
+      CreateSettingsButtonInitializer(
+        "",
+        "Abrir ventana de la grilla…",
+        function()
+          if ns.PartyGrid and ns.PartyGrid.ShowConfig then
+            ns.PartyGrid:ShowConfig()
+          else
+            print("|cffff9900Chukie UI|r: módulo Grilla de party no disponible.")
+          end
+        end,
+        "Abre la ventana propia (también /chukie-party). Ahí está el botón «Mover», que necesita la pantalla despejada para arrastrar la grilla.",
+        true,
+        nil,
+        nil
+      )
+    )
+
+    framesLayout:AddInitializer(
+      CreateSettingsListSectionHeaderInitializer(
+        "En combate toda configuración de PartyGrid se rechaza: no se guarda ni se aplaza. Al salir se resincronizan los controles y atributos seguros."
+      )
+    )
+  end
 
   local alertsCategory = Settings.RegisterVerticalLayoutSubcategory(rootCategory, "Alertas (CD / procs / auras)")
   local alertsLayout = SettingsPanel:GetLayout(alertsCategory)
@@ -2088,7 +2896,12 @@ function ns.RegisterConfigPanel()
   do
     local c = (ns.Alerts and ns.Alerts.GetMediaCounts and ns.Alerts:GetMediaCounts()) or {}
     local glowOk = (ns.Alerts and ns.Alerts.GetLibCustomGlow and ns.Alerts:GetLibCustomGlow()) and "sí" or "no"
-    local nRules = #(alertsDB().rules or {})
+    local nRules = 0
+    if ns.Alerts and ns.Alerts.GetGroups then
+      nRules = #(ns.Alerts:GetGroups() or {})
+    else
+      nRules = #(alertsDB().groups or alertsDB().rules or {})
+    end
     alertsLayout:AddInitializer(
       CreateSettingsListSectionHeaderInitializer(
         string.format(
@@ -2115,7 +2928,7 @@ function ns.RegisterConfigPanel()
     alertsLayout:AddInitializer(
       CreateSettingsListSectionHeaderInitializer(
         string.format(
-          "User %d · LibSharedMedia entries %d · glow %s · reglas %d",
+          "User %d · LibSharedMedia entries %d · glow %s · grupos %d",
           tonumber(c.user) or 0,
           tonumber(c.lsm) or 0,
           glowOk,
@@ -2128,6 +2941,7 @@ function ns.RegisterConfigPanel()
   ns.settingsCategoryID = rootCategory:GetID()
   ns.minimapCategoryID = minimapCategory:GetID()
   ns.minimapButtonsCategoryID = minimapCategory:GetID()
+  ns.framesCategoryID = framesCategory:GetID()
   ns.alertsCategoryID = alertsCategory:GetID()
   ns.configPanelRegistered = true
 end
@@ -2143,6 +2957,14 @@ function ns.OpenConfigPanel()
     ns.AppendMinimenuVisibilityRows()
   end
   Settings.OpenToCategory(ns.settingsCategoryID)
+  return true
+end
+
+function ns.OpenFramesConfigPanel()
+  if not ns.framesCategoryID then
+    return false
+  end
+  Settings.OpenToCategory(ns.framesCategoryID)
   return true
 end
 

@@ -32,6 +32,8 @@ local LEFT_DEBUG_GROUP_GAP = 10
 local LEFT_DEBUG_GROUP_W_FROM_CENTER = 378 / 210
 local LEFT_DEBUG_GROUP_H_FROM_CENTER = 264 / 285
 local RIGHT_PANEL_CORE_ID = "rightPanel"
+--- El panel nace en 1x1; por debajo de esto su geometría todavía no se aplicó.
+local MIN_USABLE_HOST_SIZE = 8
 local LEFT_FEED_FONT_FACES = {
   [0] = STANDARD_TEXT_FONT,
   [1] = "Fonts\\FRIZQT__.TTF",
@@ -545,10 +547,37 @@ function MP:GetRightPanelSize()
   return math.floor(math.min(900, math.max(160, w + 0.5))), math.floor(math.min(1100, math.max(180, h + 0.5)))
 end
 
+--[[ El host queda en 1x1 cuando su geometría no se pudo aplicar (ver EnsureRightPanel).
+     Anclar el cluster, los slots o los widgets a un host así los manda a un punto fuera
+     de pantalla: todo el panel derecho "desaparece" sin ningún error de Lua. ]]
+local function isHostUsable(host)
+  if not host or not host.GetSize then
+    return false
+  end
+  local w, h = host:GetSize()
+  return (w or 0) >= MIN_USABLE_HOST_SIZE and (h or 0) >= MIN_USABLE_HOST_SIZE
+end
+
+--- Reintenta el layout al salir de combate, que es cuando el host deja de estar vetado.
+function MP:RequestApplyAfterCombat()
+  local pc = ns.PanelCore
+  if not pc then
+    return
+  end
+  pc._pendingLayoutRefresh = true
+  if pc.EnsureCombatRetryWatcher then
+    pc:EnsureCombatRetryWatcher()
+  end
+end
+
 function MP:SyncRightPanelTreeLayout()
   local host = self._rightPanelFrame
   local pc = ns.PanelCore
   if not host or not pc or not pc.LayoutSlotByInsets or not pc.LayoutSlotByAttach then
+    return
+  end
+  if not isHostUsable(host) then
+    self:RequestApplyAfterCombat()
     return
   end
   local center = pc:LayoutSlotByInsets(
@@ -627,14 +656,18 @@ function MP:EnforceMinimapInCenterTopArea()
     return
   end
   local maxW = cw - (MINIMAP_SIDE_PAD * 2)
-  local maxH = ch - MINIMAP_TOP_PAD - getBarsReservedHeight()
+  local compassH = 0
+  if ns.HorizontalCompass and ns.HorizontalCompass.GetReservedHeight then
+    compassH = tonumber(ns.HorizontalCompass:GetReservedHeight()) or 0
+  end
+  local maxH = ch - MINIMAP_TOP_PAD - compassH - getBarsReservedHeight()
   local s = math.floor(math.min(maxW, maxH) + 0.5)
   if not s or s < 120 then
     return
   end
   Minimap:ClearAllPoints()
   Minimap:SetSize(s, s)
-  Minimap:SetPoint("TOP", center, "TOP", 0, -MINIMAP_TOP_PAD)
+  Minimap:SetPoint("TOP", center, "TOP", 0, -(MINIMAP_TOP_PAD + compassH))
   --- Ocultar anillo cardinal y borde circular del minimapa, sin depender de opciones.
   forceHideMinimapCompassAndRing()
   if ns.MinimapBar then
@@ -645,12 +678,19 @@ function MP:EnforceMinimapInCenterTopArea()
       ns.MinimapBar:PositionMicromenuCentered()
     end
   end
+  if ns.HorizontalCompass and ns.HorizontalCompass.Layout then
+    ns.HorizontalCompass:Layout()
+  end
 end
 
 --- MinimapCluster debe coincidir con el host; Blizzard a vece cambia el tamaño del cluster aparte del padre.
 function MP:EnforceMinimapClusterFillRightPanel()
   local host = self._rightPanelFrame
   if not host or not MinimapCluster or MinimapCluster:GetParent() ~= host then
+    return
+  end
+  if not isHostUsable(host) then
+    self:RequestApplyAfterCombat()
     return
   end
   self._clusterLayoutMutating = true
@@ -953,6 +993,17 @@ function MP:EnsureRightPanel()
     local h = ns.PanelCore:EnsurePanel(RIGHT_PANEL_CORE_ID)
     if h then
       self._rightPanelFrame = h
+      --[[ Geometría al nacer: el panel recién creado todavía no aloja al MinimapCluster,
+           así que no está protegido y esto se aplica incluso en combate. Con el cluster
+           dentro, redimensionarlo queda vetado hasta salir de pelea; sin esto, un
+           /reload en combate dejaba el panel en 1x1 y todo el contenido fuera de
+           pantalla mientras la pelea durara. ]]
+      if ns.PanelCore.SetPanelBottomRight and ns.Profile then
+        local w, ph = self:GetRightPanelSize()
+        local db = self:DB()
+        local ox, oy = self:ClampOffsets(db.offsetX or 0, db.offsetY or 0)
+        ns.PanelCore:SetPanelBottomRight(RIGHT_PANEL_CORE_ID, w, ph, ox, oy)
+      end
       return h
     end
   end
@@ -1038,6 +1089,12 @@ function MP:ApplyMinimapClusterInRightPanel(ox, oy)
     host:SetSize(w, h)
     host:ClearAllPoints()
     host:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", ox, oy)
+  end
+  if not isHostUsable(host) then
+    --- Sin geometría válida, mejor dejar el cluster donde lo puso Blizzard que colapsarlo.
+    self._clusterLayoutMutating = false
+    self:RequestApplyAfterCombat()
+    return
   end
   MinimapCluster:SetParent(host)
   MinimapCluster:ClearAllPoints()
@@ -1255,7 +1312,7 @@ function MP:Apply()
   then
     self:EnforceMinimapClusterFillRightPanel()
   end
-  if self:WantsRightPanel() and self._rightPanelFrame then
+  if self:WantsRightPanel() and self._rightPanelFrame and isHostUsable(self._rightPanelFrame) then
     self:SyncRightPanelTreeLayout()
     self:EnforceMinimapInCenterTopArea()
     if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
@@ -1267,6 +1324,14 @@ function MP:Apply()
     if ns.RightStrip and ns.RightStrip.Layout then
       ns.RightStrip:Layout()
     end
+    if ns.HorizontalCompass and ns.HorizontalCompass.Refresh then
+      ns.HorizontalCompass:Refresh()
+    end
+  elseif ns.HorizontalCompass and ns.HorizontalCompass.Hide then
+    ns.HorizontalCompass:Hide()
+  end
+  if self:WantsRightPanel() and not isHostUsable(self._rightPanelFrame) then
+    self:RequestApplyAfterCombat()
   end
   self:UpdateDebugRightPanelOutline()
   if isDebugBoundsEnabled(self:DB()) then
@@ -1485,6 +1550,8 @@ local function ScheduleDebouncedApply()
 end
 
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
+--- El host queda vetado mientras aloja el cluster en combate: al salir hay que reaplicar.
+ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:RegisterEvent("UI_SCALE_CHANGED")
 ev:RegisterEvent("DISPLAY_SIZE_CHANGED")
 ev:RegisterEvent("CINEMATIC_STOP")
@@ -1569,5 +1636,121 @@ ev:SetScript("OnEvent", function(_, event)
     ns.RightPanel:RequestApply(0)
   end
 end)
+
+local function diagFrameLine(label, f)
+  if not f then
+    return ("|cffff9900%s|r: no existe"):format(label)
+  end
+  local parent = f.GetParent and f:GetParent()
+  local parentName = "sin padre"
+  if parent then
+    parentName = (parent.GetName and parent:GetName()) or "(anónimo)"
+  end
+  local shown = (f.IsShown and f:IsShown()) and "sí" or "NO"
+  local visible = (f.IsVisible and f:IsVisible()) and "sí" or "NO"
+  local alpha = (f.GetAlpha and f:GetAlpha()) or 0
+  local scale = (f.GetEffectiveScale and f:GetEffectiveScale()) or 0
+  local w, h = 0, 0
+  if f.GetSize then
+    w, h = f:GetSize()
+  end
+  local left = (f.GetLeft and f:GetLeft()) or nil
+  local bottom = (f.GetBottom and f:GetBottom()) or nil
+  local pos = "sin ancla"
+  if left and bottom then
+    pos = ("x=%d y=%d"):format(math.floor(left + 0.5), math.floor(bottom + 0.5))
+  end
+  local points = (f.GetNumPoints and f:GetNumPoints()) or 0
+  return ("|cff00ff00%s|r padre=%s shown=%s visible=%s alpha=%.2f escala=%.2f tam=%dx%d %s anclas=%d")
+    :format(label, parentName, shown, visible, alpha, scale, math.floor(w + 0.5), math.floor(h + 0.5), pos, points)
+end
+
+--- Diagnóstico del panel derecho: sin error de Lua, la causa se ve en visibilidad/rectángulo real de los marcos.
+function MP:PrintDiagnostics()
+  local db = self:DB()
+  local pc = ns.PanelCore
+  local w, h = self:GetRightPanelSize()
+  print("|cffffcc00Chukie UI — diagnóstico del panel derecho|r")
+  print(("perfil.enabled=%s quiere_panel=%s editmode=%s diferido=%s uiparent=%s combate=%s"):format(
+    tostring(ns.Profile and ns.Profile.GetActive and (ns.Profile:GetActive() or {}).enabled),
+    tostring(self:WantsRightPanel()),
+    tostring(self:IsEditModeLayoutActive() and true or false),
+    tostring(self:ShouldDeferClusterLayout()),
+    tostring(UIParent and UIParent:IsShown()),
+    tostring(InCombatLockdown and InCombatLockdown() or false)
+  ))
+  print(("offsets=%d,%d tamaño_objetivo=%dx%d escala_panel=%s%%"):format(
+    tonumber(db.offsetX) or 0,
+    tonumber(db.offsetY) or 0,
+    w,
+    h,
+    tostring(db.panelScalePercent)
+  ))
+  print(diagFrameLine("Root", pc and pc._rootFrame))
+  print(diagFrameLine("Panel", self._rightPanelFrame))
+  local rec = pc and pc._panels and pc._panels[RIGHT_PANEL_CORE_ID]
+  if rec and rec.slots then
+    for _, id in ipairs({ "center", "left", "right" }) do
+      print(diagFrameLine("Slot:" .. id, rec.slots[id]))
+    end
+  end
+  print(diagFrameLine("MinimapCluster", MinimapCluster))
+  print(diagFrameLine("Minimap", Minimap))
+  print(diagFrameLine("Widgets", _G.ChukieUi_RightPanelWidgetsHost))
+  print(diagFrameLine("Franja", _G.ChukieUi_RightStripHost))
+  print(diagFrameLine("MicroMenu", _G.ChukieUi_MicroMenuHolder))
+  if pc then
+    print(("pendiente_root=%s pendiente_layout=%s"):format(
+      tostring(pc._pendingRootRefresh or false),
+      tostring(pc._pendingLayoutRefresh or false)
+    ))
+  end
+end
+
+--- Segundo diagnóstico: grupos de botones del panel (widgets, micromenú, barras, franja).
+function MP:PrintButtonDiagnostics()
+  print("|cffffcc00Chukie UI — diagnóstico de botones del panel derecho|r")
+  local rw = ns.RightPanelWidgets
+  local db = rw and rw.DB and rw:DB()
+  if db then
+    print(("widgets: minibarra=%s dinámicas=%s modo_estático=%s celda=%s hueco=%s"):format(
+      tostring(db.miniActionBarEnabled),
+      tostring(db.dynamicActionSlotsEnabled),
+      tostring(db.staticSessionMode),
+      tostring(db.gridCellSize),
+      tostring(db.gridGap)
+    ))
+  end
+  print(diagFrameLine("Grid", _G.ChukieUi_RightPanelWidgetsGrid))
+  for _, id in ipairs({ "tracking", "lfg", "mail", "difficulty", "reserved1", "reserved2", "reserved3", "reserved4" }) do
+    print(diagFrameLine("w:" .. id, _G["ChukieUi_RightWidget_" .. id]))
+  end
+  print(diagFrameLine("w:datetime", _G.ChukieUi_RightWidget_DateTime))
+  local mab = ns.MiniActionBar
+  if mab then
+    print(("minibarra: activa=%s pend_ensure=%s pend_attach=%s pend_detach=%s"):format(
+      tostring(mab.IsEnabled and mab.IsEnabled()),
+      tostring(mab._pendingEnsure or false),
+      tostring(mab._pendingAttach or false),
+      tostring(mab._pendingDetach or false)
+    ))
+  end
+  for i = 1, 3 do
+    local b = _G["ChukieUi_MiniAct" .. i]
+    print(diagFrameLine("MiniAct" .. i, b))
+    if b then
+      print(("  MiniAct%d: escala=%.2f accion=%s statehidden=%s"):format(
+        i,
+        (b.GetScale and b:GetScale()) or 0,
+        tostring(b.GetAttribute and b:GetAttribute("action")),
+        tostring(b.GetAttribute and b:GetAttribute("statehidden"))
+      ))
+    end
+  end
+  print(diagFrameLine("BarraAddons", _G.ChukieUi_MinimapButtonBar))
+  print(diagFrameLine("Micromenu", _G.ChukieUi_MiniMenuButtonBar))
+  print(diagFrameLine("Franja", _G.ChukieUi_RightStripHost))
+  print(diagFrameLine("Barra6", _G.ChukieUi_ActionBar6))
+end
 
 ns.MinimapPosition = ns.RightPanel

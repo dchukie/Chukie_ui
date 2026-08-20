@@ -25,8 +25,11 @@ local function cloneProfileData(src)
     panels = { rightPanel = {} },
     widgets = { minimapBar = {}, rightPanelWidgets = {} },
     cvars = {},
-    alerts = { enabled = false, nextId = 1, rules = {}, tickInterval = 0.15 },
+    alerts = { enabled = false, nextId = 1, rules = {}, groups = {}, tickInterval = 0.15 },
     actionBars = {},
+    horizontalCompass = {},
+    auraPanel = { auras = {} },
+    partyGrid = {},
   }
   for k, v in pairs(src.minimapPosition or {}) do
     t.minimapPosition[k] = v
@@ -77,6 +80,7 @@ local function cloneProfileData(src)
   if type(src.alerts) == "table" then
     t.alerts.enabled = src.alerts.enabled == true
     t.alerts.nextId = math.floor(tonumber(src.alerts.nextId) or 1)
+    t.alerts.tickInterval = tonumber(src.alerts.tickInterval) or 0.15
     if t.alerts.nextId < 1 then
       t.alerts.nextId = 1
     end
@@ -112,6 +116,64 @@ local function cloneProfileData(src)
         end
       end
     end
+    t.alerts.groups = {}
+    if type(src.alerts.groups) == "table" then
+      for i = 1, #src.alerts.groups do
+        local g = src.alerts.groups[i]
+        if type(g) == "table" then
+          local ng = {
+            id = g.id,
+            name = g.name,
+            enabled = g.enabled ~= false,
+            ruleLogic = g.ruleLogic == "or" and "or" or "and",
+            overlayFx = nil,
+            rules = {},
+            effects = {},
+          }
+          if type(g.overlayFx) == "table" then
+            ng.overlayFx = {
+              pulse = g.overlayFx.pulse == true,
+              color = g.overlayFx.color == true,
+              shake = g.overlayFx.shake == true,
+              glow = g.overlayFx.glow == true,
+            }
+          end
+          if type(g.rules) == "table" then
+            for ri = 1, #g.rules do
+              local r = g.rules[ri]
+              if type(r) == "table" then
+                local nr = {}
+                for rk, rv in pairs(r) do
+                  if type(rv) ~= "table" then
+                    nr[rk] = rv
+                  end
+                end
+                ng.rules[#ng.rules + 1] = nr
+              end
+            end
+          end
+          if type(g.effects) == "table" then
+            for ei = 1, #g.effects do
+              local e = g.effects[ei]
+              if type(e) == "table" then
+                local ne = {}
+                for ek, ev in pairs(e) do
+                  if ek == "point" and type(ev) == "table" then
+                    ne.point = { ev[1], ev[2], ev[3] }
+                  elseif ek == "color" and type(ev) == "table" then
+                    ne.color = { tonumber(ev[1]) or 1, tonumber(ev[2]) or 1, tonumber(ev[3]) or 1 }
+                  elseif type(ev) ~= "table" then
+                    ne[ek] = ev
+                  end
+                end
+                ng.effects[#ng.effects + 1] = ne
+              end
+            end
+          end
+          t.alerts.groups[#t.alerts.groups + 1] = ng
+        end
+      end
+    end
     -- Preserve legacy cd/proc so EnsureSchema can migrate after clone.
     if type(src.alerts.cd) == "table" then
       t.alerts.cd = {}
@@ -141,6 +203,48 @@ local function cloneProfileData(src)
       end
     end
   end
+  if type(src.horizontalCompass) == "table" then
+    for k, v in pairs(src.horizontalCompass) do
+      if type(v) ~= "table" then
+        t.horizontalCompass[k] = v
+      end
+    end
+  end
+  if type(src.auraPanel) == "table" then
+    for k, v in pairs(src.auraPanel) do
+      if k == "point" and type(v) == "table" then
+        t.auraPanel.point = { v[1], v[2], v[3] }
+      elseif k == "auras" and type(v) == "table" then
+        for i = 1, #v do
+          local a = v[i]
+          if type(a) == "table" then
+            t.auraPanel.auras[#t.auraPanel.auras + 1] = {
+              spellId = a.spellId,
+              enabled = a.enabled,
+              unit = a.unit,
+              filter = a.filter,
+            }
+          end
+        end
+      elseif type(v) ~= "table" then
+        t.auraPanel[k] = v
+      end
+    end
+  end
+  if type(src.partyGrid) == "table" then
+    for k, v in pairs(src.partyGrid) do
+      if k == "point" and type(v) == "table" then
+        t.partyGrid.point = { v[1], v[2], v[3] }
+      elseif k == "columnSpells" and type(v) == "table" then
+        t.partyGrid.columnSpells = {}
+        for column, spellId in pairs(v) do
+          t.partyGrid.columnSpells[column] = spellId
+        end
+      elseif type(v) ~= "table" then
+        t.partyGrid[k] = v
+      end
+    end
+  end
   return t
 end
 
@@ -157,8 +261,23 @@ local function ensurePanelWidgetSchema(p)
   p.minimapPosition = rightPanel
   p.minimapBar = minimapBar
   p.actionBars = p.actionBars or {}
-  p.alerts = p.alerts or { enabled = false, nextId = 1, rules = {} }
+  p.horizontalCompass = p.horizontalCompass or {}
+  p.auraPanel = p.auraPanel or {}
+  p.auraPanel.auras = p.auraPanel.auras or {}
+  --- PartyGrid prohíbe incluso reparaciones de esquema durante combate: un perfil
+  --- antiguo se completa al cargar o en PLAYER_REGEN_ENABLED, nunca al consultarlo.
+  local combat = InCombatLockdown and InCombatLockdown()
+  if not combat then
+    if type(p.partyGrid) ~= "table" then
+      p.partyGrid = {}
+    end
+    if type(p.partyGrid.columnSpells) ~= "table" then
+      p.partyGrid.columnSpells = {}
+    end
+  end
+  p.alerts = p.alerts or { enabled = false, nextId = 1, rules = {}, groups = {} }
   p.alerts.rules = p.alerts.rules or {}
+  p.alerts.groups = p.alerts.groups or {}
   if ns.Alerts and ns.Alerts.EnsureSchema then
     ns.Alerts:EnsureSchema(p.alerts)
   end
@@ -168,6 +287,24 @@ function ns.Profile:GetAlertsModel()
   local p = self:GetActive()
   ensurePanelWidgetSchema(p)
   return p.alerts
+end
+
+function ns.Profile:GetAuraPanelModel()
+  local p = self:GetActive()
+  ensurePanelWidgetSchema(p)
+  return p.auraPanel
+end
+
+function ns.Profile:GetPartyGridModel()
+  local p = self:GetActive()
+  ensurePanelWidgetSchema(p)
+  return type(p.partyGrid) == "table" and p.partyGrid or {}
+end
+
+function ns.Profile:GetHorizontalCompassModel()
+  local p = self:GetActive()
+  ensurePanelWidgetSchema(p)
+  return p.horizontalCompass
 end
 
 function ns.Profile:Migrate()
@@ -310,6 +447,27 @@ function ns.Profile:MigrateMinimapBarPixelOptions()
   end
 end
 
+--- Una vez: las cuatro filas del panel izquierdo pasan a 6 botones. Antes eran 5 y las de
+--- abajo llegaban a 6 por override, así que se unifica en el valor general.
+function ns.Profile:MigrateActionBarsLeftButtons()
+  local a = self:GetActive().actionBars
+  if not a or a._leftBars6Applied then
+    return
+  end
+  a._leftBars6Applied = true
+  if (tonumber(a.leftNumButtons) or 6) < 6 then
+    a.leftNumButtons = 6
+  end
+  local per = a.leftNumButtonsPerBar
+  if per then
+    for barId = 1, 4 do
+      if (tonumber(per[barId]) or 0) <= 6 then
+        per[barId] = 0
+      end
+    end
+  end
+end
+
 function ns.Profile:Initialize()
   self:Migrate()
   self:MigrateMinimapBarPixelOptions()
@@ -317,6 +475,7 @@ function ns.Profile:Initialize()
     ns.CopyDefaultsIntoProfile(self:GetActive())
   end
   self:MigrateMinimapBarPixelOptions()
+  self:MigrateActionBarsLeftButtons()
 end
 
 function ns.Profile:SuggestDuplicateName()

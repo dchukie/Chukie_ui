@@ -369,11 +369,13 @@ local function openCalendarUi()
     return
   end
 
-  if not CalendarFrame and UIParentLoadAddOn then
-    tryCall(UIParentLoadAddOn, "Blizzard_Calendar")
+  --- 12.1: UIParentLoadAddOn → LoadAddOnWithErrorHandling (fallback por si queda el nombre viejo).
+  local loadAddon = LoadAddOnWithErrorHandling or UIParentLoadAddOn
+  if not CalendarFrame and type(loadAddon) == "function" then
+    tryCall(loadAddon, "Blizzard_Calendar")
   end
-  if not TimeManagerClockButton and UIParentLoadAddOn then
-    tryCall(UIParentLoadAddOn, "Blizzard_TimeManager")
+  if not TimeManagerClockButton and type(loadAddon) == "function" then
+    tryCall(loadAddon, "Blizzard_TimeManager")
   end
 
   if isOpen() then

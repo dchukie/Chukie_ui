@@ -12,8 +12,12 @@ ns.ActionBars = AB
 
 local SHOWGRID_REASON = 32
 local BUTTONS_PER_BAR = 12
+--- Tope de botones con entrada en Bindings.xml (barras 1–4).
+local BINDABLE_BUTTONS_PER_BAR = 6
 local LEFT_BAR_IDS = { 1, 2, 3, 4 }
 local RIGHT_BAR_ID = 6
+--- Barra que toma las páginas de vehículo / override / possess.
+local VEHICLE_BAR_ID = 1
 local SKY_PAGE = { [1] = 8, [2] = 9, [3] = 10, [4] = 11 }
 
 -- Condición segura usada por Dominos/Bartender para skyriding.
@@ -266,6 +270,16 @@ function AB:UpdateButtonVisual(btn)
   if btn.cooldown then
     applyActionCooldown(btn.cooldown, action)
   end
+  if btn.chargeCooldown and C_ActionBar and C_ActionBar.GetActionChargeDuration and btn.chargeCooldown.SetCooldownFromDurationObject then
+    local ok, dur = pcall(C_ActionBar.GetActionChargeDuration, action)
+    if ok and dur then
+      pcall(btn.chargeCooldown.SetCooldownFromDurationObject, btn.chargeCooldown, dur)
+    else
+      pcall(function()
+        btn.chargeCooldown:Clear()
+      end)
+    end
+  end
 
   if btn.Count then
     local shown = false
@@ -279,6 +293,15 @@ function AB:UpdateButtonVisual(btn)
           btn.Count:Show()
           shown = true
         end
+      end
+    end
+    if not shown and ns.CdInfo then
+      -- En combate el conteo es secreto: deducir cargas de los estados no secretos.
+      local st = ns.CdInfo.GetActionState(action)
+      if st.hasCharges and st.count then
+        btn.Count:SetText(st.count)
+        btn.Count:Show()
+        shown = true
       end
     end
     if not shown and GetActionCount then
@@ -318,6 +341,7 @@ function AB:UpdateButtonVisual(btn)
 end
 
 function AB:UpdateAllVisuals()
+  self:UpdateVehicleExitButton()
   if not self._bars then
     return
   end
@@ -350,6 +374,11 @@ function AB:EnsureVisualEvents()
     "PLAYER_TARGET_CHANGED",
     "UNIT_ENTERED_VEHICLE",
     "UNIT_EXITED_VEHICLE",
+    --- Las acciones del vehículo/override llegan después de subirse.
+    "UPDATE_VEHICLE_ACTIONBAR",
+    "UPDATE_OVERRIDE_ACTIONBAR",
+    "UPDATE_POSSESS_BAR",
+    "VEHICLE_UPDATE",
     "UPDATE_BINDINGS",
   }
   for i = 1, #events do
@@ -493,7 +522,7 @@ function AB:UpdateAllBindings()
   for barId = 1, 4 do
     local bar = self._bars[tostring(barId)]
     if bar and bar.buttons then
-      for i = 1, math.min(5, #bar.buttons) do
+      for i = 1, math.min(BINDABLE_BUTTONS_PER_BAR, #bar.buttons) do
         updateOverrideBindings(bar.buttons[i])
       end
     end
@@ -533,7 +562,7 @@ local function ensureButton(bar, barId, index)
   btn._chukieIndex = index
   btn._chukieAction = actionFor(barId, index)
   skinButton(btn)
-  if barId <= 4 and index <= 5 then
+  if barId <= 4 and index <= BINDABLE_BUTTONS_PER_BAR then
     addCastOnKeyPress(btn)
   end
   if not btn._chukieAttrHook then
@@ -548,59 +577,132 @@ local function ensureButton(bar, barId, index)
     end)
   end
   AB:UpdateButtonVisual(btn)
-  if barId <= 4 and index <= 5 and not InCombatLockdown() then
+  if barId <= 4 and index <= BINDABLE_BUTTONS_PER_BAR and not InCombatLockdown() then
     updateOverrideBindings(btn)
   end
   return btn
+end
+
+--- Vehículo / override / possess: el offset es directo, sin el salto de la página 12 de Dominos
+--- (esas páginas apuntan a slots reales, no a la numeración de barras del usuario).
+local function specialPageOffset(page)
+  page = tonumber(page)
+  if not page or page < 1 then
+    return nil
+  end
+  return (page - 1) * BUTTONS_PER_BAR
+end
+
+--- Aplica `offset-<estado>` a los botones. `newstate` existe en `_onstate-page`; en `Execute` no.
+local APPLY_PAGE_OFFSET = [[
+  local state = newstate or self:GetAttribute("state-page") or "normal"
+  local offset = self:GetAttribute("offset-" .. state)
+  if not offset then
+    offset = self:GetAttribute("offset-normal") or 0
+  end
+  self:SetAttribute("actionOffset", offset)
+  local n = self:GetAttribute("numButtons") or 12
+  for i = 1, n do
+    local b = self:GetFrameRef("btn" .. i)
+    if b then
+      local idx = b:GetAttribute("index") or i
+      b:SetAttribute("action", idx + offset)
+    end
+  end
+]]
+
+--- Estados de página por barra, en orden de prioridad (vehículo gana sobre skyriding).
+local function buildPageStates(bar, barId)
+  local conditions = {}
+  bar:SetAttribute("offset-normal", pageOffset(barId))
+  bar:SetAttribute("offset-vehicle", nil)
+  bar:SetAttribute("offset-override", nil)
+  bar:SetAttribute("offset-shapeshift", nil)
+  bar:SetAttribute("offset-sky", nil)
+
+  --- Mismo orden que ActionBarController de Blizzard: vehículo, override, shapeshift temporal.
+  if barId == VEHICLE_BAR_ID and db().vehiclePaging ~= false then
+    local vehicle = specialPageOffset(GetVehicleBarIndex and GetVehicleBarIndex())
+    local override = specialPageOffset(GetOverrideBarIndex and GetOverrideBarIndex())
+    local shapeshift = specialPageOffset(GetTempShapeshiftBarIndex and GetTempShapeshiftBarIndex())
+    if vehicle then
+      bar:SetAttribute("offset-vehicle", vehicle)
+      conditions[#conditions + 1] = "[vehicleui][possessbar] vehicle"
+    end
+    if override then
+      bar:SetAttribute("offset-override", override)
+      conditions[#conditions + 1] = "[overridebar] override"
+    end
+    if shapeshift then
+      bar:SetAttribute("offset-shapeshift", shapeshift)
+      conditions[#conditions + 1] = "[shapeshift] shapeshift"
+    end
+  end
+
+  local skyPage = SKY_PAGE[barId]
+  if skyPage and db().skyridingPaging ~= false then
+    bar:SetAttribute("offset-sky", pageOffset(skyPage))
+    conditions[#conditions + 1] = SKYRIDING_COND .. " sky"
+  end
+
+  if #conditions == 0 then
+    return nil
+  end
+  conditions[#conditions + 1] = "normal"
+  return table.concat(conditions, "; ")
 end
 
 local function applySecurePaging(bar, barId)
   if InCombatLockdown() then
     return
   end
-  local skyPage = SKY_PAGE[barId]
-  if not skyPage or db().skyridingPaging == false then
+  local driver = buildPageStates(bar, barId)
+  if not driver then
     UnregisterStateDriver(bar, "page")
-    bar:SetAttribute("state-page", barId)
-    bar:Execute([[
-      local page = self:GetAttribute("state-page") or 1
-      local offset = (page - 1) * 12
-      if offset >= 132 then
-        offset = offset + 12
-      end
-      self:SetAttribute("actionOffset", offset)
-      local n = self:GetAttribute("numButtons") or 12
-      for i = 1, n do
-        local b = self:GetFrameRef("btn" .. i)
-        if b then
-          local idx = b:GetAttribute("index") or i
-          b:SetAttribute("action", idx + offset)
-        end
-      end
-    ]])
+    bar:SetAttribute("state-page", "normal")
+    bar:Execute(APPLY_PAGE_OFFSET)
     return
   end
+  bar:SetAttribute("_onstate-page", APPLY_PAGE_OFFSET)
+  RegisterStateDriver(bar, "page", driver)
+end
 
-  bar:SetAttribute(
-    "_onstate-page",
-    [[
-    local page = tonumber(newstate) or 1
-    local offset = (page - 1) * 12
-    if offset >= 132 then
-      offset = offset + 12
+-- ActionBarButtonTemplate fija cromado (Normal/borde) en tamaño nativo;
+-- SetSize solo no lo escala (IgnoreParentScale). Escalar el botón entero.
+local function applyButtonSize(btn, size)
+  local native = btn._chukieNativeW
+  if not native or native < 1 then
+    native = btn:GetWidth() or 0
+    if native < 1 then
+      native = 45
     end
-    self:SetAttribute("actionOffset", offset)
-    local n = self:GetAttribute("numButtons") or 12
-    for i = 1, n do
-      local b = self:GetFrameRef("btn" .. i)
-      if b then
-        local idx = b:GetAttribute("index") or i
-        b:SetAttribute("action", idx + offset)
-      end
+    btn._chukieNativeW = native
+    btn._chukieNativeH = btn:GetHeight() > 0 and btn:GetHeight() or native
+  end
+  local nativeH = btn._chukieNativeH or native
+  btn:SetSize(native, nativeH)
+  btn:SetScale(size / native)
+  for _, r in ipairs({
+    btn.icon,
+    btn.Icon,
+    btn.NormalTexture,
+    btn.GetNormalTexture and btn:GetNormalTexture() or nil,
+    btn.PushedTexture,
+    btn.GetPushedTexture and btn:GetPushedTexture() or nil,
+    btn.HighlightTexture,
+    btn.GetHighlightTexture and btn:GetHighlightTexture() or nil,
+    btn.CheckedTexture,
+    btn.GetCheckedTexture and btn:GetCheckedTexture() or nil,
+    btn.Flash,
+    btn.Border,
+    btn.NewActionTexture,
+    btn.SlotBackground,
+    btn.IconMask,
+  }) do
+    if r and r.SetIgnoreParentScale then
+      r:SetIgnoreParentScale(false)
     end
-  ]]
-  )
-  RegisterStateDriver(bar, "page", string.format("%s %d; %d", SKYRIDING_COND, skyPage, barId))
+  end
 end
 
 local function layoutBarButtons(bar, cols, buttonSize, spacing)
@@ -615,41 +717,7 @@ local function layoutBarButtons(bar, cols, buttonSize, spacing)
     local col = (i - 1) % cols
     local row = math.floor((i - 1) / cols)
     btn:ClearAllPoints()
-    -- ActionBarButtonTemplate fija cromado (Normal/borde) en tamaño nativo;
-    -- SetSize solo no lo escala (IgnoreParentScale). Escalar el botón entero.
-    local native = btn._chukieNativeW
-    if not native or native < 1 then
-      native = btn:GetWidth() or 0
-      if native < 1 then
-        native = 45
-      end
-      btn._chukieNativeW = native
-      btn._chukieNativeH = btn:GetHeight() > 0 and btn:GetHeight() or native
-    end
-    local nativeH = btn._chukieNativeH or native
-    btn:SetSize(native, nativeH)
-    btn:SetScale(size / native)
-    for _, r in ipairs({
-      btn.icon,
-      btn.Icon,
-      btn.NormalTexture,
-      btn.GetNormalTexture and btn:GetNormalTexture() or nil,
-      btn.PushedTexture,
-      btn.GetPushedTexture and btn:GetPushedTexture() or nil,
-      btn.HighlightTexture,
-      btn.GetHighlightTexture and btn:GetHighlightTexture() or nil,
-      btn.CheckedTexture,
-      btn.GetCheckedTexture and btn:GetCheckedTexture() or nil,
-      btn.Flash,
-      btn.Border,
-      btn.NewActionTexture,
-      btn.SlotBackground,
-      btn.IconMask,
-    }) do
-      if r and r.SetIgnoreParentScale then
-        r:SetIgnoreParentScale(false)
-      end
-    end
+    applyButtonSize(btn, size)
     btn:SetPoint("TOPLEFT", bar, "TOPLEFT", col * (size + gap), -row * (size + gap))
     if not InCombatLockdown() then
       btn:SetAttribute("statehidden", false)
@@ -659,6 +727,146 @@ local function layoutBarButtons(bar, cols, buttonSize, spacing)
   local w = cols * size + math.max(0, cols - 1) * gap
   local h = rows * size + math.max(0, rows - 1) * gap
   bar:SetSize(math.max(1, w), math.max(1, h))
+end
+
+--- Botón de bajarse: vive sobre la barra 1 y un tercio más grande que sus botones.
+local VEHICLE_EXIT_SIZE_FACTOR = 4 / 3
+local VEHICLE_EXIT_ICON = [[Interface\Vehicles\UI-Vehicles-Button-Exit-Up]]
+--- Mismo estado que usa Dominos: sirve para vehículo, taxi y posesión.
+local VEHICLE_EXIT_VISIBILITY = "[canexitvehicle][possessbar] show; hide"
+
+local function vehicleExitIcon(btn)
+  return btn.icon or btn.Icon
+end
+
+local function vehicleExitOnClick(btn)
+  btn:SetChecked(false)
+  if UnitOnTaxi and UnitOnTaxi("player") then
+    if TaxiRequestEarlyLanding then
+      TaxiRequestEarlyLanding()
+      local icon = vehicleExitIcon(btn)
+      if icon then
+        icon:SetDesaturated(true)
+      end
+      btn:SetChecked(true)
+      btn:Disable()
+    end
+    return
+  end
+  if CanExitVehicle and CanExitVehicle() then
+    if VehicleExit then
+      VehicleExit()
+    end
+    return
+  end
+  if CancelPetPossess then
+    CancelPetPossess()
+  end
+end
+
+local function vehicleExitOnEnter(btn)
+  GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+  if UnitOnTaxi and UnitOnTaxi("player") then
+    GameTooltip:SetText(_G.TAXI_CANCEL or "Cancelar vuelo", 1, 1, 1)
+    if _G.TAXI_CANCEL_DESCRIPTION then
+      GameTooltip:AddLine(_G.TAXI_CANCEL_DESCRIPTION, nil, nil, nil, true)
+    end
+  elseif CanExitVehicle and CanExitVehicle() then
+    GameTooltip:SetText(_G.LEAVE_VEHICLE or "Bajarse", 1, 1, 1)
+  else
+    GameTooltip:SetText(_G.CANCEL or "Cancelar", 1, 1, 1)
+  end
+  GameTooltip:Show()
+end
+
+local function vehicleExitOnLeave(btn)
+  if GameTooltip:IsOwned(btn) then
+    GameTooltip:Hide()
+  end
+end
+
+function AB:EnsureVehicleExitButton()
+  if self._vehicleExit then
+    return self._vehicleExit
+  end
+  if InCombatLockdown() then
+    return nil
+  end
+  local template = _G.SmallActionButtonMixin and "SmallActionButtonTemplate" or "ActionButtonTemplate"
+  local id = _G.POSSESS_CANCEL_SLOT or 2
+  local ok, btn = pcall(CreateFrame, "CheckButton", "ChukieUi_VehicleExit", UIParent, template, id)
+  if not ok or not btn then
+    return nil
+  end
+  btn:SetScript("OnClick", vehicleExitOnClick)
+  btn:SetScript("OnEnter", vehicleExitOnEnter)
+  btn:SetScript("OnLeave", vehicleExitOnLeave)
+  if btn.cooldown and btn.cooldown.SetSwipeColor then
+    btn.cooldown:SetSwipeColor(0, 0, 0)
+  end
+  self._vehicleExit = btn
+  return btn
+end
+
+--- En posesión el icono es el de cancelar; en vehículo/taxi, la flecha de salida.
+function AB:UpdateVehicleExitButton()
+  local btn = self._vehicleExit
+  if not btn then
+    return
+  end
+  local icon = vehicleExitIcon(btn)
+  if not icon then
+    return
+  end
+  local texture = GetPossessInfo and GetPossessInfo(btn:GetID())
+  if isSecret(texture) then
+    texture = nil
+  end
+  local exiting = UnitControllingVehicle
+    and UnitControllingVehicle("player")
+    and CanExitVehicle
+    and CanExitVehicle()
+  if exiting or not texture then
+    icon:SetTexture(VEHICLE_EXIT_ICON)
+    icon:SetTexCoord(0.140625, 0.859375, 0.140625, 0.859375)
+  else
+    icon:SetTexture(texture)
+    icon:SetTexCoord(0, 1, 0, 1)
+  end
+  icon:SetVertexColor(1, 1, 1)
+  icon:SetDesaturated(false)
+  btn:SetChecked(false)
+  btn:Enable()
+end
+
+function AB:LayoutVehicleExitButton(bar, size, gap)
+  local d = db()
+  local wanted = bar and d.vehiclePaging ~= false and d.vehicleExitButton ~= false
+  if not wanted then
+    local btn = self._vehicleExit
+    if btn then
+      UnregisterStateDriver(btn, "visibility")
+      btn:Hide()
+    end
+    return
+  end
+  local btn = self:EnsureVehicleExitButton()
+  if not btn then
+    return
+  end
+  applyButtonSize(btn, size * VEHICLE_EXIT_SIZE_FACTOR)
+  if btn:GetParent() ~= bar then
+    btn:SetParent(bar)
+  end
+  btn:ClearAllPoints()
+  --- El offset va en la escala del propio botón: compensar para que el hueco sea el pedido.
+  local scale = btn:GetScale()
+  if not scale or scale <= 0 then
+    scale = 1
+  end
+  btn:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", 0, gap / scale)
+  self:UpdateVehicleExitButton()
+  RegisterStateDriver(btn, "visibility", VEHICLE_EXIT_VISIBILITY)
 end
 
 function AB:GetMasqueGroup()
@@ -774,6 +982,27 @@ function AB:EnsureBar(barId, numButtons)
   return bar
 end
 
+--- Slots (numeración Dominos) que muestran las barras 1–4, incluidas sus páginas de skyriding.
+function AB:GetLeftActionSlots()
+  local slots = {}
+  local function addPage(page)
+    local offset = pageOffset(page)
+    for i = 1, BUTTONS_PER_BAR do
+      slots[#slots + 1] = offset + i
+    end
+  end
+  local skyriding = db().skyridingPaging ~= false
+  for i = 1, #LEFT_BAR_IDS do
+    local id = LEFT_BAR_IDS[i]
+    addPage(id)
+    local sky = SKY_PAGE[id]
+    if sky and skyriding then
+      addPage(sky)
+    end
+  end
+  return slots
+end
+
 function AB:HideStockBars()
   if InCombatLockdown() then
     return
@@ -793,6 +1022,10 @@ function AB:HideStockBars()
       hideBarButton(_G[prefix .. i])
     end
   end
+  -- El botón de bajarse de Blizzard duplicaría el nuestro.
+  if db().vehicleExitButton ~= false then
+    hideBarFrame(_G.MainMenuBarVehicleLeaveButton, true)
+  end
   -- MainMenuBar: eventos que la vuelven a mostrar.
   if MainMenuBar and MainMenuBar.UnregisterEvent then
     pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "PLAYER_REGEN_ENABLED")
@@ -802,7 +1035,30 @@ function AB:HideStockBars()
   end
 end
 
+--- Barra de misión / vehículo con arte propio (OverrideActionBar): Blizzard la muestra
+--- flotando cuando hay override/vehículo con skin. La barra 1 ya pagina a esas acciones
+--- ([overridebar]/[vehicleui], índices 12/14/13), así que la mandamos al contenedor oculto
+--- para que las acciones aparezcan en la barra 1 y no dupliquen. Reparentada a un frame oculto
+--- resiste los Show() que Blizzard hace al activarse (incluso en combate). Revertir necesita /reload.
+function AB:HideOverrideArtBar()
+  if InCombatLockdown() then
+    self._pendingRefresh = true
+    return
+  end
+  local bar = _G.OverrideActionBar
+  if not bar then
+    return
+  end
+  --- Sólo si hay una barra 1 propia que reciba el paginado de vehículo/override.
+  local route = self.IsEnabled() and db().leftEnabled ~= false and db().vehiclePaging ~= false
+  if not route then
+    return
+  end
+  hideBarFrame(bar, false)
+end
+
 function AB:HideAll()
+  self:LayoutVehicleExitButton(nil)
   if not self._bars then
     return
   end
@@ -830,6 +1086,17 @@ local function getRightHost()
   return _G.ChukieUi_RightPanel or UIParent
 end
 
+--- Botones de una barra izquierda: override por barra (0 = usar el valor general).
+function AB:GetLeftBarNumButtons(barId, fallback)
+  fallback = math.max(1, math.min(BUTTONS_PER_BAR, tonumber(fallback) or 6))
+  local per = db().leftNumButtonsPerBar
+  local v = per and tonumber(per[barId])
+  if not v or v < 1 then
+    return fallback
+  end
+  return math.max(1, math.min(BUTTONS_PER_BAR, math.floor(v)))
+end
+
 function AB:LayoutLeftBars()
   local d = db()
   if not self.IsEnabled() or d.leftEnabled == false then
@@ -839,6 +1106,7 @@ function AB:LayoutLeftBars()
         bar:Hide()
       end
     end
+    self:LayoutVehicleExitButton(nil)
     return
   end
 
@@ -854,8 +1122,9 @@ function AB:LayoutLeftBars()
   local bars = {}
   for i = 1, #LEFT_BAR_IDS do
     local id = LEFT_BAR_IDS[i]
-    local bar = self:EnsureBar(id, numButtons)
-    layoutBarButtons(bar, numButtons, size, gap)
+    local n = self:GetLeftBarNumButtons(id, numButtons)
+    local bar = self:EnsureBar(id, n)
+    layoutBarButtons(bar, n, size, gap)
     if bar:GetParent() ~= host then
       bar:SetParent(host)
     end
@@ -866,6 +1135,8 @@ function AB:LayoutLeftBars()
       totalH = totalH + barGap
     end
   end
+
+  self:LayoutVehicleExitButton(bars[1], size, barGap)
 
   -- Barra 1 arriba → 4 abajo (como Dominos en el screenshot).
   local y = padY + totalH
@@ -924,6 +1195,7 @@ function AB:Refresh()
 
   self:EnsureVisualEvents()
   self:HideStockBars()
+  self:HideOverrideArtBar()
   self:EnsureDefaultKeybinds()
   self:LayoutLeftBars()
   self:LayoutRightBar6()

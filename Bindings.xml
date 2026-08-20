@@ -19,7 +19,7 @@
 -- noop
   </Binding>
 
-  <!-- Barras 1–4 (botones 1–5). Defaults: 12345 / qwert / asdfg / zxcv -->
+  <!-- Barras 1–4 (botones 1–6). Defaults: 12345 / qwert / asdfg / zxcv; el 6.º sin tecla -->
   <Binding name="CLICK ChukieUi_AB1_B1:LeftButton" header="CHUKIEUI_ACTIONBARS" default="1">
 -- noop
   </Binding>
@@ -34,6 +34,9 @@
   </Binding>
   <Binding name="CLICK ChukieUi_AB1_B5:LeftButton" default="5">
 -- noop
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB1_B6:LeftButton">
+-- noop (sin tecla por defecto)
   </Binding>
 
   <Binding name="CLICK ChukieUi_AB2_B1:LeftButton" default="Q">
@@ -51,6 +54,9 @@
   <Binding name="CLICK ChukieUi_AB2_B5:LeftButton" default="T">
 -- noop
   </Binding>
+  <Binding name="CLICK ChukieUi_AB2_B6:LeftButton">
+-- noop (sin tecla por defecto)
+  </Binding>
 
   <Binding name="CLICK ChukieUi_AB3_B1:LeftButton" default="A">
 -- noop
@@ -67,6 +73,9 @@
   <Binding name="CLICK ChukieUi_AB3_B5:LeftButton" default="G">
 -- noop
   </Binding>
+  <Binding name="CLICK ChukieUi_AB3_B6:LeftButton">
+-- noop (sin tecla por defecto)
+  </Binding>
 
   <Binding name="CLICK ChukieUi_AB4_B1:LeftButton" default="Z">
 -- noop
@@ -81,6 +90,9 @@
 -- noop
   </Binding>
   <Binding name="CLICK ChukieUi_AB4_B5:LeftButton">
+-- noop (sin tecla por defecto)
+  </Binding>
+  <Binding name="CLICK ChukieUi_AB4_B6:LeftButton">
 -- noop (sin tecla por defecto)
   </Binding>
 </Bindings>

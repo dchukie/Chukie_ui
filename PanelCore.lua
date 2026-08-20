@@ -26,10 +26,9 @@ function PC:EnsureCombatRetryWatcher()
   local ev = CreateFrame("Frame")
   self._combatRetryWatcher = ev
   ev:RegisterEvent("PLAYER_REGEN_ENABLED")
+  --- Al salir de combate se reaplica siempre: es barato (los rect se cachean) y cubre
+  --- los casos en que la geometría quedó a medio aplicar sin marcar pendiente.
   ev:SetScript("OnEvent", function()
-    if not (self._pendingRootRefresh or self._pendingLayoutRefresh) then
-      return
-    end
     self._pendingRootRefresh = nil
     self._pendingLayoutRefresh = nil
     if ns.RightPanel and ns.RightPanel.RequestApply then

@@ -1,5 +1,5 @@
 --[[ AuraContainer (12.1+ / Interface 120100): Blizzard asigna el aura; nosotros presentamos.
-    En 12.0.7 sin API → HasAuraContainerAPI() = false y path legacy. ]]
+    Sin API en el cliente → HasAuraContainerAPI() = false y path legacy. ]]
 
 local _, ns = ...
 local A = ns.Alerts
@@ -87,8 +87,25 @@ function A:CanUseAuraContainerForRule(rule)
   if rule.chargeFilter and rule.chargeFilter.enabled then
     return false
   end
-  if self._livePreview and self._livePreview.ruleId == rule.id then
-    return false
+  if self._livePreview and self._livePreview.forceShow then
+    if self._livePreview.groupId == rule.id or self._livePreview.ruleId == rule.id then
+      return false
+    end
+  end
+  if self.GetGroupById then
+    local g = self:GetGroupById(rule.id)
+    if g then
+      local n = 0
+      for i = 1, #(g.effects or {}) do
+        local e = g.effects[i]
+        if e and e.enabled ~= false and (e.type == "icon" or e.type == "texture" or e.type == "text") then
+          n = n + 1
+        end
+      end
+      if n > 1 then
+        return false
+      end
+    end
   end
   return true
 end
@@ -243,6 +260,44 @@ local function createContainerFrame(name, parent)
     end
   end
   return nil
+end
+
+--- Contenedor de una sola aura, para quien quiera presentar auras fuera del motor
+--- de alertas (p.ej. el panel de auras). Blizzard decide el show/hide del botón;
+--- `style` usa los mismos campos de presentación que un efecto: size, display,
+--- color, alpha, auraPath, auraLayout, pairGap.
+--- Devuelve el frame, o nil si el cliente no puede montar el slot (o hay combate).
+function A:CreateSingleAuraContainer(name, parent, unit, filterString, spellId, style)
+  if not self:HasAuraContainerAPI() then
+    return nil
+  end
+  spellId = math.floor(tonumber(spellId) or 0)
+  if spellId <= 0 then
+    return nil
+  end
+  if InCombatLockdown and InCombatLockdown() then
+    return nil
+  end
+  local container = createContainerFrame(name, parent or UIParent)
+  if not container then
+    return nil
+  end
+  local cfg = style or {}
+  local size = clamp(cfg.size, SIZE_MIN, SIZE_MAX)
+  container:SetSize(size, size)
+  pcall(container.EnableMouse, container, false)
+  pcall(container.SetUnit, container, unit == "target" and "target" or "player")
+  local attached = tryAttachGroup(container, "slot" .. spellId, filterString or "HELPFUL|INCLUDE_NAME_PLATE_ONLY", spellId, function(auraButton)
+    styleAuraButton(auraButton, cfg)
+  end)
+  if not attached then
+    container:Hide()
+    pcall(function()
+      container:SetParent(nil)
+    end)
+    return nil
+  end
+  return container
 end
 
 function A:ReleaseAuraContainer(ruleId)

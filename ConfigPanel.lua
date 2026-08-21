@@ -115,39 +115,238 @@ local function addIntSliderActionBars(category, uniqueId, key, label, tooltip, m
   Settings.CreateSlider(category, setting, options, tooltip)
 end
 
---- Botones de una barra izquierda concreta; 0 = usar el valor general.
-local function addLeftBarNumButtonsSlider(category, barId)
-  local function per()
-    local d = actionBarsDB()
-    d.leftNumButtonsPerBar = d.leftNumButtonsPerBar or {}
-    return d.leftNumButtonsPerBar
+local LEFT_ALPHA_MIN, LEFT_ALPHA_MAX = 10, 100
+
+local function clampLeftAlphaPercent(value)
+  value = math.floor((tonumber(value) or LEFT_ALPHA_MAX) + 0.5)
+  return math.max(LEFT_ALPHA_MIN, math.min(LEFT_ALPHA_MAX, value))
+end
+
+local function applyLeftAlphaPercent(barId, buttonIndex, value)
+  if ns.ActionBars and ns.ActionBars.SetLeftButtonAlphaPercent then
+    ns.ActionBars:SetLeftButtonAlphaPercent(barId, buttonIndex, value)
   end
-  local function get()
-    local v = tonumber(per()[barId]) or 0
-    return math.max(0, math.min(12, v))
-  end
-  local function set(v)
-    per()[barId] = math.floor(v + 0.5)
-    refreshActionBars()
-  end
-  local setting = Settings.RegisterProxySetting(
-    category,
-    "ChukieUi_AB_leftNumBar" .. barId,
-    Settings.VarType.Number,
-    "Botones barra " .. barId,
-    0,
-    get,
-    set
+end
+
+--- Canvas 6 × 4 que imita las barras izquierdas. Cada celda previsualiza su icono y
+--- controla la opacidad del botón real; el texto queda opaco para que 10 % siga legible.
+local function createLeftButtonAlphaCanvas()
+  local panel = CreateFrame("Frame")
+  panel.cells = {}
+
+  local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  title:SetPoint("TOPLEFT", 20, -18)
+  title:SetText("Transparencia individual — barras 1–4")
+
+  local help = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  help:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+  help:SetWidth(520)
+  help:SetJustifyH("LEFT")
+  help:SetText(
+    "La cuadrícula reproduce las 4 barras de 6 botones. Cada deslizador ajusta el botón "
+      .. "que tiene encima (10–100 %) y la caja de abajo acepta el valor exacto: mover el "
+      .. "deslizador actualiza la caja y escribir en la caja mueve el deslizador. En combate "
+      .. "se guarda el valor y se aplica al terminar."
   )
-  local options = Settings.CreateSliderOptions(0, 12, 1)
-  Settings.CreateSlider(
-    category,
-    setting,
-    options,
-    "Cuántos botones en la barra " .. barId .. ". En 0 usa «Botones por barra». "
-      .. "Los botones se agregan a la derecha, sin mover los que ya están. "
-      .. "Hasta el botón 6 se puede asignar tecla en Esc → Teclado → Chukie UI - Barras 1–4."
-  )
+
+  local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  reset:SetSize(120, 22)
+  reset:SetPoint("TOPRIGHT", -22, -20)
+  reset:SetText("Restaurar 100 %")
+
+  local left, top = 92, -100
+  local cellWidth, rowHeight = 76, 108
+  for column = 1, 6 do
+    local label = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("TOP", panel, "TOPLEFT", left + (column - 1) * cellWidth + 25, top + 20)
+    label:SetText("Botón " .. column)
+  end
+
+  for barId = 1, 4 do
+    local rowLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    rowLabel:SetPoint("RIGHT", panel, "TOPLEFT", left - 12, top - (barId - 1) * rowHeight - 28)
+    rowLabel:SetText("Barra " .. barId)
+
+    for buttonIndex = 1, 6 do
+      local cellBarId, cellButtonIndex = barId, buttonIndex
+      local x = left + (buttonIndex - 1) * cellWidth
+      local y = top - (barId - 1) * rowHeight
+      local cell = CreateFrame("Frame", nil, panel)
+      cell:SetSize(58, 100)
+      cell:SetPoint("TOPLEFT", x, y)
+
+      local preview = CreateFrame("Button", nil, cell, "BackdropTemplate")
+      preview:SetSize(48, 48)
+      preview:SetPoint("TOP", 0, 0)
+      preview:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+      })
+      preview:SetBackdropColor(0.03, 0.03, 0.04, 0.85)
+      preview:SetBackdropBorderColor(0.45, 0.45, 0.5, 1)
+
+      preview.icon = preview:CreateTexture(nil, "ARTWORK")
+      preview.icon:SetPoint("TOPLEFT", 3, -3)
+      preview.icon:SetPoint("BOTTOMRIGHT", -3, 3)
+      preview.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+
+      preview.value = preview:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+      preview.value:SetPoint("CENTER")
+      preview.value:SetTextColor(1, 1, 1)
+      preview.value:SetShadowOffset(1, -1)
+
+      preview:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(preview, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Barra " .. cellBarId .. " · Botón " .. cellButtonIndex)
+        GameTooltip:AddLine("Controla la opacidad completa del botón real.", 1, 1, 1, true)
+        GameTooltip:Show()
+      end)
+      preview:SetScript("OnLeave", GameTooltip_Hide)
+
+      local sliderName = "ChukieUi_AB_Alpha_" .. cellBarId .. "_" .. cellButtonIndex
+      local slider = CreateFrame("Slider", sliderName, cell, "OptionsSliderTemplate")
+      slider:SetWidth(58)
+      slider:SetPoint("TOP", preview, "BOTTOM", 0, -14)
+      slider:SetMinMaxValues(LEFT_ALPHA_MIN, LEFT_ALPHA_MAX)
+      --- Paso de 1 para que cualquier valor tipeado en la caja sea representable acá.
+      slider:SetValueStep(1)
+      slider:SetObeyStepOnDrag(true)
+      _G[sliderName .. "Low"]:SetText("")
+      _G[sliderName .. "High"]:SetText("")
+      _G[sliderName .. "Text"]:SetText("")
+
+      local box = CreateFrame("EditBox", nil, cell, "InputBoxTemplate")
+      box:SetSize(42, 18)
+      box:SetPoint("TOP", slider, "BOTTOM", 1, -2)
+      box:SetAutoFocus(false)
+      box:SetNumeric(true)
+      box:SetMaxLetters(3)
+      box:SetJustifyH("CENTER")
+      box:SetFontObject("GameFontHighlightSmall")
+
+      local function updatePreview(value)
+        preview.value:SetText(value .. "%")
+        preview.icon:SetAlpha(value / 100)
+      end
+
+      local function writeBox(value)
+        box._syncing = true
+        box:SetText(tostring(value))
+        box:SetCursorPosition(0)
+        box._syncing = false
+      end
+
+      local function moveSlider(value)
+        slider._syncing = true
+        slider:SetValue(value)
+        slider._syncing = false
+      end
+
+      slider:SetScript("OnValueChanged", function(s, value)
+        value = clampLeftAlphaPercent(value)
+        updatePreview(value)
+        if s._syncing then
+          return
+        end
+        writeBox(value)
+        applyLeftAlphaPercent(cellBarId, cellButtonIndex, value)
+      end)
+
+      --- Mientras se tipea sólo se aplica lo que ya es un valor válido: "3" no salta a 10
+      --- antes de que el usuario termine de escribir "37".
+      box:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput or self._syncing then
+          return
+        end
+        local typed = tonumber(self:GetText())
+        if not typed or typed < LEFT_ALPHA_MIN or typed > LEFT_ALPHA_MAX then
+          return
+        end
+        typed = clampLeftAlphaPercent(typed)
+        moveSlider(typed)
+        updatePreview(typed)
+        applyLeftAlphaPercent(cellBarId, cellButtonIndex, typed)
+      end)
+
+      --- Al confirmar se normaliza: fuera de rango se recorta y vacío vuelve al valor actual.
+      local function commitBox()
+        local typed = tonumber(box:GetText())
+        local value = clampLeftAlphaPercent(typed or slider:GetValue())
+        moveSlider(value)
+        updatePreview(value)
+        writeBox(value)
+        if typed then
+          applyLeftAlphaPercent(cellBarId, cellButtonIndex, value)
+        end
+      end
+
+      box:SetScript("OnEnterPressed", function(self)
+        commitBox()
+        self:ClearFocus()
+      end)
+      box:SetScript("OnEditFocusLost", commitBox)
+      box:SetScript("OnEscapePressed", function(self)
+        writeBox(clampLeftAlphaPercent(slider:GetValue()))
+        self:ClearFocus()
+      end)
+      box:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(box, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Barra " .. cellBarId .. " · Botón " .. cellButtonIndex)
+        GameTooltip:AddLine("Valor exacto de 10 a 100 %. Enter para confirmar.", 1, 1, 1, true)
+        GameTooltip:Show()
+      end)
+      box:SetScript("OnLeave", GameTooltip_Hide)
+
+      panel.cells[#panel.cells + 1] = {
+        barId = cellBarId,
+        buttonIndex = cellButtonIndex,
+        action = (cellBarId - 1) * 12 + cellButtonIndex,
+        preview = preview,
+        slider = slider,
+        box = box,
+      }
+    end
+  end
+
+  function panel:Refresh()
+    for i = 1, #self.cells do
+      local cell = self.cells[i]
+      local alpha = 100
+      if ns.ActionBars and ns.ActionBars.GetLeftButtonAlphaPercent then
+        alpha = ns.ActionBars:GetLeftButtonAlphaPercent(cell.barId, cell.buttonIndex)
+      end
+      cell.slider._syncing = true
+      cell.slider:SetValue(alpha)
+      cell.slider._syncing = false
+      cell.box._syncing = true
+      cell.box:SetText(tostring(alpha))
+      cell.box:SetCursorPosition(0)
+      cell.box._syncing = false
+      cell.preview.value:SetText(alpha .. "%")
+      cell.preview.icon:SetAlpha(alpha / 100)
+      cell.preview.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+      if GetActionTexture then
+        local ok, texture = pcall(GetActionTexture, cell.action)
+        if ok and not (issecretvalue and issecretvalue(texture)) then
+          if texture ~= nil then
+            cell.preview.icon:SetTexture(texture)
+          end
+        end
+      end
+    end
+  end
+
+  reset:SetScript("OnClick", function()
+    if ns.ActionBars and ns.ActionBars.ResetLeftButtonAlphas then
+      ns.ActionBars:ResetLeftButtonAlphas()
+    end
+    panel:Refresh()
+  end)
+  panel:SetScript("OnShow", function(self)
+    self:Refresh()
+  end)
+  return panel
 end
 
 local function addBoolProxy(category, uniqueId, key, label, tooltip, defaultOn)
@@ -615,6 +814,282 @@ local function addIntSliderRightWidget(category, uniqueId, key, label, tooltip, 
   )
   local options = Settings.CreateSliderOptions(minV, maxV, step)
   Settings.CreateSlider(category, setting, options, tooltip)
+end
+
+local function refreshCombatLog()
+  if ns.CombatLog and ns.CombatLog.RefreshConfig then
+    ns.CombatLog:RefreshConfig()
+  else
+    refreshRightPanelLayout()
+  end
+end
+
+local function addCombatLogBool(category, uniqueId, key, label, tooltip, defaultOn)
+  local function get()
+    local value = rightWidgetsDB()[key]
+    if value == nil then
+      return defaultOn == true
+    end
+    return value == true
+  end
+  local function set(value)
+    rightWidgetsDB()[key] = value == true or value == 1
+    refreshCombatLog()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    uniqueId,
+    Settings.VarType.Boolean,
+    label,
+    defaultOn and Settings.Default.True or Settings.Default.False,
+    get,
+    set
+  )
+  Settings.CreateCheckbox(category, setting, tooltip)
+end
+
+local function combatLogTypesDB()
+  local d = rightWidgetsDB()
+  d.combatLogTypes = type(d.combatLogTypes) == "table" and d.combatLogTypes or {}
+  return d.combatLogTypes
+end
+
+local function addCombatLogTypeBool(category, key, label, tooltip, defaultOn)
+  local function get()
+    local value = combatLogTypesDB()[key]
+    if value == nil then
+      return defaultOn == true
+    end
+    return value == true
+  end
+  local function set(value)
+    combatLogTypesDB()[key] = value == true or value == 1
+    refreshCombatLog()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_CombatLogType_" .. key,
+    Settings.VarType.Boolean,
+    label,
+    defaultOn and Settings.Default.True or Settings.Default.False,
+    get,
+    set
+  )
+  Settings.CreateCheckbox(category, setting, tooltip)
+end
+
+local function addCombatLogSlotDropdown(category)
+  local function data()
+    local c = Settings.CreateControlTextContainer()
+    c:Add(2, "Ranura 2 (izquierda inferior)")
+    c:Add(3, "Ranura 3 (izquierda central)")
+    c:Add(4, "Ranura 4 (izquierda superior)")
+    return c:GetData()
+  end
+  local function get()
+    return math.max(2, math.min(4, math.floor(tonumber(rightWidgetsDB().combatLogWidgetSlot) or 4)))
+  end
+  local function set(value)
+    rightWidgetsDB().combatLogWidgetSlot = math.max(2, math.min(4, math.floor(tonumber(value) or 4)))
+    refreshCombatLog()
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_CombatLogWidgetSlot",
+    Settings.VarType.Number,
+    "Ranura del toggle",
+    4,
+    get,
+    set
+  )
+  Settings.CreateDropdown(
+    category,
+    setting,
+    data,
+    "Reemplaza una celda de la mini barra/detección dinámica. La acción Blizzard permanece guardada."
+  )
+end
+
+local function createCombatLogInstancesCanvas()
+  local panel = CreateFrame("Frame")
+  panel.rows = {}
+  panel.headers = {}
+
+  local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  title:SetPoint("TOPLEFT", 20, -18)
+  title:SetText("Combat Log — instancias específicas")
+
+  local help = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  help:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+  help:SetPoint("RIGHT", panel, "RIGHT", -24, 0)
+  help:SetJustifyH("LEFT")
+  help:SetText(
+    "Sin selecciones se graban todas las instancias de los tipos habilitados. "
+      .. "Al marcar una o más, sólo se graban esas instancias."
+  )
+
+  local addCurrent = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  addCurrent:SetSize(150, 22)
+  addCurrent:SetPoint("TOPLEFT", help, "BOTTOMLEFT", 0, -10)
+  addCurrent:SetText("Añadir instancia actual")
+
+  local clear = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  clear:SetSize(130, 22)
+  clear:SetPoint("LEFT", addCurrent, "RIGHT", 8, 0)
+  clear:SetText("Limpiar selección")
+
+  local status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  status:SetPoint("LEFT", clear, "RIGHT", 10, 0)
+  status:SetPoint("RIGHT", panel, "RIGHT", -24, 0)
+  status:SetJustifyH("LEFT")
+
+  local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", addCurrent, "BOTTOMLEFT", 0, -10)
+  scroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -30, 18)
+  local child = CreateFrame("Frame", nil, scroll)
+  child:SetSize(520, 1)
+  scroll:SetScrollChild(child)
+  panel.scrollChild = child
+
+  local function selections()
+    local d = rightWidgetsDB()
+    d.combatLogInstances = type(d.combatLogInstances) == "table" and d.combatLogInstances or {}
+    return d.combatLogInstances
+  end
+
+  local function savedNames()
+    local d = rightWidgetsDB()
+    d.combatLogInstanceNames =
+      type(d.combatLogInstanceNames) == "table" and d.combatLogInstanceNames or {}
+    return d.combatLogInstanceNames
+  end
+
+  local function addEntry(out, seen, group, key, name)
+    if not key or seen[key] then
+      return
+    end
+    seen[key] = true
+    out[#out + 1] = { group = group, key = key, name = name or key }
+  end
+
+  local function buildCatalog()
+    local out, seen = {}, {}
+    if C_ChallengeMode and C_ChallengeMode.GetMapTable and C_ChallengeMode.GetMapUIInfo then
+      local ok, maps = pcall(C_ChallengeMode.GetMapTable)
+      if ok and type(maps) == "table" then
+        for _, mapID in ipairs(maps) do
+          local infoOk, name = pcall(C_ChallengeMode.GetMapUIInfo, mapID)
+          if infoOk and name then
+            addEntry(out, seen, "Míticas+ de temporada", "challenge:" .. mapID, name)
+          end
+        end
+      end
+    end
+    if EJ_GetNumTiers and EJ_SelectTier and EJ_GetInstanceByIndex then
+      local oldTier = EJ_GetCurrentTier and EJ_GetCurrentTier() or nil
+      local ok, tiers = pcall(EJ_GetNumTiers)
+      if ok then
+        for tier = 1, tonumber(tiers) or 0 do
+          pcall(EJ_SelectTier, tier)
+          for _, raid in ipairs({ false, true }) do
+            for index = 1, 100 do
+              local infoOk, instanceID, name = pcall(EJ_GetInstanceByIndex, index, raid)
+              if not infoOk or not instanceID then
+                break
+              end
+              addEntry(out, seen, raid and "Raids" or "Mazmorras", "instance:" .. instanceID, name)
+            end
+          end
+        end
+      end
+      if oldTier then
+        pcall(EJ_SelectTier, oldTier)
+      end
+    end
+    for key, selected in pairs(selections()) do
+      if selected == true then
+        addEntry(out, seen, "Guardadas / actuales", key, savedNames()[key] or key)
+      end
+    end
+    table.sort(out, function(a, b)
+      if a.group == b.group then
+        return tostring(a.name) < tostring(b.name)
+      end
+      return tostring(a.group) < tostring(b.group)
+    end)
+    return out
+  end
+
+  function panel:Refresh()
+    for i = 1, #self.rows do
+      self.rows[i]:Hide()
+    end
+    for i = 1, #self.headers do
+      self.headers[i]:Hide()
+    end
+    local entries = buildCatalog()
+    local y, rowIndex, headerIndex, lastGroup = 0, 0, 0, nil
+    for _, entry in ipairs(entries) do
+      if entry.group ~= lastGroup then
+        headerIndex = headerIndex + 1
+        local header = self.headers[headerIndex]
+        if not header then
+          header = child:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+          self.headers[headerIndex] = header
+        end
+        header:ClearAllPoints()
+        header:SetPoint("TOPLEFT", child, "TOPLEFT", 2, -y)
+        header:SetText(entry.group)
+        header:Show()
+        y = y + 22
+        lastGroup = entry.group
+      end
+      rowIndex = rowIndex + 1
+      local row = self.rows[rowIndex]
+      if not row then
+        row = CreateFrame("CheckButton", nil, child, "UICheckButtonTemplate")
+        row:SetSize(22, 22)
+        row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        row.label:SetPoint("LEFT", row, "RIGHT", 2, 0)
+        row.label:SetWidth(430)
+        row.label:SetJustifyH("LEFT")
+        self.rows[rowIndex] = row
+      end
+      row:ClearAllPoints()
+      row:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
+      row.label:SetText(entry.name)
+      row:SetChecked(selections()[entry.key] == true)
+      local rowEntry = entry
+      row:SetScript("OnClick", function(self)
+        selections()[rowEntry.key] = self:GetChecked() and true or nil
+        savedNames()[rowEntry.key] = rowEntry.name
+        refreshCombatLog()
+      end)
+      row:Show()
+      y = y + 24
+    end
+    child:SetHeight(math.max(1, y + 8))
+    status:SetText(rowIndex == 0 and "No se pudo cargar el catálogo." or (rowIndex .. " instancias disponibles"))
+  end
+
+  addCurrent:SetScript("OnClick", function()
+    local ok, message = false, "No se pudo añadir."
+    if ns.CombatLog and ns.CombatLog.AddCurrentInstance then
+      ok, message = ns.CombatLog:AddCurrentInstance()
+    end
+    panel:Refresh()
+    status:SetText(message or (ok and "Instancia añadida." or "No se pudo añadir."))
+    refreshCombatLog()
+  end)
+  clear:SetScript("OnClick", function()
+    rightWidgetsDB().combatLogInstances = {}
+    panel:Refresh()
+    refreshCombatLog()
+  end)
+  panel:SetScript("OnShow", function(self)
+    self:Refresh()
+  end)
+  return panel
 end
 
 local DATE_FONT_AUTO, DATE_FONT_FRIZ, DATE_FONT_ARIAL, DATE_FONT_MORPHEUS, DATE_FONT_SKURRI = 0, 1, 2, 3, 4
@@ -1417,6 +1892,7 @@ function ns.RegisterConfigPanel()
     "miniActionBarEnabled",
     "Barra de 3 acciones (Action Bar 6)",
     "Convierte las tres celdas reservadas en botones de acción normales (slots 145–147, Action Bar 6 / MultiBar5). "
+      .. "Si el toggle de Combat Log está activo, su celda queda excluida y permanecen dos acciones visibles. "
       .. "Acepta cualquier hechizo, macro o ítem (no usa Bonus Bar 6 / tótems). "
       .. "Arrastra como en Dominos o una barra Blizzard. "
       .. "Teclas: Esc → Controles → «Chukie UI - mini barra acción 1/2/3», o Multi Action Bar 5 botones 1–3. "
@@ -1432,6 +1908,7 @@ function ns.RegisterConfigPanel()
     "dynamicActionSlotsEnabled",
     "Activar detección automática",
     "Solo aplica si «Barra de 3 acciones» está desactivada. Rellena las tres celdas: (1) acción extra, (2) habilidad de zona, (3) ítems de misiones rastreadas. "
+      .. "La celda ocupada por Combat Log se omite y la cola se compacta en las restantes. "
       .. "Teclas en Esc → Controles → «Chukie UI - ranura dinámica 2/3/4».",
     true
   )
@@ -1587,29 +2064,21 @@ function ns.RegisterConfigPanel()
     )
   end
 
-  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Panel izquierdo (barras 1–4)"))
+  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Bloque 6 × 4 (barras 1–4)"))
   addBoolActionBars(
     barsCategory,
     "ChukieUi_AB_leftEnabled",
     "leftEnabled",
     "Mostrar barras 1–4",
-    "Cuatro filas horizontales ancladas al panel izquierdo.",
+    "Cuatro filas horizontales que forman un bloque centrado en la pantalla.",
     true
   )
-  addIntSliderActionBars(
-    barsCategory,
-    "ChukieUi_AB_leftNum",
-    "leftNumButtons",
-    "Botones por barra",
-    "Cuántos botones mostrar en cada fila (1–12). Cada barra puede sobrescribirlo abajo.",
-    1,
-    12,
-    1,
-    6
+  barsLayout:AddInitializer(
+    CreateSettingsListSectionHeaderInitializer(
+      "Fijas en 6 botones por fila (matriz 6 × 4). El centro del bloque se ancla al centro "
+        .. "de la pantalla; Offset X/Y lo mueven desde ahí."
+    )
   )
-  for barId = 1, 4 do
-    addLeftBarNumButtonsSlider(barsCategory, barId)
-  end
   addIntSliderActionBars(
     barsCategory,
     "ChukieUi_AB_leftSize",
@@ -1648,23 +2117,32 @@ function ns.RegisterConfigPanel()
     "ChukieUi_AB_leftOffX",
     "leftOffsetX",
     "Offset X",
-    "Desplazamiento desde la esquina inferior izquierda del panel.",
-    -400,
-    800,
+    "Desplazamiento horizontal del bloque 6×4 desde el centro de la pantalla.",
+    -1800,
+    1800,
     1,
-    8
+    0
   )
   addIntSliderActionBars(
     barsCategory,
     "ChukieUi_AB_leftOffY",
     "leftOffsetY",
     "Offset Y",
-    "Desplazamiento vertical desde la base del panel izquierdo.",
-    -200,
-    400,
+    "Desplazamiento vertical del bloque 6×4 desde el centro de la pantalla.",
+    -1200,
+    1200,
     1,
-    8
+    0
   )
+
+  local alphaCanvas = createLeftButtonAlphaCanvas()
+  local alphaCategory, alphaLayout =
+    Settings.RegisterCanvasLayoutSubcategory(barsCategory, alphaCanvas, "Transparencia 6 × 4")
+  alphaCategory.ID = "ChukieUi_ActionBars_AlphaGrid"
+  if alphaLayout and alphaLayout.AddAnchorPoint then
+    alphaLayout:AddAnchorPoint("TOPLEFT", 0, 0)
+    alphaLayout:AddAnchorPoint("BOTTOMRIGHT", 0, 0)
+  end
 
   barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Guardar acciones (barras 1–4)"))
   addBoolActionBars(
@@ -1848,6 +2326,54 @@ function ns.RegisterConfigPanel()
     1,
     0
   )
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Combat Log"))
+  addCombatLogBool(
+    leftCategory,
+    "ChukieUi_CombatLogWidgetEnabled",
+    "combatLogWidgetEnabled",
+    "Toggle en la grilla 2 × 4",
+    "Reemplaza una de las tres ranuras de acción del bloque azul por un botón que inicia/detiene Logs\\WoWCombatLog.txt.",
+    true
+  )
+  addCombatLogSlotDropdown(leftCategory)
+  addCombatLogBool(
+    leftCategory,
+    "ChukieUi_CombatLogStopOnExit",
+    "combatLogStopOnExit",
+    "Detener al salir",
+    "Sólo detiene una grabación iniciada automáticamente por Chukie UI; nunca apaga una sesión manual o de otro addon.",
+    true
+  )
+  addCombatLogBool(
+    leftCategory,
+    "ChukieUi_CombatLogAdvanced",
+    "combatLogAdvanced",
+    "Advanced Combat Logging",
+    "Controla el CVar advancedCombatLogging, recomendado para Warcraft Logs.",
+    true
+  )
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Auto-logging: mazmorras"))
+  addCombatLogTypeBool(leftCategory, "dungeonNormal", "Mazmorra normal", "Autoactivar en dificultad normal.", false)
+  addCombatLogTypeBool(leftCategory, "dungeonHeroic", "Mazmorra heroica", "Autoactivar en dificultad heroica.", false)
+  addCombatLogTypeBool(leftCategory, "dungeonMythic", "Mazmorra mítica (0)", "Autoactivar en mítica sin piedra.", false)
+  addCombatLogTypeBool(leftCategory, "dungeonMythicPlus", "Mazmorra mítica+", "Autoactivar al comenzar una instancia M+.", true)
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Auto-logging: raids"))
+  addCombatLogTypeBool(leftCategory, "raidLfr", "Raid LFR", "Autoactivar en Buscador de bandas.", false)
+  addCombatLogTypeBool(leftCategory, "raidNormal", "Raid normal", "Autoactivar en raid normal.", false)
+  addCombatLogTypeBool(leftCategory, "raidHeroic", "Raid heroica", "Autoactivar en raid heroica.", false)
+  addCombatLogTypeBool(leftCategory, "raidMythic", "Raid mítica", "Autoactivar en raid mítica.", true)
+  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Auto-logging: otros"))
+  addCombatLogTypeBool(leftCategory, "timewalking", "Paseo en el tiempo", "Autoactivar en contenido Timewalking.", false)
+  addCombatLogTypeBool(leftCategory, "delve", "Delves / escenarios", "Autoactivar en instancias de tipo escenario.", false)
+  addCombatLogTypeBool(leftCategory, "pvp", "Arena / campo de batalla", "Autoactivar en PvP instanciado.", false)
+
+  local combatInstancesCanvas = createCombatLogInstancesCanvas()
+  local combatInstancesCategory, combatInstancesLayout =
+    Settings.RegisterCanvasLayoutSubcategory(leftCategory, combatInstancesCanvas, "Instancias específicas")
+  combatInstancesCategory.ID = "ChukieUi_CombatLogInstances"
+  combatInstancesLayout:AddAnchorPoint("TOPLEFT", 0, 0)
+  combatInstancesLayout:AddAnchorPoint("BOTTOMRIGHT", 0, 0)
+
   leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Sector historial loot/trade"))
   addLeftPanelLootTradeFontFaceDropdown(leftCategory)
   addIntSliderPos(

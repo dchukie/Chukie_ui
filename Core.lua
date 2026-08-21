@@ -142,21 +142,42 @@ local defaults = {
       dynamicActionSlotsEnabled = true,
       --- Si está activo, deshabilita detección dinámica y deja el panel derecho en modo estático liviano.
       staticSessionMode = true,
+      --- Toggle de WoWCombatLog.txt en una de las tres celdas de acción.
+      combatLogWidgetEnabled = true,
+      combatLogWidgetSlot = 4,
+      combatLogStopOnExit = true,
+      combatLogAdvanced = true,
+      combatLogTypes = {
+        dungeonNormal = false,
+        dungeonHeroic = false,
+        dungeonMythic = false,
+        dungeonMythicPlus = true,
+        raidLfr = false,
+        raidNormal = false,
+        raidHeroic = false,
+        raidMythic = true,
+        timewalking = false,
+        delve = false,
+        pvp = false,
+      },
+      --- Vacío = todas las instancias cuyos tipos estén habilitados.
+      combatLogInstances = {},
+      combatLogInstanceNames = {},
     },
   },
   --- Barras de acción estilo Dominos (IDs 1–14 lineales × 12 slots).
   actionBars = {
     enabled = true,
     leftEnabled = true,
-    --- Botones visibles por barra izquierda (1–12). Dominos suele usar 6.
-    leftNumButtons = 6,
-    --- Override por barra (1–4); 0 = usar leftNumButtons.
-    leftNumButtonsPerBar = { 0, 0, 0, 0 },
+    --- Las barras 1–4 son una matriz fija de 6 × 4.
+    --- Cada fila/columna puede tener su propia opacidad (10–100 %).
+    leftButtonAlphaPercent = {},
     leftButtonSize = 36,
     leftSpacing = 2,
     leftBarSpacing = 4,
-    leftOffsetX = 8,
-    leftOffsetY = 8,
+    --- Offsets desde el centro de la pantalla hasta el centro del bloque de barras 1–4.
+    leftOffsetX = 0,
+    leftOffsetY = 0,
     --- Skyriding: barras 1–4 → páginas 8–11 ([bonusbar:5]).
     skyridingPaging = true,
     --- Vehículo / override / possess: la barra 1 muestra esas acciones.
@@ -512,6 +533,9 @@ function ns.OnProfileChanged()
   if ns.RightPanelWidgets and ns.RightPanelWidgets.Refresh then
     ns.RightPanelWidgets:Refresh()
   end
+  if ns.CombatLog and ns.CombatLog.RefreshConfig then
+    ns.CombatLog:RefreshConfig()
+  end
   if ns.LeftPanel and ns.LeftPanel.Refresh then
     ns.LeftPanel:Refresh()
   end
@@ -824,6 +848,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
   print("|cff00ff00Chukie UI|r — panel de auras: /chukie-auras (o /chukieui aurapanel)")
   print("|cff00ff00Chukie UI|r — grilla de party clickeable: /chukieui party (menú: Marcos) | /chukie-party (ventana) | /chukieui party on | off | diag")
   print("|cff00ff00Chukie UI|r — panel derecho: /chukieui diag | /chukieui diagbotones | /chukieui fix")
+  print("|cff00ff00Chukie UI|r — Combat Log: Esc → AddOns → Chukie UI → Panel izquierdo")
   if p then
     print("  Perfil: " .. tostring(ns.Profile:GetCurrentName()) .. " — " .. (p.enabled and "activado" or "desactivado"))
   end

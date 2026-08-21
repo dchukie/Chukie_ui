@@ -17,12 +17,14 @@ Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueU
 | **Minimapa** | Posición del cluster, escala, `rotateMinimap`, flecha del jugador, **brújula horizontal** (`HorizontalCompass.lua`, posición vertical libre desde el centro del minimapa: encima o debajo), zoom preferido. |
 | **Barra de iconos** | Proxies (LibDBIcon, etc.), política por botón, Masque, micromenú configurable. |
 | **Panel derecho** | `PanelCore.lua` + `RightPanel.lua`: host del minimapa, rejilla de widgets y slot lateral derecho. |
-| **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte (`TeleportCatalog.lua`), ranuras dinámicas 2–4 (`DynamicReservedSlots.lua`). |
+| **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte y toggle de **Combat Log** en una ranura 2–4 configurable. `CombatLog.lua` permite auto-logging por dificultad (M+, raids, etc.) y por instancia concreta. |
 | **Sector amarillo** | `RightStrip.lua`: grilla inferior fija 2x2 (oro abreviado + huecos libres de bolsas), clic para `ToggleAllBags`, estilo Masque opcional y ocultado de la barra de bolsas Blizzard. |
+| **Barras de acción 1–4** | Matriz fija de **6 × 4** centrada en la pantalla (Offset X −1800…1800, Offset Y −1200…1200 desde el centro). La subpágina **Barras de acción → Transparencia 6 × 4** reproduce las 24 celdas y permite ajustar cada botón entre 10 y 100 % con deslizador o caja de texto (ambos sincronizados). |
 | **Opciones** | *Esc → Opciones → AddOns → Chukie UI* (`ConfigPanel.lua`, API Settings de Retail). |
 | **Alertas CD/procs/auras** | Grupos con efectos y condiciones, editor `/chukie-aura`. En **12.1**, un grupo cuya única condición es aura “Presente” y cuyo único efecto visual es icono/textura lo dibuja el cliente (**AuraContainer**), así que también ve las auras que Blizzard oculta; el resto usa el path propio. Media en `Media/Alerts/`. |
 | **Panel de auras** | `AuraPanel.lua`, `/chukie-auras`: un slot grande por aura elegida usando **AuraContainer**, con tamaño, separación, auras por línea, dirección y posición arrastrable. Los slots no se compactan (el addon no sabe cuál está activa). |
 | **Grilla de party por habilidades** | `PartyGrid.lua`. Cada columna guarda un hechizo por perfil y cada celda es un `SecureActionButtonTemplate`: clic izquierdo lo lanza sobre `player`/`party1..4`; clic derecho no hace nada. Asignación desde el libro y movimiento entre columnas por arrastre, icono/cooldown real sin GCD/cargas/usabilidad/rango y tooltip. Soporte Masque en el grupo separado **Chukie UI → PartyGrid** y opacidad del conjunto (10–100 %). Toda configuración se rechaza durante el combate. Opciones en **Marcos → Party** (`/chukieui party`), ventana propia (`/chukie-party`) y estado con `/chukieui party diag`. Por defecto: 1 columna a la derecha de la grilla Blizzard, creciendo a la derecha. |
+| **Combat Log** | `CombatLog.lua`. Toggle en una ranura 2–4 de la grilla azul. Auto-logging por tipo (M+, mítica 0, raids por dificultad, etc.) y por instancia concreta. Opciones en **Panel izquierdo → Combat Log**. El archivo lo escribe el cliente (`Logs\WoWCombatLog.txt`); el addon no parsea CLEU. |
 
 ## Archivos que carga el cliente
 
@@ -33,7 +35,15 @@ Orden en `Chukie_Ui.toc`: ver el `.toc` (incluye `ActionBars.lua`, `Alerts*.lua`
 
 ## Ranuras dinámicas (reservadas 2–4)
 
-Prioridad aproximada: acción extra → habilidad de zona → ítems especiales de misiones rastreadas. Se pueden enlazar teclas en **Controles → Teclas rápidas → Add-ons**. Opción en el panel del addon para activar o desactivar el comportamiento.
+Prioridad aproximada: acción extra → habilidad de zona → ítems especiales de misiones rastreadas. Se pueden enlazar teclas en **Controles → Teclas rápidas → Add-ons**. Opción en el panel del addon para activar o desactivar el comportamiento. Si el toggle de Combat Log está activo, su celda se excluye y la cola se compacta en las restantes.
+
+## Combat Log
+
+- Toggle en **Panel izquierdo → Combat Log** (ranura 2, 3 o 4 de la grilla 2 × 4).
+- Por defecto autoactiva M+ y raid mítica; el resto de tipos va desmarcado.
+- **Instancias específicas**: lista vacía = todas las del tipo marcado; con marcas, sólo esas.
+- «Detener al salir» sólo apaga una sesión que arrancó el addon, no un `/combatlog` manual.
+- Advanced Combat Logging es un CVar aparte (`advancedCombatLogging`).
 
 ## Guardado de acciones (barras 1–4)
 

@@ -30,6 +30,15 @@ local function db()
   return {}
 end
 
+local function slotReservedForCombatLog(widgetId)
+  local d = db()
+  if not d or d.combatLogWidgetEnabled == false then
+    return false
+  end
+  local slot = math.max(2, math.min(4, math.floor(tonumber(d.combatLogWidgetSlot) or 4)))
+  return widgetId == ("reserved" .. slot)
+end
+
 function M.IsEnabled()
   local d = db()
   return d.miniActionBarEnabled ~= false
@@ -186,6 +195,9 @@ function M:ShowCombatPlaceholders(buttonsById)
     local def = SLOT_DEFS[i]
     local slotBtn = buttonsById[def.widgetId]
     local act = self._buttons and self._buttons[def.widgetId]
+    if slotReservedForCombatLog(def.widgetId) then
+      slotBtn = nil
+    end
     --- Si el botón seguro ya está en la celda, no hay nada que suplir (y la celda
     --- pasa a tener un hijo protegido: mejor no tocarla en combate).
     local attached = act and act.GetParent and act:GetParent() == slotBtn
@@ -495,7 +507,14 @@ function M:AttachToSlots(buttonsById)
     local def = SLOT_DEFS[i]
     local slotBtn = buttonsById and buttonsById[def.widgetId]
     local act = self._buttons and self._buttons[def.widgetId]
-    if slotBtn and act then
+    if slotReservedForCombatLog(def.widgetId) then
+      if act then
+        act:SetAttribute("statehidden", true)
+        act:Hide()
+        act:SetParent(UIParent)
+        ClearOverrideBindings(act._hotkeyBind or act)
+      end
+    elseif slotBtn and act then
       prepareProxySlot(slotBtn)
       if not InCombatLockdown() then
         slotBtn:Show()

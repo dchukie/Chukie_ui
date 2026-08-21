@@ -64,7 +64,13 @@ local function cloneProfileData(src)
     t.minimapBar[k] = v
   end
   for k, v in pairs((((src.widgets or {}).rightPanelWidgets) or {})) do
-    if k == "teleportGridVisibility" and type(v) == "table" then
+    if
+      (k == "teleportGridVisibility"
+        or k == "combatLogTypes"
+        or k == "combatLogInstances"
+        or k == "combatLogInstanceNames")
+      and type(v) == "table"
+    then
       local np = {}
       for pk, pv in pairs(v) do
         np[pk] = pv
@@ -198,7 +204,19 @@ local function cloneProfileData(src)
   end
   if type(src.actionBars) == "table" then
     for k, v in pairs(src.actionBars) do
-      if type(v) ~= "table" then
+      if k == "leftButtonAlphaPercent" and type(v) == "table" then
+        t.actionBars.leftButtonAlphaPercent = {}
+        for barId = 1, 4 do
+          local sourceRow = v[barId]
+          if type(sourceRow) == "table" then
+            local targetRow = {}
+            t.actionBars.leftButtonAlphaPercent[barId] = targetRow
+            for buttonIndex = 1, 6 do
+              targetRow[buttonIndex] = sourceRow[buttonIndex]
+            end
+          end
+        end
+      elseif type(v) ~= "table" then
         t.actionBars[k] = v
       end
     end
@@ -261,6 +279,11 @@ local function ensurePanelWidgetSchema(p)
   p.minimapPosition = rightPanel
   p.minimapBar = minimapBar
   p.actionBars = p.actionBars or {}
+  --- Las barras izquierdas ya no tienen cantidad configurable: siempre son 6 × 4.
+  p.actionBars.leftNumButtons = nil
+  p.actionBars.leftNumButtonsPerBar = nil
+  p.actionBars.leftButtonAlphaPercent =
+    type(p.actionBars.leftButtonAlphaPercent) == "table" and p.actionBars.leftButtonAlphaPercent or {}
   p.horizontalCompass = p.horizontalCompass or {}
   p.auraPanel = p.auraPanel or {}
   p.auraPanel.auras = p.auraPanel.auras or {}
@@ -382,6 +405,7 @@ function ns.Profile:SetCurrent(name)
     return false
   end
   ChukieUiDB.currentProfile = name
+  self:MigrateActionBarsLeftCenterAnchor()
   self:NotifyChanged()
   return true
 end
@@ -447,25 +471,30 @@ function ns.Profile:MigrateMinimapBarPixelOptions()
   end
 end
 
---- Una vez: las cuatro filas del panel izquierdo pasan a 6 botones. Antes eran 5 y las de
---- abajo llegaban a 6 por override, así que se unifica en el valor general.
+--- Las barras 1–4 son fijas en 6 botones. Las claves configurables anteriores se eliminan
+--- incluso en perfiles ya migrados para que no parezca que todavía gobiernan el layout.
 function ns.Profile:MigrateActionBarsLeftButtons()
   local a = self:GetActive().actionBars
-  if not a or a._leftBars6Applied then
+  if not a then
     return
   end
   a._leftBars6Applied = true
-  if (tonumber(a.leftNumButtons) or 6) < 6 then
-    a.leftNumButtons = 6
+  a.leftNumButtons = nil
+  a.leftNumButtonsPerBar = nil
+  a.leftButtonAlphaPercent =
+    type(a.leftButtonAlphaPercent) == "table" and a.leftButtonAlphaPercent or {}
+end
+
+--- El bloque de barras 1–4 pasó de anclarse en la esquina del panel izquierdo al centro
+--- de la pantalla: los offsets viejos apuntaban a otro origen, así que se reinician una vez.
+function ns.Profile:MigrateActionBarsLeftCenterAnchor()
+  local a = self:GetActive().actionBars
+  if not a or a._leftCenterAnchorApplied then
+    return
   end
-  local per = a.leftNumButtonsPerBar
-  if per then
-    for barId = 1, 4 do
-      if (tonumber(per[barId]) or 0) <= 6 then
-        per[barId] = 0
-      end
-    end
-  end
+  a._leftCenterAnchorApplied = true
+  a.leftOffsetX = 0
+  a.leftOffsetY = 0
 end
 
 function ns.Profile:Initialize()
@@ -476,6 +505,7 @@ function ns.Profile:Initialize()
   end
   self:MigrateMinimapBarPixelOptions()
   self:MigrateActionBarsLeftButtons()
+  self:MigrateActionBarsLeftCenterAnchor()
 end
 
 function ns.Profile:SuggestDuplicateName()

@@ -57,6 +57,7 @@ local ICONS = {
   difficulty = "Interface\\Icons\\Achievement_ChallengeMode_Bronze",
   reserved = "Interface\\Buttons\\UI-GroupLoot-Pass-Up",
   teleport = "Interface\\Icons\\INV_Misc_Rune_01",
+  combatlog = "Interface\\Icons\\INV_Misc_Note_05",
 }
 
 local LOCAL_DIFFICULTY_VISUALS = {
@@ -83,6 +84,19 @@ local function isMiniActionBarEnabled()
   end
   local db = RW:DB()
   return not db or db.miniActionBarEnabled ~= false
+end
+
+function RW:GetCombatLogWidgetId()
+  local db = self:DB()
+  if not db or db.combatLogWidgetEnabled == false then
+    return nil
+  end
+  local slot = math.max(2, math.min(4, math.floor(tonumber(db.combatLogWidgetSlot) or 4)))
+  return "reserved" .. slot
+end
+
+function RW:IsCombatLogWidget(id)
+  return id ~= nil and id == self:GetCombatLogWidgetId()
 end
 
 local DATE_FONT_FACES = {
@@ -1683,7 +1697,13 @@ end
 
 function RW:ApplyDynamicReservedVisuals()
   local D = ns.DynamicReservedSlots
-  local order = { "reserved2", "reserved3", "reserved4" }
+  local order = {}
+  for slot = 2, 4 do
+    local id = "reserved" .. slot
+    if not self:IsCombatLogWidget(id) then
+      order[#order + 1] = id
+    end
+  end
   local inCombat = InCombatLockdown()
   if not self._buttons or not D or not D.BuildQueue then
     for i = 1, #order do
@@ -1698,6 +1718,8 @@ function RW:ApplyDynamicReservedVisuals()
           b = 0.55,
         })
         b:SetScript("OnClick", nil)
+        b:SetScript("OnEnter", nil)
+        b:SetScript("OnLeave", nil)
       end
     end
     return
@@ -1740,7 +1762,7 @@ function RW:ApplyDynamicReservedVisuals()
     return
   end
 
-  local queue = D.BuildQueue(3)
+  local queue = D.BuildQueue(#order)
   for i = 1, #order do
     local id = order[i]
     local slot = self._buttons[id]
@@ -2217,9 +2239,17 @@ function RW:EnsureFrames()
       else
         self._teleportRegenPending = true
       end
-    elseif (id == "reserved2" or id == "reserved3" or id == "reserved4") and isMiniActionBarEnabled() then
+    elseif
+      (id == "reserved2" or id == "reserved3" or id == "reserved4")
+      and isMiniActionBarEnabled()
+      and not self:IsCombatLogWidget(id)
+    then
       -- Mini barra: ActionBarButtonTemplate vía ns.MiniActionBar
-    elseif not isStaticSessionMode() and (id == "reserved2" or id == "reserved3" or id == "reserved4") then
+    elseif
+      not self:IsCombatLogWidget(id)
+      and not isStaticSessionMode()
+      and (id == "reserved2" or id == "reserved3" or id == "reserved4")
+    then
       self:EnsureDynamicReservedSlot(b)
     end
   end
@@ -2324,7 +2354,8 @@ function RW:Layout()
       and ns.DynamicReservedSlots
       and ns.DynamicReservedSlots.IsFeatureEnabled
       and ns.DynamicReservedSlots.IsFeatureEnabled()
-    if (id == "reserved2" or id == "reserved3" or id == "reserved4") and dynOn then
+    local combatLogCell = self:IsCombatLogWidget(id)
+    if (id == "reserved2" or id == "reserved3" or id == "reserved4") and dynOn and not combatLogCell then
       if not InCombatLockdown() then
         b:Hide()
       else
@@ -2343,9 +2374,13 @@ function RW:Layout()
       else
         self._teleportRegenPending = true
       end
-    elseif (id == "reserved2" or id == "reserved3" or id == "reserved4") and miniOn then
+    elseif (id == "reserved2" or id == "reserved3" or id == "reserved4") and miniOn and not combatLogCell then
       -- Attach happens in ApplyBehaviorsAndVisuals / ApplyMiniActionBar
-    elseif not isStaticSessionMode() and (id == "reserved2" or id == "reserved3" or id == "reserved4") then
+    elseif
+      not combatLogCell
+      and not isStaticSessionMode()
+      and (id == "reserved2" or id == "reserved3" or id == "reserved4")
+    then
       self:EnsureDynamicReservedSlot(b)
     end
   end
@@ -2374,6 +2409,64 @@ function RW:Layout()
   dt.text:SetText(formatNowText())
   dt.text:Show()
   dt:Show()
+end
+
+function RW:ApplyCombatLogVisual()
+  local id = self:GetCombatLogWidgetId()
+  local button = id and self._buttons and self._buttons[id]
+  if not button then
+    return
+  end
+  local active = ns.CombatLog and ns.CombatLog.GetState and ns.CombatLog:GetState(false) or false
+  if not InCombatLockdown() then
+    local D = ns.DynamicReservedSlots
+    if button._dynDefaultSecure then
+      if D and D.ClearSecure then
+        D.ClearSecure(button._dynDefaultSecure)
+      end
+      button._dynDefaultSecure:Hide()
+      button._dynDefaultSecure:EnableMouse(false)
+    end
+    button:Show()
+  else
+    self._dynRegenPending = true
+  end
+  if button.EnableMouse then
+    button:EnableMouse(true)
+  end
+  if button.SetMouseClickEnabled then
+    button:SetMouseClickEnabled(true)
+  end
+  if button.icon then
+    button.icon:Show()
+  end
+  applyIconState(button, {
+    texture = ICONS.combatlog,
+    desat = not active,
+    slashed = not active,
+    r = active and 1 or 0.62,
+    g = active and 1 or 0.62,
+    b = active and 1 or 0.62,
+    pulse = false,
+  })
+  button:SetScript("OnClick", function(_, mouseButton)
+    if mouseButton == "LeftButton" and ns.CombatLog and ns.CombatLog.Toggle then
+      ns.CombatLog:Toggle()
+    end
+  end)
+  button:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Combat Log")
+    GameTooltip:AddLine(
+      active and "Grabando en Logs\\WoWCombatLog.txt" or "Grabación desactivada",
+      active and 0.35 or 0.8,
+      active and 1 or 0.8,
+      active and 0.35 or 0.8
+    )
+    GameTooltip:AddLine("Clic izquierdo: activar/desactivar.", 1, 1, 1)
+    GameTooltip:Show()
+  end)
+  button:SetScript("OnLeave", GameTooltip_Hide)
 end
 
 function RW:ApplyBehaviorsAndVisuals()
@@ -2448,7 +2541,8 @@ function RW:ApplyBehaviorsAndVisuals()
   elseif isStaticSessionMode() then
     local order = { "reserved2", "reserved3", "reserved4" }
     for i = 1, #order do
-      local b = self._buttons[order[i]]
+      local id = order[i]
+      local b = not self:IsCombatLogWidget(id) and self._buttons[id] or nil
       if b then
         applyIconState(b, {
           texture = ICONS.reserved,
@@ -2459,6 +2553,8 @@ function RW:ApplyBehaviorsAndVisuals()
           b = 0.55,
         })
         b:SetScript("OnClick", nil)
+        b:SetScript("OnEnter", nil)
+        b:SetScript("OnLeave", nil)
         if b.EnableMouse then
           b:EnableMouse(true)
         end
@@ -2471,6 +2567,8 @@ function RW:ApplyBehaviorsAndVisuals()
   else
     self:ApplyDynamicReservedVisuals()
   end
+
+  self:ApplyCombatLogVisual()
 
   local dt = self._buttons.datetime
   dt.text:SetText(formatNowText())

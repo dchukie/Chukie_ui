@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
-**Instantánea:** 2026-08-19  
-**Versión en `Chukie_Ui.toc`:** 0.4.6
+**Instantánea:** 2026-08-21
+**Versión en `Chukie_Ui.toc`:** 0.4.9
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,8 +14,12 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.4.6` |
+| `## Version` | `0.4.9` |
 | Branch tipica | `dev` |
+
+Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
+barras 1–4 fijas 6 × 4 centradas (strata `MEDIUM`), transparencia por botón, Combat Log
+configurable y el resto de paneles/alertas de 12.1.
 
 `120100` es el Interface de **12.1 live**. Se mantiene `120007` como segundo valor por compat. Tras el patch:
 
@@ -34,9 +38,10 @@ En 12.1 esperable: `Interface == 120100`, `auraContainerAPI=true` y `displayBack
 |-------|--------|
 | TOC `120100` primero | OK |
 | `ActionBarLayouts.lua` en el TOC | OK |
+| `CombatLog.lua` en el TOC (después de ActionBarLayouts) | OK |
 | Sin `getglobal` / `setglobal` propios | OK |
 | Sin `SecureAuraHeaderTemplate` | OK |
-| Sin CLEU | OK |
+| Sin `COMBAT_LOG_EVENT_UNFILTERED` | OK (`LoggingCombat` no parsea CLEU) |
 | `UIParentLoadAddOn` → `LoadAddOnWithErrorHandling` (+ fallback) | Corregido 0.3.1 |
 | AuraContainer feature-detect + diferir create en combate | OK (`AlertsAuraContainer.lua`) |
 | Guards `issecretvalue` en barras / mini / alertas CD | OK |
@@ -95,6 +100,86 @@ pueden crear en combate; los que falten aparecen en `PLAYER_REGEN_ENABLED`.
 
 ---
 
+## Combat Log configurable (0.4.9)
+
+`CombatLog.lua` controla `LoggingCombat()` sin capturar CLEU dentro del addon: el archivo
+lo sigue escribiendo el cliente en `Logs\WoWCombatLog.txt`. La celda elegida
+(`reserved2`, `reserved3` o `reserved4`) muestra un icono a color mientras graba y
+desaturado/tachado cuando está apagado. La consulta se cachea y sólo se resincroniza cada
+5 segundos para convivir con el límite de llamadas de Blizzard y detectar `/combatlog` u
+otro logger.
+
+En **Panel izquierdo → Combat Log** se elige la celda, Advanced Combat Logging, parada al
+salir y autoactivación independiente para mazmorras normal/heroica/mítica/M+, raids
+LFR/normal/heroica/mítica, Timewalking, escenarios/Delves y PvP. M+ y raid mítica vienen
+activadas por defecto.
+
+La subpágina **Instancias específicas** obtiene M+ de temporada desde `C_ChallengeMode` y
+mazmorras/raids desde Encounter Journal. Lista vacía significa todas las instancias de los
+tipos habilitados; con una selección, además debe coincidir `instanceID` o challenge map
+ID. «Añadir instancia actual» cubre contenido ausente del catálogo. El addon sólo apaga al
+salir una sesión que él mismo autoactivó; nunca una iniciada manualmente o por otro addon.
+
+La celda reemplazada se excluye de `MiniActionBar` y de las ranuras dinámicas, sin borrar
+la acción Blizzard guardada. Un cambio de celda durante combate queda visualmente
+pendiente hasta `PLAYER_REGEN_ENABLED`.
+
+---
+
+## Barras 1–4: matriz fija y transparencia por botón (0.4.7)
+
+Las cuatro barras del panel izquierdo son una matriz fija de **6 botones × 4 barras**. Se
+retiraron «Botones por barra» y los cuatro overrides por fila: el runtime ya no consulta
+`leftNumButtons` ni `leftNumButtonsPerBar`, y la migración elimina esas claves de perfiles
+viejos para que no parezcan activas.
+
+La subpágina **Barras de acción → Transparencia 6 × 4** es un canvas propio de Settings:
+reproduce las cuatro filas, muestra el icono actual de cada ranura y pone debajo un
+deslizador de 10–100 % más una caja de texto numérica (0.4.8). El porcentaje queda legible
+aunque el icono esté al 10 %. «Restaurar 100 %» limpia toda la matriz.
+
+Deslizador y caja son dos vistas del mismo valor: el deslizador usa paso 1 para que
+cualquier número tipeado sea representable, al arrastrarlo se reescribe la caja y al
+escribir se mueve el deslizador. Los dos sentidos se protegen con banderas `_syncing` para
+que la sincronización no vuelva a disparar el guardado. Mientras se tipea sólo se aplica lo
+que ya está dentro de 10–100 (así «3» no salta a 10 antes de completar «37»); al confirmar
+con Enter o al perder el foco se recorta al rango y el texto vacío vuelve al valor vigente.
+`Refresh()` (al abrir la subpágina y tras «Restaurar 100 %») repinta iconos, deslizadores y
+cajas desde el perfil.
+
+Los valores viven por perfil en `actionBars.leftButtonAlphaPercent[barra][botón]`. Se
+aplican con `SetAlpha` al botón completo (icono, borde Masque, hotkey, cargas y cooldown).
+En combate se guarda el valor y el refresco se difiere a `PLAYER_REGEN_ENABLED`. La
+duplicación de perfiles copia explícitamente las cuatro filas para no compartir tablas.
+
+---
+
+## Barras 1–4: bloque centrado en pantalla (0.4.8)
+
+La matriz 6 × 4 ya no cuelga del grupo del panel izquierdo. Las cuatro barras se
+reparentan a `ChukieUi_LeftBarsBlock`, un contenedor propio hijo de `UIParent` que se
+dimensiona con el ancho de fila y el alto total (filas + separación) y se ancla
+`CENTER` → `CENTER` de `UIParent`. Así el centro del bloque coincide con el centro de la
+pantalla y «Offset X/Y» lo desplazan desde ahí. Se oculta en `HideAll()` y cuando
+`leftEnabled` está apagado.
+
+El contenedor usa strata `MEDIUM` (nivel 20; las barras, 25) con `SetFixedFrameStrata`.
+La primera versión heredó el `TOOLTIP` nivel 65521 del panel izquierdo y dibujaba las
+barras encima de menús, diálogos y alertas (`Alerts.lua` usa `HIGH`); ahora quedan debajo.
+Cada `LayoutLeftBars()` reafirma strata y nivel porque `SetParent` propaga los del padre.
+
+Rango de posición ampliado (más del triple del anterior): **Offset X −1800 a 1800** y
+**Offset Y −1200 a 1200**, paso 1 px, con el mismo clamp aplicado en el layout para valores
+guardados fuera de rango. Los defaults pasan a `0`.
+
+Como los valores viejos apuntaban a la esquina inferior izquierda del panel, la migración
+`MigrateActionBarsLeftCenterAnchor` los pone en `0` una sola vez por perfil
+(marca `actionBars._leftCenterAnchorApplied`), también al cambiar de perfil con
+`SetCurrent`. El bloque se re-anchora fuera de combate; en combate el refresco queda
+diferido a `PLAYER_REGEN_ENABLED`.
+
+---
+
 ## Grilla de party clickeable (`/chukie-party`)
 
 Grilla propia de `player` + `party1..4` con una habilidad distinta por columna, pegada por defecto
@@ -107,9 +192,10 @@ Separación de capas, tal como pide el modelo de 12.1:
 - **Capa segura**: cada celda es un `SecureActionButtonTemplate` directo con `unit`
   fijo, `type1 = spell` y `spell1 = ID` de su columna (el ID numérico es válido: el
   template usa `CastSpellByID` cuando el atributo es un número). No hay `type2`, menú,
-  target, `ClickCastFrames` ni `ClickCastUnitTemplate`, y solo se registra
-  `LeftButtonUp`, así que el clic derecho ni siquiera llega a la capa segura. Los
-  atributos se aplican solo fuera de combate.
+  target, `ClickCastFrames` ni `ClickCastUnitTemplate`. Se registran `LeftButtonDown` y
+  `LeftButtonUp` con `useOnKeyDown = false` (cast al soltar, independiente del CVar
+  `ActionButtonUseKeyDown`); el clic derecho no llega a la capa segura. Los atributos
+  se aplican solo fuera de combate.
 - **Capa visual**: celda cuadrada con icono del hechizo, cooldown real, cargas,
   usabilidad/recursos, rango por unidad, tooltip, highlight, vida y rol opcionales.
   `isOnGCD` oculta el swipe del GCD y además el duration object se pide con
@@ -401,7 +487,11 @@ dibujan (`staticSessionMode` también las bloquea).
 ## Funcionalidad actual (resumen)
 
 - Paneles izq/der, minimapa, micromenú, RightStrip, widgets, teleports.
-- Barras de acción propias (`ActionBars.lua`) + mini barra + guardado de layout (`ActionBarLayouts.lua`).
+- Barras de acción 1–4: matriz fija **6 × 4** en `ChukieUi_LeftBarsBlock`, anclada al
+  centro de la pantalla, strata `MEDIUM`, transparencia por botón y offsets amplios.
+- Mini barra / ranuras dinámicas 2–4; una de esas celdas puede ser el toggle de Combat Log.
+- Combat Log (`CombatLog.lua`): `LoggingCombat` + filtros por tipo de contenido e instancia.
+- Guardado de layout de barras 1–4 (`ActionBarLayouts.lua`).
 - Alertas: árbol **grupo → efecto → regla**. Un grupo (ej. Presciencia) agrupa
   efectos (icono / textura / texto / sonido; barra-reloj-contador como stub) y
   condiciones AND/OR (CD, aura, proc, combate, target, cargas), cada una con su

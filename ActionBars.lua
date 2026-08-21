@@ -12,8 +12,9 @@ ns.ActionBars = AB
 
 local SHOWGRID_REASON = 32
 local BUTTONS_PER_BAR = 12
+local LEFT_BUTTONS_PER_BAR = 6
 --- Tope de botones con entrada en Bindings.xml (barras 1–4).
-local BINDABLE_BUTTONS_PER_BAR = 6
+local BINDABLE_BUTTONS_PER_BAR = LEFT_BUTTONS_PER_BAR
 local LEFT_BAR_IDS = { 1, 2, 3, 4 }
 local RIGHT_BAR_ID = 6
 --- Barra que toma las páginas de vehículo / override / possess.
@@ -1059,6 +1060,9 @@ end
 
 function AB:HideAll()
   self:LayoutVehicleExitButton(nil)
+  if self._leftBlock then
+    self._leftBlock:Hide()
+  end
   if not self._bars then
     return
   end
@@ -1069,11 +1073,30 @@ function AB:HideAll()
   end
 end
 
-local function getLeftHost()
-  if ns.LeftPanel and ns.LeftPanel._group then
-    return ns.LeftPanel._group
+--- Las barras 1–4 viven en un contenedor propio anclado al centro de la pantalla.
+--- Límite de los offsets: el triple del rango anterior y simétrico respecto al centro.
+local LEFT_OFFSET_LIMIT = 1800
+
+local function clampLeftOffset(value)
+  value = tonumber(value) or 0
+  return math.max(-LEFT_OFFSET_LIMIT, math.min(LEFT_OFFSET_LIMIT, value))
+end
+
+--- Capa de barras de acción: por debajo de menús, diálogos y alertas.
+local LEFT_BLOCK_STRATA = "MEDIUM"
+local LEFT_BLOCK_LEVEL = 20
+
+function AB:EnsureLeftBlock()
+  local block = self._leftBlock
+  if not block then
+    block = CreateFrame("Frame", "ChukieUi_LeftBarsBlock", UIParent)
+    block:EnableMouse(false)
+    self._leftBlock = block
   end
-  return UIParent
+  block:SetFrameStrata(LEFT_BLOCK_STRATA)
+  block:SetFixedFrameStrata(true)
+  block:SetFrameLevel(LEFT_BLOCK_LEVEL)
+  return block
 end
 
 local function getRightHost()
@@ -1086,15 +1109,55 @@ local function getRightHost()
   return _G.ChukieUi_RightPanel or UIParent
 end
 
---- Botones de una barra izquierda: override por barra (0 = usar el valor general).
-function AB:GetLeftBarNumButtons(barId, fallback)
-  fallback = math.max(1, math.min(BUTTONS_PER_BAR, tonumber(fallback) or 6))
-  local per = db().leftNumButtonsPerBar
-  local v = per and tonumber(per[barId])
-  if not v or v < 1 then
-    return fallback
+--- Opacidad individual de las 24 celdas fijas (4 barras × 6 botones).
+function AB:GetLeftButtonAlphaPercent(barId, buttonIndex)
+  local rows = db().leftButtonAlphaPercent
+  local row = type(rows) == "table" and rows[barId] or nil
+  local value = type(row) == "table" and tonumber(row[buttonIndex]) or 100
+  return math.max(10, math.min(100, math.floor((value or 100) + 0.5)))
+end
+
+function AB:ApplyLeftButtonAlphas()
+  for barId = 1, 4 do
+    local bar = self._bars and self._bars[tostring(barId)]
+    if bar and bar.buttons then
+      for buttonIndex = 1, LEFT_BUTTONS_PER_BAR do
+        local btn = bar.buttons[buttonIndex]
+        if btn then
+          btn:SetAlpha(self:GetLeftButtonAlphaPercent(barId, buttonIndex) / 100)
+        end
+      end
+    end
   end
-  return math.max(1, math.min(BUTTONS_PER_BAR, math.floor(v)))
+end
+
+function AB:SetLeftButtonAlphaPercent(barId, buttonIndex, value)
+  barId = math.floor(tonumber(barId) or 0)
+  buttonIndex = math.floor(tonumber(buttonIndex) or 0)
+  if barId < 1 or barId > 4 or buttonIndex < 1 or buttonIndex > LEFT_BUTTONS_PER_BAR then
+    return false
+  end
+  value = math.max(10, math.min(100, math.floor((tonumber(value) or 100) + 0.5)))
+  local d = db()
+  d.leftButtonAlphaPercent = type(d.leftButtonAlphaPercent) == "table" and d.leftButtonAlphaPercent or {}
+  d.leftButtonAlphaPercent[barId] =
+    type(d.leftButtonAlphaPercent[barId]) == "table" and d.leftButtonAlphaPercent[barId] or {}
+  d.leftButtonAlphaPercent[barId][buttonIndex] = value
+  if InCombatLockdown() then
+    self._pendingRefresh = true
+  else
+    self:ApplyLeftButtonAlphas()
+  end
+  return true
+end
+
+function AB:ResetLeftButtonAlphas()
+  db().leftButtonAlphaPercent = {}
+  if InCombatLockdown() then
+    self._pendingRefresh = true
+  else
+    self:ApplyLeftButtonAlphas()
+  end
 end
 
 function AB:LayoutLeftBars()
@@ -1107,48 +1170,58 @@ function AB:LayoutLeftBars()
       end
     end
     self:LayoutVehicleExitButton(nil)
+    if self._leftBlock then
+      self._leftBlock:Hide()
+    end
     return
   end
 
-  local host = getLeftHost()
-  local numButtons = math.max(1, math.min(12, tonumber(d.leftNumButtons) or 6))
+  local block = self:EnsureLeftBlock()
+  local numButtons = LEFT_BUTTONS_PER_BAR
   local size = math.max(18, math.min(64, tonumber(d.leftButtonSize) or 36))
   local gap = math.max(0, math.min(16, tonumber(d.leftSpacing) or 2))
   local barGap = math.max(0, math.min(24, tonumber(d.leftBarSpacing) or 4))
-  local padX = tonumber(d.leftOffsetX) or 8
-  local padY = tonumber(d.leftOffsetY) or 8
+  local offX = clampLeftOffset(d.leftOffsetX)
+  local offY = clampLeftOffset(d.leftOffsetY)
 
-  local totalH = 0
+  local totalW, totalH = 0, 0
   local bars = {}
   for i = 1, #LEFT_BAR_IDS do
     local id = LEFT_BAR_IDS[i]
-    local n = self:GetLeftBarNumButtons(id, numButtons)
-    local bar = self:EnsureBar(id, n)
-    layoutBarButtons(bar, n, size, gap)
-    if bar:GetParent() ~= host then
-      bar:SetParent(host)
+    local bar = self:EnsureBar(id, numButtons)
+    layoutBarButtons(bar, numButtons, size, gap)
+    if bar:GetParent() ~= block then
+      bar:SetParent(block)
     end
+    --- Reafirmar la capa: SetParent propaga la del padre y una sesión vieja pudo dejarla arriba.
+    bar:SetFrameStrata(LEFT_BLOCK_STRATA)
+    bar:SetFrameLevel(LEFT_BLOCK_LEVEL + 5)
     bar:Show()
     bars[i] = bar
+    totalW = math.max(totalW, bar:GetWidth())
     totalH = totalH + bar:GetHeight()
     if i < #LEFT_BAR_IDS then
       totalH = totalH + barGap
     end
   end
 
+  --- El centro del bloque queda en el centro de la pantalla más el offset elegido.
+  block:ClearAllPoints()
+  block:SetSize(math.max(1, totalW), math.max(1, totalH))
+  block:SetPoint("CENTER", UIParent, "CENTER", offX, offY)
+  block:Show()
+
   self:LayoutVehicleExitButton(bars[1], size, barGap)
 
   -- Barra 1 arriba → 4 abajo (como Dominos en el screenshot).
-  local y = padY + totalH
+  local y = 0
   for i = 1, #bars do
     local bar = bars[i]
-    y = y - bar:GetHeight()
     bar:ClearAllPoints()
-    bar:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", padX, y)
-    if i < #bars then
-      y = y - barGap
-    end
+    bar:SetPoint("TOP", block, "TOP", 0, -y)
+    y = y + bar:GetHeight() + barGap
   end
+  self:ApplyLeftButtonAlphas()
 end
 
 function AB:LayoutRightBar6()

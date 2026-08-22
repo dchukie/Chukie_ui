@@ -2986,7 +2986,7 @@ function ns.RegisterConfigPanel()
       Settings.CreateCheckbox(
         framesCategory,
         setting,
-        "Cada columna lanza su propio hechizo sobre player/party1..4. Clic izquierdo ejecuta; clic derecho no tiene acción. Toda configuración se rechaza durante el combate."
+        "Cada columna lanza su hechizo sobre player/party1..4. En columnas ciclo, clic derecho fuera de combate prende o apaga esa unidad. Toda configuración se rechaza durante el combate."
       )
     end
 
@@ -3125,11 +3125,39 @@ function ns.RegisterConfigPanel()
     framesLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Party: habilidades por columna"))
     framesLayout:AddInitializer(
       CreateSettingsListSectionHeaderInitializer(
-        "Arrastrá hechizos del libro sobre las celdas. La ventana propia muestra nombre e ID; los botones siguientes limpian una columna fuera de combate."
+        "Arrastrá hechizos sobre las celdas. Una columna ciclo también acepta nombre/ID y publica una acción /click ch-cl-Hechizo."
       )
     )
     for column = 1, 8 do
       local columnIndex = column
+      do
+        local function getCycle()
+          return ns.PartyGrid and ns.PartyGrid.IsCycleColumn and ns.PartyGrid:IsCycleColumn(columnIndex) or false
+        end
+        local function setCycle(value)
+          if settingsLocked() then
+            return
+          end
+          if ns.PartyGrid and ns.PartyGrid.SetColumnCycle then
+            ns.PartyGrid:SetColumnCycle(columnIndex, value == true or value == 1)
+          end
+        end
+        local cycleSetting = Settings.RegisterProxySetting(
+          framesCategory,
+          "ChukieUi_PartyGrid_columnCycle" .. columnIndex,
+          Settings.VarType.Boolean,
+          "Columna " .. columnIndex .. ": usar como ciclo",
+          Settings.Default.False,
+          getCycle,
+          setCycle
+        )
+        registerPartySetting(cycleSetting, getCycle)
+        Settings.CreateCheckbox(
+          framesCategory,
+          cycleSetting,
+          "Fuera de combate, clic derecho sobre cada jugador lo incluye o excluye. En combate, usá el /click indicado para lanzar al siguiente incluido."
+        )
+      end
       if Settings.CreateTextBox then
         local function getAssigned()
           local spellId = ns.PartyGrid and ns.PartyGrid.ColumnSpell and ns.PartyGrid:ColumnSpell(columnIndex)
@@ -3143,31 +3171,66 @@ function ns.RegisterConfigPanel()
           end
           return ((type(info) == "table" and info.name) or "Hechizo") .. " (" .. spellId .. ")"
         end
-        --- Caja de solo lectura: escribir a mano no asigna nada, se avisa y se repone el
-        --- texto real. El rebote de sincronización no vuelve a entrar acá.
-        local function rejectEdit(value)
+        local function assignEdit(value)
           if settingsLocked() or value == getAssigned() then
             return
           end
-          print("|cffff9900Chukie UI|r: asigná hechizos arrastrándolos sobre una celda de PartyGrid.")
-          if ns.PartyGrid and ns.PartyGrid.RefreshSettings then
+          if not (ns.PartyGrid and ns.PartyGrid.IsCycleColumn and ns.PartyGrid:IsCycleColumn(columnIndex)) then
+            print("|cffff9900Chukie UI|r: activá primero el ciclo de la columna " .. columnIndex .. ".")
             ns.PartyGrid:RefreshSettings()
+            return
+          end
+          if ns.PartyGrid.SetColumnSpellInput then
+            ns.PartyGrid:SetColumnSpellInput(columnIndex, value)
           end
         end
         local assignedSetting = Settings.RegisterProxySetting(
           framesCategory,
           "ChukieUi_PartyGrid_columnSpell" .. columnIndex,
           Settings.VarType.String,
-          "Habilidad columna " .. columnIndex .. " (solo lectura)",
+          "Habilidad columna " .. columnIndex .. " (nombre o ID)",
           "",
           getAssigned,
-          rejectEdit
+          assignEdit
         )
         registerPartySetting(assignedSetting, getAssigned)
         Settings.CreateTextBox(
           framesCategory,
           assignedSetting,
-          "Muestra el hechizo guardado por perfil. Para cambiarlo, arrastrá un hechizo sobre cualquier celda de la columna."
+          "En columnas ciclo podés escribir el nombre exacto o ID. En cualquier columna también podés arrastrar un hechizo sobre una celda."
+        )
+
+        local function getAction()
+          local action = ns.PartyGrid and ns.PartyGrid.CycleActionName
+            and ns.PartyGrid:CycleActionName(columnIndex)
+          if not action then
+            return "(activá ciclo y asigná un hechizo)"
+          end
+          return "/click " .. action
+        end
+        local function rejectActionEdit(value)
+          if settingsLocked() or value == getAction() then
+            return
+          end
+          print("|cffff9900Chukie UI|r: copiá esa línea a una macro; la lista se edita con clic derecho en la grilla.")
+          if ns.PartyGrid and ns.PartyGrid.RefreshSettings then
+            ns.PartyGrid:RefreshSettings()
+          end
+        end
+        local actionSetting = Settings.RegisterProxySetting(
+          framesCategory,
+          "ChukieUi_PartyGrid_columnCycleAction" .. columnIndex,
+          Settings.VarType.String,
+          "Macro ciclo columna " .. columnIndex .. " (solo lectura)",
+          "",
+          getAction,
+          rejectActionEdit
+        )
+        registerPartySetting(actionSetting, getAction)
+        Settings.CreateTextBox(
+          framesCategory,
+          actionSetting,
+          "Copiá esta línea a una macro. Las celdas prendidas muestran qué unidades integran el ciclo."
         )
       end
       framesLayout:AddInitializer(

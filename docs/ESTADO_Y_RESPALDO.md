@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
-**Instantánea:** 2026-08-21
-**Versión en `Chukie_Ui.toc`:** 0.4.9
+**Instantánea:** 2026-08-22
+**Versión en `Chukie_Ui.toc`:** 0.5.0
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,12 +14,16 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.4.9` |
+| `## Version` | `0.5.0` |
 | Branch tipica | `dev` |
 
 Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
 barras 1–4 fijas 6 × 4 centradas (strata `MEDIUM`), transparencia por botón, Combat Log
 configurable y el resto de paneles/alertas de 12.1.
+
+Versión **0.5.0**: agrega columnas ciclo a PartyGrid. El clic derecho fuera de combate
+incluye/excluye unidades y una macro `/click ch-cl-NombreDelHechizo` ejecuta la secuencia
+mediante un botón seguro preconfigurado.
 
 `120100` es el Interface de **12.1 live**. Se mantiene `120007` como segundo valor por compat. Tras el patch:
 
@@ -194,8 +198,9 @@ Separación de capas, tal como pide el modelo de 12.1:
   template usa `CastSpellByID` cuando el atributo es un número). No hay `type2`, menú,
   target, `ClickCastFrames` ni `ClickCastUnitTemplate`. Se registran `LeftButtonDown` y
   `LeftButtonUp` con `useOnKeyDown = false` (cast al soltar, independiente del CVar
-  `ActionButtonUseKeyDown`); el clic derecho no llega a la capa segura. Los atributos
-  se aplican solo fuera de combate.
+  `ActionButtonUseKeyDown`), más `RightButtonUp` desde 0.5.0 para editar la lista de las
+  columnas ciclo: no hay `type2`, así que el derecho nunca ejecuta una acción de juego.
+  Los atributos se aplican solo fuera de combate.
 - **Capa visual**: celda cuadrada con icono del hechizo, cooldown real, cargas,
   usabilidad/recursos, rango por unidad, tooltip, highlight, vida y rol opcionales.
   `isOnGCD` oculta el swipe del GCD y además el duration object se pide con
@@ -360,6 +365,40 @@ el centro libre.
 
 ---
 
+## Columnas ciclo y acción de macro (0.5.0)
+
+Una columna se puede marcar como **ciclo** (`columnCycles[n]` en el perfil). Con eso el clic
+derecho **fuera de combate** agrega o quita a esa unidad de `columnCycleUnits[n]`, que guarda
+el orden de marcado, y las celdas cuya unidad no está en la lista se dibujan apagadas
+(`SetDesaturated` + vertex color oscuro). El clic izquierdo no cambia: sigue lanzando el
+hechizo de la columna sobre la unidad de su fila.
+
+El avance en combate lo hace un botón seguro propio, uno por columna con ciclo, llamado
+`ch-cl-<NombreDelHechizo>` (nombre del cliente, sin espacios ni caracteres que separen
+argumentos de macro). Se usa desde una macro con `/click ch-cl-Prescience`. El botón lleva
+`type = spell`, `spell = ID`, `pressAndHoldAction` y `typerelease = spell` (sin esto último,
+`/click` no dispara según el CVar `ActionButtonUseKeyDown`), y un `SecureHandlerWrapScript`
+en `PreClick` que en la fase de release avanza al siguiente `UnitExists` de la lista y
+escribe `unit`. Todo lo demás (crear el botón, poblar la lista, cambiar el hechizo) ocurre
+fuera de combate, en `ApplyCycleAttributes`, y en combate queda pendiente igual que el resto
+del módulo.
+
+**Trampa que costó una pasada de depuración**: la lista de unidades no puede vivir en
+`unit1`, `unit2`, … porque para un `SecureActionButton` esos son atributos *modificados* (la
+unidad de cada botón del mouse). El `/click` entra como botón izquierdo, el cliente resuelve
+`unit1` y descarta el `unit` que el snippet acababa de escribir, así que el hechizo caía
+siempre sobre el primero de la lista. La lista vive en `cycleUnit1..N`, y al reaplicar
+atributos se limpian los `unitN` heredados de la versión anterior.
+
+Restricciones que no se pueden esquivar: no hay selección por vida, rango ni aura (además,
+en 12.1 esos valores pueden ser secretos), no hay casteo sin pulsación real del jugador, y un
+comando slash del addon no sirve para castear en combate porque corre como Lua sin
+privilegios. Dos columnas no pueden compartir hechizo en modo ciclo: compartirían el nombre
+global de la acción, y el conflicto se rechaza al asignar. `/chukieui party diag` imprime,
+por columna con ciclo, la macro, las unidades, el índice y la unidad activa.
+
+---
+
 ## Panel derecho en 1x1 tras un /reload en combate (arreglado en 0.3.4)
 
 Síntoma: minimapa, widgets y franja desaparecen todos juntos, las barras siguen bien y
@@ -489,6 +528,8 @@ dibujan (`staticSessionMode` también las bloquea).
 - Paneles izq/der, minimapa, micromenú, RightStrip, widgets, teleports.
 - Barras de acción 1–4: matriz fija **6 × 4** en `ChukieUi_LeftBarsBlock`, anclada al
   centro de la pantalla, strata `MEDIUM`, transparencia por botón y offsets amplios.
+- Grilla de party (`/chukie-party`): hechizo por columna, columnas ciclo con acción
+  `/click ch-cl-<Hechizo>` y selección por clic derecho fuera de combate.
 - Mini barra / ranuras dinámicas 2–4; una de esas celdas puede ser el toggle de Combat Log.
 - Combat Log (`CombatLog.lua`): `LoggingCombat` + filtros por tipo de contenido e instancia.
 - Guardado de layout de barras 1–4 (`ActionBarLayouts.lua`).

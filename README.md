@@ -23,7 +23,7 @@ Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueU
 | **Opciones** | *Esc → Opciones → AddOns → Chukie UI* (`ConfigPanel.lua`, API Settings de Retail). |
 | **Alertas CD/procs/auras** | Grupos con efectos y condiciones, editor `/chukie-aura`. En **12.1**, un grupo cuya única condición es aura “Presente” y cuyo único efecto visual es icono/textura lo dibuja el cliente (**AuraContainer**), así que también ve las auras que Blizzard oculta; el resto usa el path propio. Media en `Media/Alerts/`. |
 | **Panel de auras** | `AuraPanel.lua`, `/chukie-auras`: un slot grande por aura elegida usando **AuraContainer**, con tamaño, separación, auras por línea, dirección y posición arrastrable. Los slots no se compactan (el addon no sabe cuál está activa). |
-| **Grilla de party por habilidades** | `PartyGrid.lua`. Cada columna guarda un hechizo por perfil y cada celda es un `SecureActionButtonTemplate`: clic izquierdo lo lanza sobre `player`/`party1..4`; clic derecho no hace nada. Asignación desde el libro y movimiento entre columnas por arrastre, icono/cooldown real sin GCD/cargas/usabilidad/rango y tooltip. Soporte Masque en el grupo separado **Chukie UI → PartyGrid** y opacidad del conjunto (10–100 %). Toda configuración se rechaza durante el combate. Opciones en **Marcos → Party** (`/chukieui party`), ventana propia (`/chukie-party`) y estado con `/chukieui party diag`. Por defecto: 1 columna a la derecha de la grilla Blizzard, creciendo a la derecha. |
+| **Grilla de party por habilidades** | `PartyGrid.lua`. Cada columna guarda un hechizo por perfil y cada celda es un `SecureActionButtonTemplate`: clic izquierdo lo lanza sobre `player`/`party1..4`. Una columna puede ser **ciclo**: fuera de combate, clic derecho prende/apaga ese jugador y publica una acción segura `/click ch-cl-NombreDelHechizo` que avanza por los prendidos. Asignación por nombre/ID en opciones o arrastrando desde el libro, icono/cooldown real sin GCD/cargas/usabilidad/rango y tooltip. Soporte Masque en **Chukie UI → PartyGrid**. Toda configuración se rechaza durante el combate. Opciones en **Marcos → Party** (`/chukieui party`), ventana propia (`/chukie-party`) y diagnóstico `/chukieui party diag`. |
 | **Combat Log** | `CombatLog.lua`. Toggle en una ranura 2–4 de la grilla azul. Auto-logging por tipo (M+, mítica 0, raids por dificultad, etc.) y por instancia concreta. Opciones en **Panel izquierdo → Combat Log**. El archivo lo escribe el cliente (`Logs\WoWCombatLog.txt`); el addon no parsea CLEU. |
 
 ## Archivos que carga el cliente
@@ -32,6 +32,23 @@ Orden en `Chukie_Ui.toc`: ver el `.toc` (incluye `ActionBars.lua`, `Alerts*.lua`
 
 - **`Bindings.xml`** (raíz del addon): define enlaces de teclado para las ranuras dinámicas seguras (`ChukieDynAct2` … `ChukieDynAct4`). **No** debe incluirse en el `.toc` (el cliente lo cargaría como Lua). Los textos visibles en *Controles → Teclas rápidas* se asignan en `Core.lua` (`BINDING_NAME_CLICK …`).
 - **`Media/`**: PNG/TGA referenciados por ruta desde Lua; **no** van en el `.toc`.
+
+## Ciclos de hechizo de PartyGrid
+
+1. En **Marcos → Party**, activá «usar como ciclo» en una columna y asignale un hechizo por nombre, ID o arrastre. En la ventana `/chukie-party` el mismo interruptor es el botón **Normal / Ciclo** de cada columna.
+2. Fuera de combate, hacé clic derecho sobre 2–3 celdas de esa columna. Las incluidas quedan normales; las excluidas, apagadas.
+3. Copiá la acción mostrada a una macro, por ejemplo: `/click ch-cl-Prescience`.
+
+Cada pulsación real lanza el hechizo al siguiente `player`/`partyN` incluido y existente, en el orden en que los marcaste. El clic izquierdo de una celda conserva su función directa sobre esa fila.
+
+Detalles a tener en cuenta:
+
+- El nombre de la acción usa el hechizo tal como lo muestra el cliente, sin espacios: cambiar de idioma cambia la macro.
+- La grilla tiene que estar activa; apagada, la acción queda sin efecto.
+- Dos columnas no pueden compartir el mismo hechizo en modo ciclo, porque compartirían el nombre de la acción.
+- El estado del ciclo (macro, unidades, índice actual) sale en `/chukieui party diag`.
+
+Límites que impone Blizzard: no se puede elegir objetivo por vida, rango o aura, no hay casteo automático y la lista no se puede editar en combate. Un comando slash propio tampoco serviría para castear durante el combate, porque correría como Lua sin privilegios; de ahí que la macro use `/click` sobre un botón seguro creado de antemano.
 
 ## Ranuras dinámicas (reservadas 2–4)
 

@@ -373,6 +373,9 @@ local defaults = {
     --- Celdas por jugador (una habilidad por columna) y hacia dónde crecen.
     columns = 1,
     columnSpells = {},
+    --- Columnas que publican una acción /click y sus unidades, en orden de marcado.
+    columnCycles = {},
+    columnCycleUnits = {},
     columnSpacing = 2,
     growth = "RIGHT",
     --- Separación respecto a la grilla de Blizzard cuando está pegada.

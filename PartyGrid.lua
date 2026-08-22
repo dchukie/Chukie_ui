@@ -1,7 +1,8 @@
 --[[ Grilla de party con una habilidad segura por columna (Retail 12.1).
 
      Capa segura: cada celda es un SecureActionButton directo. El clic izquierdo lanza
-     el hechizo de su columna sobre la unidad fija de su fila; el derecho no tiene acción.
+     el hechizo de su columna sobre la unidad fija de su fila. En columnas de ciclo, el
+     derecho agrega o quita esa unidad de la secuencia, siempre fuera de combate.
      No se registra en ClickCastFrames ni usa ClickCastUnitTemplate para impedir que
      C_ClickBindings o Clique intercepten la acción propia.
 
@@ -135,6 +136,41 @@ local function spellInfo(spellId)
   return nil
 end
 
+local function spellInfoByIdentifier(identifier)
+  if type(identifier) == "string" then
+    identifier = identifier:match("^%s*(.-)%s*$")
+  end
+  if identifier == nil or identifier == "" then
+    return nil
+  end
+  local numeric = tonumber(identifier)
+  if numeric then
+    return spellInfo(numeric)
+  end
+  if C_Spell and C_Spell.GetSpellInfo then
+    local ok, info = pcall(C_Spell.GetSpellInfo, identifier)
+    if ok and type(info) == "table" and tonumber(info.spellID) then
+      return info
+    end
+  end
+  if GetSpellInfo then
+    local ok, name, _, icon, _, _, spellId = pcall(GetSpellInfo, identifier)
+    if ok and name and tonumber(spellId) then
+      return { name = name, iconID = icon, spellID = spellId }
+    end
+  end
+  return nil
+end
+
+--- Nombre global que se invoca desde una macro: `/click ch-cl-NombreDelHechizo`.
+--- Solo se quitan caracteres que separan argumentos o tienen significado en macros;
+--- las letras localizadas se conservan.
+local function cycleActionToken(name)
+  name = tostring(name or ""):gsub("%s+", "")
+  name = name:gsub("[\"'`;/%[%]<>|]", "")
+  return name ~= "" and ("ch-cl-" .. name) or nil
+end
+
 -- ---------------------------------------------------------------------------
 -- Modelo
 -- ---------------------------------------------------------------------------
@@ -158,6 +194,18 @@ function PG:DB()
       return p.partyGrid
     end
     p.partyGrid.columnSpells = {}
+  end
+  if type(p.partyGrid.columnCycles) ~= "table" then
+    if inCombat() then
+      return p.partyGrid
+    end
+    p.partyGrid.columnCycles = {}
+  end
+  if type(p.partyGrid.columnCycleUnits) ~= "table" then
+    if inCombat() then
+      return p.partyGrid
+    end
+    p.partyGrid.columnCycleUnits = {}
   end
   return p.partyGrid
 end
@@ -245,6 +293,54 @@ function PG:ColumnSpell(column)
   return tonumber(type(spells) == "table" and spells[column]) or nil
 end
 
+function PG:IsCycleColumn(column)
+  local cycles = self:DB().columnCycles
+  return type(cycles) == "table" and cycles[column] == true
+end
+
+function PG:CycleUnits(column)
+  local all = self:DB().columnCycleUnits
+  local units = type(all) == "table" and all[column] or nil
+  return type(units) == "table" and units or {}
+end
+
+function PG:IsCycleUnit(column, unit)
+  local units = self:CycleUnits(column)
+  for i = 1, #units do
+    if units[i] == unit then
+      return true
+    end
+  end
+  return false
+end
+
+function PG:CycleActionName(column)
+  if not self:IsCycleColumn(column) then
+    return nil
+  end
+  local info = spellInfo(self:ColumnSpell(column))
+  return info and cycleActionToken(info.name) or nil
+end
+
+function PG:CycleUnitSummary(column)
+  local units = self:CycleUnits(column)
+  return #units > 0 and table.concat(units, ", ") or "(ninguno)"
+end
+
+function PG:FindCycleActionConflict(column, spellId)
+  local info = spellInfo(spellId)
+  local action = info and cycleActionToken(info.name) or nil
+  if not action then
+    return nil
+  end
+  for other = COLUMNS_MIN, COLUMNS_MAX do
+    if other ~= column and self:IsCycleColumn(other) and self:CycleActionName(other) == action then
+      return other
+    end
+  end
+  return nil
+end
+
 --- Solo se llama tras pasar por CanConfigure, así que crear la tabla acá nunca escribe
 --- el perfil en combate: un perfil viejo puede llegar sin ella.
 function PG:ColumnSpellTable()
@@ -265,6 +361,11 @@ function PG:SetColumnSpell(column, spellId)
     print("|cffff9900Chukie UI|r: solo se aceptan hechizos válidos.")
     return false
   end
+  local conflict = spellId and self:IsCycleColumn(column) and self:FindCycleActionConflict(column, spellId)
+  if conflict then
+    print("|cffff9900Chukie UI|r: ese hechizo ya corresponde al ciclo de la columna " .. conflict .. ".")
+    return false
+  end
   if not self:CanConfigure() then
     return false
   end
@@ -279,6 +380,78 @@ function PG:SetColumnSpell(column, spellId)
   return true
 end
 
+function PG:SetColumnSpellInput(column, identifier)
+  local info = spellInfoByIdentifier(identifier)
+  if not info or not tonumber(info.spellID) then
+    print("|cffff9900Chukie UI|r: no se encontró ese hechizo; escribí el nombre exacto o su ID.")
+    self:RefreshSettings()
+    return false
+  end
+  return self:SetColumnSpell(column, info.spellID)
+end
+
+function PG:SetColumnCycle(column, enabled)
+  column = math.floor(tonumber(column) or 0)
+  if column < COLUMNS_MIN or column > COLUMNS_MAX or not self:CanConfigure() then
+    return false
+  end
+  enabled = enabled == true or enabled == 1
+  local spellId = self:ColumnSpell(column)
+  local conflict = enabled and spellId and self:FindCycleActionConflict(column, spellId)
+  if conflict then
+    print("|cffff9900Chukie UI|r: ese hechizo ya corresponde al ciclo de la columna " .. conflict .. ".")
+    self:RefreshSettings()
+    return false
+  end
+  local db = self:DB()
+  db.columnCycles = type(db.columnCycles) == "table" and db.columnCycles or {}
+  db.columnCycles[column] = enabled or nil
+  self:ApplySecureAttributes()
+  self:UpdateAll()
+  self:RefreshSettings()
+  if self._configFrame then
+    self:SyncConfig()
+  end
+  return true
+end
+
+function PG:ToggleCycleUnit(column, unit)
+  if not self:IsCycleColumn(column) then
+    return false
+  end
+  local valid
+  for i = 1, #UNITS do
+    if UNITS[i] == unit then
+      valid = true
+      break
+    end
+  end
+  if not valid or not self:CanConfigure() then
+    return false
+  end
+  local db = self:DB()
+  db.columnCycleUnits = type(db.columnCycleUnits) == "table" and db.columnCycleUnits or {}
+  local units = db.columnCycleUnits[column]
+  if type(units) ~= "table" then
+    units = {}
+    db.columnCycleUnits[column] = units
+  end
+  for i = 1, #units do
+    if units[i] == unit then
+      table.remove(units, i)
+      self:ApplySecureAttributes()
+      self:UpdateAll()
+      self:RefreshSettings()
+      return true
+    end
+  end
+  units[#units + 1] = unit
+  self:ApplySecureAttributes()
+  self:UpdateAll()
+  self:RefreshSettings()
+  return true
+end
+
 function PG:MoveColumnSpell(source, destination, spellId)
   source = math.floor(tonumber(source) or 0)
   destination = math.floor(tonumber(destination) or 0)
@@ -287,6 +460,11 @@ function PG:MoveColumnSpell(source, destination, spellId)
     return false
   end
   if not spellId or not spellInfo(spellId) or not self:CanConfigure() then
+    return false
+  end
+  local conflict = self:IsCycleColumn(destination) and self:FindCycleActionConflict(destination, spellId)
+  if conflict then
+    print("|cffff9900Chukie UI|r: ese hechizo ya corresponde al ciclo de la columna " .. conflict .. ".")
     return false
   end
   local spells = self:ColumnSpellTable()
@@ -545,6 +723,14 @@ end
 --- Rango: lo único del botón de acción que cambia de una fila a otra.
 function PG:UpdateRange(btn, st)
   st = st or (self._columnStates and self._columnStates[btn.column])
+  local cycleOff = self:IsCycleColumn(btn.column) and not self:IsCycleUnit(btn.column, btn.unit)
+  if btn.icon.SetDesaturated then
+    btn.icon:SetDesaturated(cycleOff)
+  end
+  if cycleOff then
+    btn.icon:SetVertexColor(0.28, 0.28, 0.28)
+    return
+  end
   if not st then
     btn.icon:SetVertexColor(1, 1, 1)
     return
@@ -756,6 +942,16 @@ function PG:PrintDiagnostics()
   --- Fase del clic: quién ejecuta la acción lo decide este CVar salvo que el botón lo pise.
   local keyDown = GetCVarBool and GetCVarBool("ActionButtonUseKeyDown")
   print("  clic: ActionButtonUseKeyDown=" .. tostring(keyDown) .. " useOnKeyDown(botón)=false")
+  for column = COLUMNS_MIN, COLUMNS_MAX do
+    local action = self:CycleActionName(column)
+    if action then
+      local button = (self._cycleButtons or {})[action]
+      print(string.format("  ciclo col=%d /click %s unidades=%s existe=%s indice=%s actual=%s",
+        column, action, self:CycleUnitSummary(column), tostring(button ~= nil),
+        button and tostring(button:GetAttribute("cycleIndex")) or "nil",
+        button and tostring(button:GetAttribute("unit")) or "nil"))
+    end
+  end
   local click = self._lastClick
   if click then
     print(string.format("  último clic: %s col=%d hechizo=%s fase=%s hace %.1fs",
@@ -882,8 +1078,8 @@ function PG:CreateButton(index, unit, column)
   btn.masqueNormal:SetColorTexture(1, 1, 1, 0)
 
   btn:SetAttribute("unit", unit)
-  --[[ Solo el botón izquierdo llega a la capa segura: el derecho no ejecuta nada porque
-       directamente no está registrado.
+  --[[ Solo el botón izquierdo llega a una acción segura. El derecho queda registrado
+       para editar fuera de combate la lista de una columna ciclo, pero no tiene `type2`.
 
        Las **dos fases** del clic sí se registran, y no es un detalle: quién ejecuta la
        acción lo decide el CVar `ActionButtonUseKeyDown` (o este atributo por botón). Con
@@ -893,12 +1089,16 @@ function PG:CreateButton(index, unit, column)
        el arrastre: la celda es también el asa para asignar hechizos, y no queremos lanzar
        nada al empezar a arrastrar. ]]
   btn:SetAttribute("useOnKeyDown", false)
-  btn:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
+  btn:RegisterForClicks("LeftButtonDown", "LeftButtonUp", "RightButtonUp")
   btn:RegisterForDrag("LeftButton")
 
   --- Registro del último clic recibido: si algún día no castea, esto dice si el clic llegó
   --- al botón seguro (y en qué fase) o si nunca lo alcanzó. Lo imprime `party diag`.
   btn:SetScript("PostClick", function(f, mouseButton, down)
+    if mouseButton == "RightButton" and not down then
+      PG:ToggleCycleUnit(f.column, f.unit)
+      return
+    end
     PG._lastClick = {
       unit = f.unit,
       column = f.column,
@@ -916,6 +1116,13 @@ function PG:CreateButton(index, unit, column)
     end
     GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
     GameTooltip:SetSpellByID(f.spellId)
+    if PG:IsCycleColumn(f.column) then
+      if PG:IsCycleUnit(f.column, f.unit) then
+        GameTooltip:AddLine("Ciclo: incluido (derecho para quitar)", 0.3, 1, 0.3)
+      else
+        GameTooltip:AddLine("Ciclo: apagado (derecho para incluir)", 0.65, 0.65, 0.65)
+      end
+    end
     GameTooltip:Show()
   end)
   btn:HookScript("OnLeave", function(f)
@@ -1052,6 +1259,87 @@ function PG:ApplyMasque()
   end
 end
 
+function PG:EnsureCycleButton(actionName)
+  self._cycleButtons = self._cycleButtons or {}
+  local button = self._cycleButtons[actionName]
+  if button then
+    return button
+  end
+  local existing = _G[actionName]
+  if existing and not existing._chukiePartyCycle then
+    print("|cffff9900Chukie UI|r: la acción " .. actionName .. " ya existe y no pertenece a PartyGrid.")
+    return nil
+  end
+  button = existing or CreateFrame("Button", actionName, UIParent, "SecureActionButtonTemplate")
+  button._chukiePartyCycle = true
+  button:SetSize(1, 1)
+  button:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", 0, -10)
+  button:SetAlpha(0)
+  button:SetAttribute("useOnKeyDown", false)
+  --- Retail moderno necesita declarar también la fase de release para que `/click`
+  --- dispare botones de hechizo cuando ActionButtonUseKeyDown está activo.
+  button:SetAttribute("pressAndHoldAction", true)
+  button:SetAttribute("typerelease", "spell")
+  button:RegisterForClicks("AnyDown", "AnyUp")
+  --[[ La lista va en `cycleUnitN` y no en `unitN`: los nombres terminados en 1..5 son
+       atributos modificados del botón (la unidad de cada botón del mouse), así que
+       `unit1` gana siempre sobre el `unit` que elige este ciclo. ]]
+  SecureHandlerWrapScript(button, "PreClick", button, [[
+    if not down then
+      local count = self:GetAttribute("unitCount") or 0
+      local index = self:GetAttribute("cycleIndex") or 0
+      for i = 1, count do
+        index = (index % count) + 1
+        local unit = self:GetAttribute("cycleUnit" .. index)
+        if unit and UnitExists(unit) then
+          self:SetAttribute("unit", unit)
+          self:SetAttribute("cycleIndex", index)
+          break
+        end
+      end
+    end
+  ]])
+  self._cycleButtons[actionName] = button
+  return button
+end
+
+function PG:ApplyCycleAttributes()
+  if inCombat() then
+    self._pending = true
+    return false
+  end
+  for _, button in pairs(self._cycleButtons or {}) do
+    button:SetAttribute("type", nil)
+    button:SetAttribute("spell", nil)
+    button:SetAttribute("unitCount", 0)
+    button:SetAttribute("cycleIndex", 0)
+    for i = 1, #UNITS do
+      button:SetAttribute("cycleUnit" .. i, nil)
+      --- Versiones previas guardaban la lista acá y esos valores pisan el ciclo.
+      button:SetAttribute("unit" .. i, nil)
+    end
+  end
+  for column = COLUMNS_MIN, COLUMNS_MAX do
+    local spellId = self:ColumnSpell(column)
+    local actionName = self:CycleActionName(column)
+    local units = self:CycleUnits(column)
+    if self:IsEnabled() and spellId and actionName and #units > 0 then
+      local button = self:EnsureCycleButton(actionName)
+      if button then
+        button:SetAttribute("type", "spell")
+        button:SetAttribute("spell", spellId)
+        button:SetAttribute("unit", units[1])
+        button:SetAttribute("unitCount", #units)
+        button:SetAttribute("cycleIndex", 0)
+        for i = 1, #units do
+          button:SetAttribute("cycleUnit" .. i, units[i])
+        end
+      end
+    end
+  end
+  return true
+end
+
 function PG:ApplySecureAttributes()
   if not self._buttons then
     return false
@@ -1074,6 +1362,7 @@ function PG:ApplySecureAttributes()
     btn:SetAttribute("type2", nil)
     btn:SetAttribute("spell2", nil)
   end
+  self:ApplyCycleAttributes()
   return true
 end
 
@@ -1912,7 +2201,7 @@ function PG:EnsureConfig()
   end)
   f.masqueCheck:SetPoint("TOPLEFT", 224, -308)
 
-  f.columnLabels, f.columnClearButtons = {}, {}
+  f.columnLabels, f.columnCycleButtons, f.columnClearButtons = {}, {}, {}
   for column = 1, COLUMNS_MAX do
     local columnIndex = column
     local row = math.floor((column - 1) / 2)
@@ -1921,11 +2210,17 @@ function PG:EnsureConfig()
     local y = -408 - row * 28
     local label = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     label:SetPoint("TOPLEFT", x, y)
-    label:SetWidth(150)
+    label:SetWidth(104)
     label:SetJustifyH("LEFT")
     f.columnLabels[column] = label
-    local clear = makeButton(body, "Limpiar", 62, 20)
-    clear:SetPoint("TOPLEFT", x + 154, y + 4)
+    local cycleButton = makeButton(body, "Normal", 50, 20)
+    cycleButton:SetPoint("TOPLEFT", x + 106, y + 4)
+    cycleButton:SetScript("OnClick", function()
+      PG:SetColumnCycle(columnIndex, not PG:IsCycleColumn(columnIndex))
+    end)
+    f.columnCycleButtons[column] = cycleButton
+    local clear = makeButton(body, "Limpiar", 56, 20)
+    clear:SetPoint("TOPLEFT", x + 160, y + 4)
     clear:SetScript("OnClick", function()
       PG:SetColumnSpell(columnIndex, nil)
     end)
@@ -1980,6 +2275,7 @@ function PG:SyncConfig()
     local info = spellId and spellInfo(spellId) or nil
     local text = info and ((info.name or "Hechizo") .. " (" .. spellId .. ")") or "Vacía"
     f.columnLabels[column]:SetText("Col. " .. column .. ": " .. text)
+    f.columnCycleButtons[column]:SetText(self:IsCycleColumn(column) and "Ciclo" or "Normal")
     --- Apagada la etiqueta de una columna que hoy no se dibuja: su hechizo sigue
     --- guardado, pero no hay celdas donde lanzarlo.
     if column <= activeColumns then
@@ -1988,6 +2284,7 @@ function PG:SyncConfig()
       f.columnLabels[column]:SetTextColor(0.55, 0.55, 0.55)
     end
     setEnabled(f.columnClearButtons[column], not inCombat() and spellId ~= nil)
+    setEnabled(f.columnCycleButtons[column], not inCombat())
   end
 
   local baseControls = {
@@ -2069,7 +2366,7 @@ function PG:SyncConfig()
     lines[#lines + 1] = "Cada jugador lleva |cffffffff" .. self:Columns() .. " celdas|r en fila, todas sobre su misma unidad:"
       .. " cada columna lanza una habilidad distinta sobre la unidad de esa fila."
   end
-  lines[#lines + 1] = "Clic izquierdo: lanza el hechizo de la columna. Clic derecho: sin acción. Una columna vacía no ejecuta nada."
+  lines[#lines + 1] = "Clic izquierdo: lanza sobre esa fila. En una columna Ciclo, clic derecho fuera de combate prende/apaga ese jugador; la macro /click ch-cl-Hechizo avanza por los prendidos."
   lines[#lines + 1] = "Si alguien entra al grupo en combate, su celda aparece al final hasta que la pelea termine: recolocar marcos seguros en combate no está permitido."
   f.help:SetText(table.concat(lines, "\n\n"))
 end

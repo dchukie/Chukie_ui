@@ -258,6 +258,21 @@ local function cloneProfileData(src)
         for column, spellId in pairs(v) do
           t.partyGrid.columnSpells[column] = spellId
         end
+      elseif k == "columnCycles" and type(v) == "table" then
+        t.partyGrid.columnCycles = {}
+        for column, enabled in pairs(v) do
+          t.partyGrid.columnCycles[column] = enabled
+        end
+      elseif k == "columnCycleUnits" and type(v) == "table" then
+        t.partyGrid.columnCycleUnits = {}
+        for column, units in pairs(v) do
+          if type(units) == "table" then
+            t.partyGrid.columnCycleUnits[column] = {}
+            for i = 1, #units do
+              t.partyGrid.columnCycleUnits[column][i] = units[i]
+            end
+          end
+        end
       elseif type(v) ~= "table" then
         t.partyGrid[k] = v
       end
@@ -296,6 +311,12 @@ local function ensurePanelWidgetSchema(p)
     end
     if type(p.partyGrid.columnSpells) ~= "table" then
       p.partyGrid.columnSpells = {}
+    end
+    if type(p.partyGrid.columnCycles) ~= "table" then
+      p.partyGrid.columnCycles = {}
+    end
+    if type(p.partyGrid.columnCycleUnits) ~= "table" then
+      p.partyGrid.columnCycleUnits = {}
     end
   end
   p.alerts = p.alerts or { enabled = false, nextId = 1, rules = {}, groups = {} }

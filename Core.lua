@@ -385,6 +385,8 @@ local defaults = {
     orientation = "vertical",
     side = "RIGHT",
     attachToBlizzard = true,
+    --- Cada grupo de celdas sigue al marco Blizzard de su propia unidad.
+    perUnitAnchor = true,
     includePlayer = true,
     showHealth = true,
     showRole = true,

@@ -3175,12 +3175,7 @@ function ns.RegisterConfigPanel()
           if settingsLocked() or value == getAssigned() then
             return
           end
-          if not (ns.PartyGrid and ns.PartyGrid.IsCycleColumn and ns.PartyGrid:IsCycleColumn(columnIndex)) then
-            print("|cffff9900Chukie UI|r: activá primero el ciclo de la columna " .. columnIndex .. ".")
-            ns.PartyGrid:RefreshSettings()
-            return
-          end
-          if ns.PartyGrid.SetColumnSpellInput then
+          if ns.PartyGrid and ns.PartyGrid.SetColumnSpellInput then
             ns.PartyGrid:SetColumnSpellInput(columnIndex, value)
           end
         end
@@ -3197,7 +3192,7 @@ function ns.RegisterConfigPanel()
         Settings.CreateTextBox(
           framesCategory,
           assignedSetting,
-          "En columnas ciclo podés escribir el nombre exacto o ID. En cualquier columna también podés arrastrar un hechizo sobre una celda."
+          "Podés escribir el nombre exacto o ID en cualquier columna, o arrastrar un hechizo sobre una celda."
         )
 
         local function getAction()
@@ -3266,11 +3261,20 @@ function ns.RegisterConfigPanel()
       relayout
     )
 
+    addBool(
+      "ChukieUi_PartyGrid_perUnitAnchor",
+      "perUnitAnchor",
+      "Anclar cada grupo a su jugador",
+      "Pega las celdas de cada unidad a su propio marco Blizzard, también cuando la party está en horizontal y las celdas van arriba o abajo.",
+      true,
+      relayout
+    )
+
     addListDropdown(
       "ChukieUi_PartyGrid_side",
       "side",
       "Lado (pegada a Blizzard)",
-      "De qué lado de la grilla de Blizzard se coloca. A izquierda o derecha se ancla celda a celda; arriba y abajo van en fila.",
+      "De qué lado se colocan las celdas. Con «Anclar cada grupo» es respecto al marco de cada jugador; sin eso, respecto al conjunto.",
       (ns.PartyGrid and ns.PartyGrid.SIDES) or { "RIGHT", "LEFT", "TOP", "BOTTOM" },
       (ns.PartyGrid and ns.PartyGrid.SIDE_LABELS) or {},
       function()

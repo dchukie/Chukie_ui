@@ -116,6 +116,51 @@ local function isSecret(v)
   return issecretvalue and issecretvalue(v) or false
 end
 
+--[[ Lectura de marcos ajenos. Desde 12.0 un marco al que el cliente u otro addon le pasó un
+     valor secreto queda marcado y sus getters devuelven secretos: compararlos desde código
+     con taint aborta la ejecución. Las barras de vida de la grilla compacta entran en esa
+     categoría y cuelgan justo de los marcos que recorremos para anclar celda a celda.
+     Un dato ilegible se trata como desconocido: perder una referencia degrada el anclaje,
+     mientras que el error corta el layout entero. ]]
+local function frameNumber(frame, method)
+  local fn = frame and frame[method]
+  if type(fn) ~= "function" then
+    return nil
+  end
+  local ok, value = pcall(fn, frame)
+  if not ok or type(value) ~= "number" or isSecret(value) then
+    return nil
+  end
+  return value
+end
+
+local function frameFlag(frame, method)
+  local fn = frame and frame[method]
+  if type(fn) ~= "function" then
+    return false
+  end
+  local ok, value = pcall(fn, frame)
+  if not ok or isSecret(value) then
+    return false
+  end
+  return value == true
+end
+
+--- En mapas restringidos UnitIsUnit puede devolver un booleano secreto, que no se puede testear.
+local function sameUnit(a, b)
+  if a == b then
+    return true
+  end
+  if not UnitIsUnit then
+    return false
+  end
+  local ok, same = pcall(UnitIsUnit, a, b)
+  if not ok or isSecret(same) then
+    return false
+  end
+  return same == true
+end
+
 local function spellInfo(spellId)
   spellId = tonumber(spellId)
   if not spellId or spellId <= 0 then
@@ -381,18 +426,41 @@ function PG:SetColumnSpell(column, spellId)
 end
 
 function PG:SetColumnSpellInput(column, identifier)
-  local info = spellInfoByIdentifier(identifier)
+  local text = tostring(identifier or ""):match("^%s*(.-)%s*$")
+  if text == "" then
+    return self:SetColumnSpell(column, nil)
+  end
+  local info = spellInfoByIdentifier(text)
   if not info or not tonumber(info.spellID) then
     print("|cffff9900Chukie UI|r: no se encontró ese hechizo; escribí el nombre exacto o su ID.")
     self:RefreshSettings()
+    if self._configFrame then
+      self:SyncConfig()
+    end
     return false
   end
   return self:SetColumnSpell(column, info.spellID)
 end
 
+function PG:ColumnCycleTable()
+  local db = self:DB()
+  if type(db.columnCycles) ~= "table" then
+    db.columnCycles = {}
+  end
+  return db.columnCycles
+end
+
+function PG:ColumnCycleUnitTable()
+  local db = self:DB()
+  if type(db.columnCycleUnits) ~= "table" then
+    db.columnCycleUnits = {}
+  end
+  return db.columnCycleUnits
+end
+
 function PG:SetColumnCycle(column, enabled)
   column = math.floor(tonumber(column) or 0)
-  if column < COLUMNS_MIN or column > COLUMNS_MAX or not self:CanConfigure() then
+  if column < COLUMNS_MIN or column > COLUMNS_MAX then
     return false
   end
   enabled = enabled == true or enabled == 1
@@ -403,15 +471,16 @@ function PG:SetColumnCycle(column, enabled)
     self:RefreshSettings()
     return false
   end
-  local db = self:DB()
-  db.columnCycles = type(db.columnCycles) == "table" and db.columnCycles or {}
-  db.columnCycles[column] = enabled or nil
+  if not self:CanConfigure() then
+    return false
+  end
+  self:ColumnCycleTable()[column] = enabled or nil
   self:ApplySecureAttributes()
   self:UpdateAll()
-  self:RefreshSettings()
   if self._configFrame then
     self:SyncConfig()
   end
+  self:RefreshSettings()
   return true
 end
 
@@ -429,18 +498,20 @@ function PG:ToggleCycleUnit(column, unit)
   if not valid or not self:CanConfigure() then
     return false
   end
-  local db = self:DB()
-  db.columnCycleUnits = type(db.columnCycleUnits) == "table" and db.columnCycleUnits or {}
-  local units = db.columnCycleUnits[column]
+  local all = self:ColumnCycleUnitTable()
+  local units = all[column]
   if type(units) ~= "table" then
     units = {}
-    db.columnCycleUnits[column] = units
+    all[column] = units
   end
   for i = 1, #units do
     if units[i] == unit then
       table.remove(units, i)
       self:ApplySecureAttributes()
       self:UpdateAll()
+      if self._configFrame then
+        self:SyncConfig()
+      end
       self:RefreshSettings()
       return true
     end
@@ -448,6 +519,9 @@ function PG:ToggleCycleUnit(column, unit)
   units[#units + 1] = unit
   self:ApplySecureAttributes()
   self:UpdateAll()
+  if self._configFrame then
+    self:SyncConfig()
+  end
   self:RefreshSettings()
   return true
 end
@@ -919,11 +993,21 @@ function PG:PrintDiagnostics()
   local host = self._host
   if host then
     print(string.format("  host=%s tam=%.0fx%.0f celdas=%d columnas=%d opacidad=%d%% pendiente=%s",
-      tag(host), host:GetWidth() or 0, host:GetHeight() or 0,
+      tag(host), frameNumber(host, "GetWidth") or 0, frameNumber(host, "GetHeight") or 0,
       #(self._buttons or {}), self:Columns(), math.floor((host:GetAlpha() or 1) * 100 + 0.5),
       tostring(self._pending == true)))
     print("  padre=" .. tag(host:GetParent()) .. " esperado=" .. frameName(self:BlizzardContainer()))
     print("  anclada a=" .. tag(self:BlizzardHost()) .. " condicion=" .. tostring(self._visibilityCond))
+    local container = self:BlizzardContainer()
+    local matched = 0
+    if container then
+      for _ in pairs(self:BlizzardUnitFrames(container)) do
+        matched = matched + 1
+      end
+    end
+    print("  anclajePorJugador=" .. tostring(self:DB().perUnitAnchor ~= false)
+      .. " lado=" .. self:Side() .. " crecimiento=" .. self:Growth()
+      .. " marcosPorUnidad=" .. matched)
   else
     print("  host todavía no creado (fallo=" .. tostring(self._failed == true) .. ")")
   end
@@ -1266,12 +1350,17 @@ function PG:EnsureCycleButton(actionName)
     return button
   end
   local existing = _G[actionName]
-  if existing and not existing._chukiePartyCycle then
-    print("|cffff9900Chukie UI|r: la acción " .. actionName .. " ya existe y no pertenece a PartyGrid.")
+  if existing then
+    print("|cffff9900Chukie UI|r: la acción " .. actionName .. " ya fue publicada por otro addon.")
     return nil
   end
-  button = existing or CreateFrame("Button", actionName, UIParent, "SecureActionButtonTemplate")
+  local ok
+  ok, button = pcall(CreateFrame, "Button", actionName, UIParent, "SecureActionButtonTemplate")
+  if not ok or not button then
+    return nil
+  end
   button._chukiePartyCycle = true
+  button._chukiePartyCycleOwner = "Chukie_Ui"
   button:SetSize(1, 1)
   button:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", 0, -10)
   button:SetAlpha(0)
@@ -1402,7 +1491,7 @@ function PG:EnsureFrames()
     f:StopMovingOrSizing()
     local cx, cy = f:GetCenter()
     local px, py = UIParent:GetCenter()
-    if cx and px then
+    if cx and cy and px and py and not (isSecret(cx) or isSecret(cy) or isSecret(px) or isSecret(py)) then
       -- Arrastrar implica posición propia: si seguía pegada a Blizzard, se suelta.
       PG:SetOptions({
         attachToBlizzard = false,
@@ -1460,6 +1549,9 @@ function PG:EnsureColumns(count)
         end
         row[col] = btn
         self._buttons[#self._buttons + 1] = btn
+        --- Si aumenta el número de columnas, la celda nueva necesita dibujarse ahora:
+        --- no debe esperar a que llegue un evento de hechizo o unidad.
+        self._newCells = true
       end
     end
   end
@@ -1478,8 +1570,12 @@ function PG:BlizzardHost()
   end
   for i = 1, #HOST_CANDIDATES do
     local f = _G[HOST_CANDIDATES[i]]
-    if f and f.IsVisible and f:IsVisible() and f:GetWidth() and f:GetWidth() > 1 then
-      return f
+    if f and frameFlag(f, "IsVisible") then
+      local width = frameNumber(f, "GetWidth")
+      --- Ancho ilegible (marco con secretos): alcanza con que esté visible.
+      if width == nil or width > 1 then
+        return f
+      end
     end
   end
   return nil
@@ -1543,7 +1639,7 @@ function PG:BlizzardUnitFrames(container)
     return map
   end
   local function scan(frame, depth)
-    if depth > 3 or not frame.GetChildren then
+    if depth > 8 or not frame.GetChildren then
       return
     end
     for _, child in ipairs({ frame:GetChildren() }) do
@@ -1552,17 +1648,29 @@ function PG:BlizzardUnitFrames(container)
            este filtro el mapa puede devolver una celda nuestra como marco de la unidad, y
            anclarla a sí misma aborta el layout ("Cannot anchor to itself"). Pasa justo
            fuera de grupo: los marcos de Blizzard no se dibujan y los nuestros sí. ]]
-      if not child._chukieGrid then
+      if not isSecret(child) and not child._chukieGrid then
         local unit = type(child.unit) == "string" and child.unit or nil
-        if unit and child:IsVisible() and (child:GetWidth() or 0) > 1 then
-          for _, ours in ipairs(UNITS) do
-            if not map[ours] and (unit == ours or UnitIsUnit(unit, ours) == true) then
-              map[ours] = child
-              break
+        if not unit and child.GetAttribute then
+          local ok, attr = pcall(child.GetAttribute, child, "unit")
+          unit = ok and type(attr) == "string" and attr or nil
+        end
+        if unit and frameFlag(child, "IsVisible") then
+          local width = frameNumber(child, "GetWidth")
+          if width == nil or width > 1 then
+            for _, ours in ipairs(UNITS) do
+              if not map[ours] and sameUnit(unit, ours) then
+                map[ours] = child
+                break
+              end
             end
           end
         end
-        scan(child, depth + 1)
+        --[[ Un marco marcado con secretos devuelve medidas e hijos ilegibles, así que no se
+             baja por su rama: las barras de vida entran en esa categoría y no contienen
+             marcos de unidad, con lo que el mapa no pierde nada. ]]
+        if not frameFlag(child, "HasSecretValues") then
+          scan(child, depth + 1)
+        end
       end
     end
   end
@@ -1638,8 +1746,10 @@ function PG:Layout()
     local key = {}
     for i, unit in ipairs(order) do
       local ref = rows[unit]
-      if ref then
-        key[unit] = -math.floor((ref:GetTop() or 0) * 10) * 10000 + math.floor((ref:GetLeft() or 0) * 10)
+      local top = ref and frameNumber(ref, "GetTop")
+      local left = ref and frameNumber(ref, "GetLeft")
+      if top and left then
+        key[unit] = -math.floor(top * 10) * 10000 + math.floor(left * 10)
       else
         key[unit] = 1e12 + i
       end
@@ -1682,8 +1792,9 @@ function PG:Layout()
 
   local step = size + spacing
   local side = self:Side()
-  --- Pegar celda a celda solo tiene sentido al costado; arriba/abajo sigue en fila.
-  local perCell = rows and (side == "RIGHT" or side == "LEFT")
+  --- Cada grupo de celdas puede seguir al marco de su unidad en cualquiera de los lados.
+  --- Esto también cubre los party frames Blizzard dispuestos en horizontal.
+  local perCell = rows and db.perUnitAnchor ~= false
   local gap = self:Gap()
   --- Creciendo a la izquierda o hacia arriba las columnas van hacia el borde contrario
   --- de la caja: la primera celda arranca corrida para que el bloque entre igual.
@@ -1705,12 +1816,26 @@ function PG:Layout()
         ref = nil
       end
       if ref then
-        --[[ Anclada al centro vertical de su marco de Blizzard: cada fila cae enfrente
-             de la suya aunque los altos no coincidan, así no se acumula desfase. ]]
+        local cx, cy = 0, 0
+        if side == "TOP" or side == "BOTTOM" then
+          if growth == "RIGHT" then
+            cx = -colBack / 2
+          elseif growth == "LEFT" then
+            cx = colBack / 2
+          end
+        elseif growth == "DOWN" then
+          cy = colBack / 2
+        elseif growth == "UP" then
+          cy = -colBack / 2
+        end
         if side == "LEFT" then
-          btn:SetPoint("RIGHT", ref, "LEFT", -gap + ox, oy)
+          btn:SetPoint("RIGHT", ref, "LEFT", -gap + ox, cy + oy)
+        elseif side == "TOP" then
+          btn:SetPoint("BOTTOM", ref, "TOP", cx + ox, gap + oy)
+        elseif side == "BOTTOM" then
+          btn:SetPoint("TOP", ref, "BOTTOM", cx + ox, -gap + oy)
         else
-          btn:SetPoint("LEFT", ref, "RIGHT", gap + ox, oy)
+          btn:SetPoint("LEFT", ref, "RIGHT", gap + ox, cy + oy)
         end
         prev = btn
       elseif prev then
@@ -1808,6 +1933,11 @@ function PG:Layout()
     self:SyncConfig()
   end
   self:ApplyMasque()
+  --- Después de Masque: UpdateAction no repone texcoords sobre una skin ya aplicada.
+  if self._newCells then
+    self._newCells = nil
+    self:UpdateAll()
+  end
 end
 
 function PG:Refresh()
@@ -2021,8 +2151,8 @@ function PG:EnsureConfig()
     return self._configFrame
   end
   local f = CreateFrame("Frame", "ChukieUi_PartyGridConfig", UIParent, "BackdropTemplate")
-  f:SetSize(470, 730)
-  f:SetPoint("CENTER", UIParent, "CENTER", ((UIParent:GetWidth() or 1024) / 4), 0)
+  f:SetSize(540, math.min(860, math.floor((frameNumber(UIParent, "GetHeight") or 800) * 0.92)))
+  f:SetPoint("CENTER", UIParent, "CENTER", ((frameNumber(UIParent, "GetWidth") or 1024) / 4), 0)
   f:SetFrameStrata("DIALOG")
   f:SetFrameLevel(200)
   f:SetMovable(true)
@@ -2060,9 +2190,20 @@ function PG:EnsureConfig()
 
   CreateFrame("Button", nil, f, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -4, -4)
 
-  local body = CreateFrame("Frame", nil, f)
-  body:SetPoint("TOPLEFT", 16, -40)
-  body:SetPoint("BOTTOMRIGHT", -16, 14)
+  local scroll = CreateFrame("ScrollFrame", "ChukieUi_PartyGridConfigScroll", f, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", 16, -40)
+  scroll:SetPoint("BOTTOMRIGHT", -34, 14)
+  scroll:EnableMouseWheel(true)
+  scroll:SetScript("OnMouseWheel", function(self, delta)
+    local range = self:GetVerticalScrollRange() or 0
+    local value = (self:GetVerticalScroll() or 0) - delta * 40
+    self:SetVerticalScroll(math.max(0, math.min(range, value)))
+  end)
+
+  local body = CreateFrame("Frame", nil, scroll)
+  body:SetSize(470, 1120)
+  scroll:SetScrollChild(body)
+  f.scroll = scroll
   f.body = body
 
   f.enabledCheck = makeCheck(body, "Grilla activa", function(v)
@@ -2201,34 +2342,93 @@ function PG:EnsureConfig()
   end)
   f.masqueCheck:SetPoint("TOPLEFT", 224, -308)
 
-  f.columnLabels, f.columnCycleButtons, f.columnClearButtons = {}, {}, {}
+  f.perUnitCheck = makeCheck(body, "Anclar cada grupo a su jugador", function(v)
+    PG:SetOption("perUnitAnchor", v, "layout")
+  end)
+  f.perUnitCheck:SetPoint("TOPLEFT", 224, -334)
+
+  f.columnsHeader = body:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  f.columnsHeader:SetPoint("TOPLEFT", 0, -374)
+  f.columnsHeader:SetText("Habilidades por columna")
+
+  f.columnsHint = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  f.columnsHint:SetPoint("TOPLEFT", 0, -398)
+  f.columnsHint:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+  f.columnsHint:SetJustifyH("LEFT")
+  f.columnsHint:SetTextColor(0.72, 0.72, 0.78)
+  f.columnsHint:SetText("Escribí el nombre exacto o el ID y dale Enter. Vacío limpia la columna.")
+
+  f.columnLabels, f.columnEdits = {}, {}
+  f.columnCycleButtons, f.columnClearButtons = {}, {}
+  f.columnMacroEdits, f.columnCycleInfo = {}, {}
   for column = 1, COLUMNS_MAX do
     local columnIndex = column
-    local row = math.floor((column - 1) / 2)
-    local side = (column - 1) % 2
-    local x = side * 224
-    local y = -408 - row * 28
+    local y = -424 - (column - 1) * 48
+
     local label = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("TOPLEFT", x, y)
-    label:SetWidth(104)
+    label:SetPoint("TOPLEFT", 0, y - 5)
+    label:SetWidth(48)
     label:SetJustifyH("LEFT")
     f.columnLabels[column] = label
-    local cycleButton = makeButton(body, "Normal", 50, 20)
-    cycleButton:SetPoint("TOPLEFT", x + 106, y + 4)
+
+    local edit = CreateFrame("EditBox", nil, body, "InputBoxTemplate")
+    edit:SetSize(190, 22)
+    edit:SetPoint("TOPLEFT", 56, y)
+    edit:SetAutoFocus(false)
+    edit:SetMaxLetters(96)
+    edit:SetScript("OnEditFocusLost", function(self)
+      if not self._syncing then
+        PG:SetColumnSpellInput(columnIndex, self:GetText())
+      end
+    end)
+    edit:SetScript("OnEnterPressed", edit.ClearFocus)
+    edit:SetScript("OnEscapePressed", function(self)
+      self._syncing = true
+      self:ClearFocus()
+      self._syncing = false
+      PG:SyncConfig()
+    end)
+    f.columnEdits[column] = edit
+
+    local cycleButton = makeButton(body, "Normal", 62, 20)
+    cycleButton:SetPoint("TOPLEFT", 252, y - 1)
     cycleButton:SetScript("OnClick", function()
       PG:SetColumnCycle(columnIndex, not PG:IsCycleColumn(columnIndex))
     end)
     f.columnCycleButtons[column] = cycleButton
-    local clear = makeButton(body, "Limpiar", 56, 20)
-    clear:SetPoint("TOPLEFT", x + 160, y + 4)
+
+    local clear = makeButton(body, "Limpiar", 62, 20)
+    clear:SetPoint("TOPLEFT", 320, y - 1)
     clear:SetScript("OnClick", function()
       PG:SetColumnSpell(columnIndex, nil)
     end)
     f.columnClearButtons[column] = clear
+
+    local macro = CreateFrame("EditBox", nil, body, "InputBoxTemplate")
+    macro:SetSize(190, 20)
+    macro:SetPoint("TOPLEFT", 56, y - 24)
+    macro:SetAutoFocus(false)
+    macro:SetMaxLetters(96)
+    macro:SetTextColor(0.7, 0.85, 1)
+    macro:SetScript("OnEditFocusGained", function(self)
+      self:HighlightText()
+    end)
+    macro:SetScript("OnEnterPressed", macro.ClearFocus)
+    macro:SetScript("OnEscapePressed", macro.ClearFocus)
+    macro:SetScript("OnEditFocusLost", function()
+      PG:SyncConfig()
+    end)
+    f.columnMacroEdits[column] = macro
+
+    local info = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    info:SetPoint("TOPLEFT", 252, y - 28)
+    info:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+    info:SetJustifyH("LEFT")
+    f.columnCycleInfo[column] = info
   end
 
   f.help = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  f.help:SetPoint("TOPLEFT", 0, -524)
+  f.help:SetPoint("TOPLEFT", 0, -824)
   f.help:SetPoint("RIGHT", body, "RIGHT", 0, 0)
   f.help:SetJustifyH("LEFT")
   f.help:SetJustifyV("TOP")
@@ -2264,6 +2464,7 @@ function PG:SyncConfig()
   f.orientationBtn:SetText("Orientación: " .. (ORIENTATION_LABELS[self:Orientation()] or "Vertical"))
   f.sideBtn:SetText("Lado: " .. (SIDE_LABELS[self:Side()] or "Derecha"))
   f.attachCheck:SetChecked(db.attachToBlizzard ~= false)
+  f.perUnitCheck:SetChecked(db.perUnitAnchor ~= false)
   f.soloCheck:SetChecked(db.showSolo == true)
   f.playerCheck:SetChecked(db.includePlayer ~= false)
   f.healthCheck:SetChecked(db.showHealth ~= false)
@@ -2273,9 +2474,8 @@ function PG:SyncConfig()
   for column = 1, COLUMNS_MAX do
     local spellId = self:ColumnSpell(column)
     local info = spellId and spellInfo(spellId) or nil
-    local text = info and ((info.name or "Hechizo") .. " (" .. spellId .. ")") or "Vacía"
-    f.columnLabels[column]:SetText("Col. " .. column .. ": " .. text)
-    f.columnCycleButtons[column]:SetText(self:IsCycleColumn(column) and "Ciclo" or "Normal")
+    local isCycle = self:IsCycleColumn(column)
+    f.columnLabels[column]:SetText("Col. " .. column)
     --- Apagada la etiqueta de una columna que hoy no se dibuja: su hechizo sigue
     --- guardado, pero no hay celdas donde lanzarlo.
     if column <= activeColumns then
@@ -2283,8 +2483,40 @@ function PG:SyncConfig()
     else
       f.columnLabels[column]:SetTextColor(0.55, 0.55, 0.55)
     end
-    setEnabled(f.columnClearButtons[column], not inCombat() and spellId ~= nil)
+
+    local edit = f.columnEdits[column]
+    if not edit:HasFocus() then
+      edit._syncing = true
+      edit:SetText(info and (info.name or tostring(spellId)) or "")
+      edit:SetCursorPosition(0)
+      edit._syncing = false
+    end
+
+    f.columnCycleButtons[column]:SetText(isCycle and "Ciclo" or "Normal")
+
+    local macro = f.columnMacroEdits[column]
+    local action = self:CycleActionName(column)
+    macro._syncing = true
+    macro:SetText(action and ("/click " .. action) or "(sin ciclo)")
+    macro:SetCursorPosition(0)
+    macro._syncing = false
+
+    local unitInfo = f.columnCycleInfo[column]
+    if isCycle then
+      unitInfo:SetText("Ciclo: " .. self:CycleUnitSummary(column))
+      unitInfo:SetTextColor(0.55, 0.85, 1)
+    elseif spellId then
+      unitInfo:SetText("Normal: lanza sobre la fila.")
+      unitInfo:SetTextColor(0.6, 0.6, 0.66)
+    else
+      unitInfo:SetText("Vacía.")
+      unitInfo:SetTextColor(0.6, 0.6, 0.66)
+    end
+
+    setEnabled(edit, not inCombat())
     setEnabled(f.columnCycleButtons[column], not inCombat())
+    setEnabled(f.columnClearButtons[column], not inCombat() and spellId ~= nil)
+    setEnabled(macro, action ~= nil)
   end
 
   local baseControls = {
@@ -2299,6 +2531,7 @@ function PG:SyncConfig()
     f.alphaSlider,
     f.orientationBtn,
     f.attachCheck,
+    f.perUnitCheck,
     f.playerCheck,
     f.healthCheck,
     f.roleCheck,
@@ -2311,6 +2544,7 @@ function PG:SyncConfig()
   local attached = self:BlizzardHost() ~= nil
   setEnabled(f.sideBtn, attached)
   setEnabled(f.gapSlider, attached)
+  setEnabled(f.perUnitCheck, db.attachToBlizzard ~= false)
   --- Con una sola columna no hay nada que separar ni hacia dónde crecer.
   local multi = self:Columns() > 1
   setEnabled(f.colSpacingSlider, multi)
@@ -2335,6 +2569,7 @@ function PG:SyncConfig()
     f.orientationBtn,
     f.sideBtn,
     f.attachCheck,
+    f.perUnitCheck,
     f.soloCheck,
     f.playerCheck,
     f.healthCheck,
@@ -2366,7 +2601,9 @@ function PG:SyncConfig()
     lines[#lines + 1] = "Cada jugador lleva |cffffffff" .. self:Columns() .. " celdas|r en fila, todas sobre su misma unidad:"
       .. " cada columna lanza una habilidad distinta sobre la unidad de esa fila."
   end
-  lines[#lines + 1] = "Clic izquierdo: lanza sobre esa fila. En una columna Ciclo, clic derecho fuera de combate prende/apaga ese jugador; la macro /click ch-cl-Hechizo avanza por los prendidos."
+  lines[#lines + 1] = "Clic izquierdo: lanza el hechizo de la columna sobre la fila de esa celda. Una columna vacía no ejecuta nada."
+  lines[#lines + 1] = "Una columna en |cffffffffCiclo|r publica /click ch-cl-Hechizo: cada pulsación avanza por los jugadores incluidos."
+    .. " Fuera de combate, clic derecho incluye o excluye; los excluidos se ven apagados."
   lines[#lines + 1] = "Si alguien entra al grupo en combate, su celda aparece al final hasta que la pelea termine: recolocar marcos seguros en combate no está permitido."
   f.help:SetText(table.concat(lines, "\n\n"))
 end

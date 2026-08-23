@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
 **Instantánea:** 2026-08-22
-**Versión en `Chukie_Ui.toc`:** 0.5.0
+**Versión en `Chukie_Ui.toc`:** 0.5.2
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,7 +14,7 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.5.0` |
+| `## Version` | `0.5.2` |
 | Branch tipica | `dev` |
 
 Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
@@ -24,6 +24,17 @@ configurable y el resto de paneles/alertas de 12.1.
 Versión **0.5.0**: agrega columnas ciclo a PartyGrid. El clic derecho fuera de combate
 incluye/excluye unidades y una macro `/click ch-cl-NombreDelHechizo` ejecuta la secuencia
 mediante un botón seguro preconfigurado.
+
+Versión **0.5.1**: unifica mejoras generales con el standalone sin incorporar ElvUI:
+ventana `/chukie-party` desplazable con edición y macro por columna, dibujo inmediato al
+crear columnas y anclaje por jugador también arriba/abajo en layouts Blizzard horizontales.
+
+Versión **0.5.2**: PartyGrid lee la geometría de marcos ajenos con guardas de valores
+secretos. Desde 12.0 un marco que recibió un secreto (barras de vida, resaltes de aura)
+devuelve medidas secretas, y compararlas desde código con taint aborta la ejecución: eso
+rompía el recorrido del árbol al buscar el marco de cada unidad. Ahora un dato ilegible
+cuenta como desconocido, no se baja por ramas marcadas y `UnitIsUnit` pasa por el mismo
+filtro para mapas restringidos.
 
 `120100` es el Interface de **12.1 live**. Se mantiene `120007` como segundo valor por compat. Tras el patch:
 
@@ -246,18 +257,18 @@ Correspondencia con la grilla de Blizzard (0.3.7), en tres piezas:
    el juego oculta su grilla, la nuestra desaparece con ella, también en combate, donde
    ocultarla por código no está permitido. Con `attachToBlizzard` la casilla «Mostrar en
    solitario» queda deshabilitada porque ya no decide nada.
-2. **Mismo orden**: `BlizzardUnitFrames` recorre el árbol del contenedor (hasta 3
-   niveles, porque según el estilo los marcos cuelgan a distinta profundidad) y mapea
-   unidad → marco comparando con `UnitIsUnit`, así un `raid3` casa con nuestro `party2`.
+2. **Mismo orden**: `BlizzardUnitFrames` recorre el árbol del contenedor (hasta 8
+   niveles) y lee `child.unit` o el atributo seguro `unit`; después mapea unidad → marco
+   comparando con `UnitIsUnit`, así un `raid3` casa con nuestro `party2`.
    Desde 0.4.6 el recorrido **salta la propia grilla** (`_chukieGrid`): ver más abajo.
    El orden sale de la posición real de cada marco suyo, ordenado por clave numérica y no
    por comparador de posiciones (un comparador contradictorio aborta `table.sort`), de
    modo que respetamos su ordenamiento por rol o grupo sin replicar sus reglas.
-3. **Sin desfase acumulado**: cada celda se ancla por su borde vertical central al marco
-   de su unidad (`LEFT` a `RIGHT` del de Blizzard, o al revés), no en una fila propia. Si
-   Blizzard usa otro alto de fila, cada celda igual cae enfrente de la suya. Las celdas
-   sin marco propio se encadenan detrás de la última. Solo aplica con lado izquierdo o
-   derecho; arriba y abajo siguen en fila.
+3. **Sin desfase acumulado**: con `perUnitAnchor` cada grupo de celdas se ancla al marco
+   de su unidad en cualquiera de los cuatro lados. El bloque de columnas se centra sobre
+   ese marco, también en parties Blizzard horizontales con celdas arriba/abajo. Las
+   unidades sin marco propio se encadenan detrás de la última. La opción se puede apagar
+   para volver al bloque único.
 
 Al mover, el host cuelga de `UIParent` (si no, con la grilla de Blizzard oculta no habría
 nada que arrastrar), pero los anclajes por celda se siguen usando cuando su grilla está a

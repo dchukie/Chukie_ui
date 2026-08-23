@@ -88,6 +88,25 @@ local function hideBarFrame(frame, clearEvents)
   end
 end
 
+--- Devuelve un marco de Blizzard a UIParent. `show` solo cuando el juego tiene algo que mostrar
+--- ahí: forzarlo sin situación activa dejaría un marco vacío en pantalla.
+local function restoreBarFrame(frame, show)
+  if not frame then
+    return
+  end
+  if frame.SetParent then
+    pcall(frame.SetParent, frame, UIParent)
+  end
+  if not show then
+    return
+  end
+  if frame.ShowBase then
+    pcall(frame.ShowBase, frame)
+  elseif frame.Show then
+    pcall(frame.Show, frame)
+  end
+end
+
 local function hideBarButton(button)
   if not button then
     return
@@ -355,6 +374,31 @@ function AB:UpdateAllVisuals()
   end
 end
 
+--- Eventos que pueden cambiar la situación (qué barra de reemplazo hay). Los demás solo refrescan
+--- iconos y cooldowns, y llegan demasiado seguido para recalcular opacidades en cada uno.
+local SITUATION_EVENTS = {
+  ACTIONBAR_PAGE_CHANGED = true,
+  UPDATE_BONUS_ACTIONBAR = true,
+  UPDATE_SHAPESHIFT_FORM = true,
+  PLAYER_ENTERING_WORLD = true,
+  UNIT_ENTERED_VEHICLE = true,
+  UNIT_EXITED_VEHICLE = true,
+  UPDATE_VEHICLE_ACTIONBAR = true,
+  UPDATE_OVERRIDE_ACTIONBAR = true,
+  UPDATE_POSSESS_BAR = true,
+  VEHICLE_UPDATE = true,
+  PLAYER_DEAD = true,
+  PLAYER_ALIVE = true,
+  PLAYER_UNGHOST = true,
+}
+
+--- Opacidad de la barra 1 y quién muestra las acciones del evento: las dos dependen de la
+--- situación, no del contenido de los slots.
+function AB:UpdateSituation()
+  self:ApplyLeftButtonAlphas()
+  self:UpdateOverrideArtBar()
+end
+
 function AB:EnsureVisualEvents()
   if self._visEv then
     return
@@ -380,6 +424,10 @@ function AB:EnsureVisualEvents()
     "UPDATE_OVERRIDE_ACTIONBAR",
     "UPDATE_POSSESS_BAR",
     "VEHICLE_UPDATE",
+    --- Morir y volver cambia la situación: es cuando la barra del evento se pierde.
+    "PLAYER_DEAD",
+    "PLAYER_ALIVE",
+    "PLAYER_UNGHOST",
     "UPDATE_BINDINGS",
   }
   for i = 1, #events do
@@ -389,6 +437,9 @@ function AB:EnsureVisualEvents()
     if evName == "UPDATE_BINDINGS" then
       AB:UpdateAllBindings()
       return
+    end
+    if SITUATION_EVENTS[evName] then
+      AB:UpdateSituation()
     end
     AB:UpdateAllVisuals()
   end)
@@ -612,6 +663,85 @@ local APPLY_PAGE_OFFSET = [[
   end
 ]]
 
+--- Barras de bonus: el juego pagina a 6 + GetBonusBarOffset() (formas, sigilo y las habilidades
+--- temporales que dan algunas misiones o eventos). La 5 es skyriding y tiene su propio mapeo.
+local BONUS_PAGE = { [1] = 7, [2] = 8, [3] = 9, [4] = 10 }
+
+--- Situaciones que el juego impone y que la barra 1 muestra opaca. Skyriding queda afuera: es un
+--- modo que el jugador elige, con su propio paginado, no una barra circunstancial de misión.
+local OPAQUE_STATES = {
+  vehicle = true,
+  override = true,
+  shapeshift = true,
+  bonus1 = true,
+  bonus2 = true,
+  bonus3 = true,
+  bonus4 = true,
+}
+
+--- Consulta booleana tolerante: la API puede no existir en esta versión del cliente y, desde
+--- 12.0, devolver un valor secreto que no se puede testear.
+local function apiFlag(fn, ...)
+  if type(fn) ~= "function" then
+    return false
+  end
+  local ok, value = pcall(fn, ...)
+  if not ok or isSecret(value) then
+    return false
+  end
+  return value and true or false
+end
+
+local function bonusBarOffset()
+  if type(GetBonusBarOffset) ~= "function" then
+    return 0
+  end
+  local ok, value = pcall(GetBonusBarOffset)
+  if not ok or isSecret(value) then
+    return 0
+  end
+  return math.floor(tonumber(value) or 0)
+end
+
+--[[ Qué barra de reemplazo puso el juego, con el mismo orden de prioridad que su
+     ActionBarController, o nil si el jugador tiene su barra normal. Hace falta el dato en Lua,
+     y no solo dentro del entorno seguro, para decidir dos cosas que las condiciones de macro no
+     pueden: la opacidad de la fila y si conviene devolverle la barra con arte a Blizzard. ]]
+function AB:ReplacementBarState()
+  if apiFlag(UnitHasVehicleUI, "player") or apiFlag(HasVehicleActionBar) or apiFlag(IsPossessBarVisible) then
+    return "vehicle"
+  end
+  if apiFlag(HasOverrideActionBar) then
+    return "override"
+  end
+  if apiFlag(HasTempShapeshiftActionBar) then
+    return "shapeshift"
+  end
+  local bonus = bonusBarOffset()
+  if bonus == 5 then
+    return "sky"
+  end
+  if bonus >= 1 and bonus <= 4 then
+    return "bonus" .. bonus
+  end
+  return nil
+end
+
+--[[ El estado activo y si la barra 1 lo tiene cubierto. «Cubierto» significa que su driver
+     seguro tiene un `offset-<estado>` para ese caso: sin él, la barra sigue en la página normal
+     mostrando las habilidades del jugador aunque el juego haya cambiado de situación. ]]
+function AB:ReplacementCoverage()
+  local state = self:ReplacementBarState()
+  if not state then
+    return nil, false
+  end
+  local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
+  if not bar then
+    return state, false
+  end
+  return state, bar:GetAttribute("offset-" .. state) ~= nil
+end
+
 --- Estados de página por barra, en orden de prioridad (vehículo gana sobre skyriding).
 local function buildPageStates(bar, barId)
   local conditions = {}
@@ -620,6 +750,9 @@ local function buildPageStates(bar, barId)
   bar:SetAttribute("offset-override", nil)
   bar:SetAttribute("offset-shapeshift", nil)
   bar:SetAttribute("offset-sky", nil)
+  for bonus = 1, 4 do
+    bar:SetAttribute("offset-bonus" .. bonus, nil)
+  end
 
   --- Mismo orden que ActionBarController de Blizzard: vehículo, override, shapeshift temporal.
   if barId == VEHICLE_BAR_ID and db().vehiclePaging ~= false then
@@ -637,6 +770,17 @@ local function buildPageStates(bar, barId)
     if shapeshift then
       bar:SetAttribute("offset-shapeshift", shapeshift)
       conditions[#conditions + 1] = "[shapeshift] shapeshift"
+    end
+  end
+
+  --[[ Barras de bonus 1–4 (páginas 7–10). Sin estos estados la barra 1 se queda en la página
+       normal justo cuando el juego cambió de situación —una habilidad temporal de misión, una
+       forma, el sigilo—, y como el arte de Blizzard está oculto esas acciones no aparecen en
+       ninguna parte. Es el mismo cálculo que hace su ActionBarController. ]]
+  if barId == VEHICLE_BAR_ID and db().bonusPaging ~= false then
+    for bonus = 1, 4 do
+      bar:SetAttribute("offset-bonus" .. bonus, pageOffset(BONUS_PAGE[bonus]))
+      conditions[#conditions + 1] = "[bonusbar:" .. bonus .. "] bonus" .. bonus
     end
   end
 
@@ -983,22 +1127,34 @@ function AB:EnsureBar(barId, numButtons)
   return bar
 end
 
---- Slots (numeración Dominos) que muestran las barras 1–4, incluidas sus páginas de skyriding.
+--- Slots (numeración Dominos) que muestran las barras 1–4, incluidas las páginas de skyriding y
+--- de bonus a las que pagina la barra 1. Una página puede repetirse entre mapeos, así que se
+--- filtra: un slot duplicado se guardaría y repondría dos veces.
 function AB:GetLeftActionSlots()
-  local slots = {}
+  local slots, seen = {}, {}
   local function addPage(page)
     local offset = pageOffset(page)
     for i = 1, BUTTONS_PER_BAR do
-      slots[#slots + 1] = offset + i
+      local slot = offset + i
+      if not seen[slot] then
+        seen[slot] = true
+        slots[#slots + 1] = slot
+      end
     end
   end
   local skyriding = db().skyridingPaging ~= false
+  local bonus = db().bonusPaging ~= false
   for i = 1, #LEFT_BAR_IDS do
     local id = LEFT_BAR_IDS[i]
     addPage(id)
     local sky = SKY_PAGE[id]
     if sky and skyriding then
       addPage(sky)
+    end
+    if id == VEHICLE_BAR_ID and bonus then
+      for index = 1, 4 do
+        addPage(BONUS_PAGE[index])
+      end
     end
   end
   return slots
@@ -1036,26 +1192,41 @@ function AB:HideStockBars()
   end
 end
 
---- Barra de misión / vehículo con arte propio (OverrideActionBar): Blizzard la muestra
---- flotando cuando hay override/vehículo con skin. La barra 1 ya pagina a esas acciones
---- ([overridebar]/[vehicleui], índices 12/14/13), así que la mandamos al contenedor oculto
---- para que las acciones aparezcan en la barra 1 y no dupliquen. Reparentada a un frame oculto
---- resiste los Show() que Blizzard hace al activarse (incluso en combate). Revertir necesita /reload.
-function AB:HideOverrideArtBar()
-  if InCombatLockdown() then
-    self._pendingRefresh = true
-    return
-  end
+--[[ Barra de misión / vehículo con arte propio (OverrideActionBar): Blizzard la muestra flotando
+     cuando hay override/vehículo con skin. Mientras nuestra barra 1 pagine a esas acciones
+     ([overridebar]/[vehicleui], índices 12/14/13) la de Blizzard duplica, así que va a un
+     contenedor oculto, que resiste los Show() del juego incluso en combate.
+
+     La excepción es lo que importa: si el juego tiene una barra de reemplazo que nuestro
+     paginado NO cubre —el paginado apagado, o un estado que el driver seguro no contempla tras
+     morir o cambiar de situación—, ocultarla dejaría al jugador sin ninguna forma de usar la
+     habilidad del evento y sin poder avanzar. En ese caso se devuelve a UIParent y manda
+     Blizzard. Son llamadas protegidas: en combate quedan pendientes hasta salir. ]]
+function AB:UpdateOverrideArtBar()
   local bar = _G.OverrideActionBar
   if not bar then
     return
   end
-  --- Sólo si hay una barra 1 propia que reciba el paginado de vehículo/override.
-  local route = self.IsEnabled() and db().leftEnabled ~= false and db().vehiclePaging ~= false
-  if not route then
+  local state, covered = self:ReplacementCoverage()
+  local routed = self.IsEnabled() and db().leftEnabled ~= false and db().vehiclePaging ~= false
+  local uncovered = state ~= nil and not covered
+  local hide = routed and not uncovered
+  if self._overrideArtHidden == hide then
     return
   end
-  hideBarFrame(bar, false)
+  if InCombatLockdown() then
+    self._pendingOverrideArt = true
+    return
+  end
+  self._pendingOverrideArt = nil
+  if hide then
+    hideBarFrame(bar, false)
+  else
+    --- La habíamos escondido con Hide(), así que el juego no la va a volver a mostrar solo:
+    --- se fuerza, pero únicamente en las situaciones que este marco atiende.
+    restoreBarFrame(bar, state == "vehicle" or state == "override")
+  end
+  self._overrideArtHidden = hide
 end
 
 function AB:HideAll()
@@ -1118,13 +1289,24 @@ function AB:GetLeftButtonAlphaPercent(barId, buttonIndex)
 end
 
 function AB:ApplyLeftButtonAlphas()
+  --[[ Mientras el juego reemplaza la barra 1 (vehículo, misión, evento, forma) esa fila deja de
+       ser la del jugador: son acciones que aparecieron solas y que hay que poder leer, así que
+       se muestran opacas y recuperan la opacidad configurada al terminar la situación. Solo se
+       fuerza si nuestro paginado cubre el estado; si no, la barra sigue mostrando las
+       habilidades normales y no hay motivo para cambiarle nada. ]]
+  local state, covered = self:ReplacementCoverage()
+  local opaqueBar = (state and covered and OPAQUE_STATES[state]) and VEHICLE_BAR_ID or nil
   for barId = 1, 4 do
     local bar = self._bars and self._bars[tostring(barId)]
     if bar and bar.buttons then
       for buttonIndex = 1, LEFT_BUTTONS_PER_BAR do
         local btn = bar.buttons[buttonIndex]
         if btn then
-          btn:SetAlpha(self:GetLeftButtonAlphaPercent(barId, buttonIndex) / 100)
+          local percent = 100
+          if barId ~= opaqueBar then
+            percent = self:GetLeftButtonAlphaPercent(barId, buttonIndex)
+          end
+          btn:SetAlpha(percent / 100)
         end
       end
     end
@@ -1263,23 +1445,82 @@ function AB:Refresh()
   if not p or not p.enabled or not self.IsEnabled() then
     self:MasqueStrip()
     self:HideAll()
+    --- Sin barras propias, la barra con arte de Blizzard vuelve a ser la única opción.
+    self:UpdateOverrideArtBar()
     return
   end
 
   self:EnsureVisualEvents()
   self:HideStockBars()
-  self:HideOverrideArtBar()
   self:EnsureDefaultKeybinds()
   self:LayoutLeftBars()
   self:LayoutRightBar6()
   self:UpdateAllBindings()
   self:MasqueApply()
   self:UpdateAllVisuals()
+  --- Después del layout: la cobertura se lee de los atributos que acaba de fijar el paginado.
+  self:UpdateSituation()
+end
+
+--- Diagnóstico de situación: sirve para saber, cuando una barra de evento no aparece, si el
+--- juego declaró un reemplazo, si nuestra barra 1 lo cubre y quién está mostrando las acciones.
+function AB:PrintDiagnostics()
+  local d = db()
+  local state, covered = self:ReplacementCoverage()
+  print("|cff00ff00Chukie UI|r barras de acción:")
+  print(
+    "  reemplazo del juego="
+      .. tostring(state or "ninguno")
+      .. " cubierto por la barra 1="
+      .. tostring(covered)
+      .. " bonusbar="
+      .. bonusBarOffset()
+  )
+  print(
+    "  paginado: vehículo="
+      .. tostring(d.vehiclePaging ~= false)
+      .. " bonus="
+      .. tostring(d.bonusPaging ~= false)
+      .. " skyriding="
+      .. tostring(d.skyridingPaging ~= false)
+  )
+  local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
+  if bar then
+    local first = bar.buttons and bar.buttons[1]
+    print(
+      "  barra 1: estado="
+        .. tostring(bar:GetAttribute("state-page") or "sin driver")
+        .. " offset="
+        .. tostring(bar:GetAttribute("actionOffset"))
+        .. " acción del botón 1="
+        .. tostring(first and first:GetAttribute("action"))
+    )
+  else
+    print("  barra 1: todavía no creada.")
+  end
+  local art = _G.OverrideActionBar
+  if art then
+    local parent = art:GetParent()
+    print(
+      "  OverrideActionBar: padre="
+        .. tostring((parent and parent.GetName and parent:GetName()) or parent)
+        .. " visible="
+        .. tostring(apiFlag(art.IsShown, art))
+        .. " la ocultamos="
+        .. tostring(self._overrideArtHidden == true)
+        .. " pendiente="
+        .. tostring(self._pendingOverrideArt == true)
+    )
+  else
+    print("  OverrideActionBar: no existe en este cliente.")
+  end
 end
 
 function AB:OnRegenEnabled()
   if self._pendingRefresh then
     self:Refresh()
+  elseif self._pendingOverrideArt then
+    self:UpdateOverrideArtBar()
   end
 end
 

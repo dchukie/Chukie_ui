@@ -149,6 +149,27 @@ local function frameFlag(frame, method)
   return value == true
 end
 
+--[[ Hijos de un marco ajeno. La llamada puede fallar entera: si alguno de los hijos es un objeto
+     prohibido —de los que el cliente se reserva— armar la lista desde código con taint aborta la
+     ejecución («Attempt to access forbidden object from code tainted by an AddOn»). Una rama
+     ilegible se descarta: perderla degrada el anclaje, mientras que el error cortaba el layout y
+     terminaba apagando el módulo. ]]
+local function frameChildren(frame)
+  if not frame then
+    return nil
+  end
+  local ok, children = pcall(function()
+    if type(frame.GetChildren) ~= "function" then
+      return nil
+    end
+    return { frame:GetChildren() }
+  end)
+  if not ok or type(children) ~= "table" then
+    return nil
+  end
+  return children
+end
+
 --- En mapas restringidos UnitIsUnit puede devolver un booleano secreto, que no se puede testear.
 local function sameUnit(a, b)
   if a == b then
@@ -1641,39 +1662,55 @@ function PG:BlizzardUnitFrames(container)
   if not container then
     return map
   end
-  local function scan(frame, depth)
-    if depth > 8 or not frame.GetChildren then
-      return
+  --[[ Un hijo se examina completo o no se examina: cualquier acceso a un objeto prohibido
+       aborta la ejecución, y ni siquiera se puede preguntar si lo es sin tocarlo. Devuelve si
+       conviene seguir bajando por esa rama. La grilla queda fuera del recorrido, y no es un
+       detalle: nuestras celdas también llevan un campo `unit` y, pegadas a Blizzard, son hijas
+       de su contenedor. Sin ese filtro el mapa puede devolver una celda nuestra como marco de
+       la unidad, y anclarla a sí misma aborta el layout ("Cannot anchor to itself"). Pasa justo
+       fuera de grupo: los marcos de Blizzard no se dibujan y los nuestros sí. ]]
+  local function inspect(child)
+    if isSecret(child) or child._chukieGrid then
+      return false
     end
-    for _, child in ipairs({ frame:GetChildren() }) do
-      --[[ La grilla queda fuera del recorrido, y no es un detalle: nuestras celdas también
-           llevan un campo `unit` y, pegadas a Blizzard, son hijas de su contenedor. Sin
-           este filtro el mapa puede devolver una celda nuestra como marco de la unidad, y
-           anclarla a sí misma aborta el layout ("Cannot anchor to itself"). Pasa justo
-           fuera de grupo: los marcos de Blizzard no se dibujan y los nuestros sí. ]]
-      if not isSecret(child) and not child._chukieGrid then
-        local unit = type(child.unit) == "string" and child.unit or nil
-        if not unit and child.GetAttribute then
-          local ok, attr = pcall(child.GetAttribute, child, "unit")
-          unit = ok and type(attr) == "string" and attr or nil
-        end
-        if unit and frameFlag(child, "IsVisible") then
-          local width = frameNumber(child, "GetWidth")
-          if width == nil or width > 1 then
-            for _, ours in ipairs(UNITS) do
-              if not map[ours] and sameUnit(unit, ours) then
-                map[ours] = child
-                break
-              end
-            end
+    if child.IsForbidden and child:IsForbidden() then
+      return false
+    end
+    local unit = type(child.unit) == "string" and child.unit or nil
+    if not unit and child.GetAttribute then
+      local ok, attr = pcall(child.GetAttribute, child, "unit")
+      unit = ok and type(attr) == "string" and attr or nil
+    end
+    if unit and frameFlag(child, "IsVisible") then
+      local width = frameNumber(child, "GetWidth")
+      if width == nil or width > 1 then
+        for _, ours in ipairs(UNITS) do
+          if not map[ours] and sameUnit(unit, ours) then
+            map[ours] = child
+            break
           end
         end
-        --[[ Un marco marcado con secretos devuelve medidas e hijos ilegibles, así que no se
-             baja por su rama: las barras de vida entran en esa categoría y no contienen
-             marcos de unidad, con lo que el mapa no pierde nada. ]]
-        if not frameFlag(child, "HasSecretValues") then
-          scan(child, depth + 1)
-        end
+      end
+    end
+    --[[ Un marco marcado con secretos devuelve medidas e hijos ilegibles, así que no se baja
+         por su rama: las barras de vida entran en esa categoría y no contienen marcos de
+         unidad, con lo que el mapa no pierde nada. ]]
+    return not frameFlag(child, "HasSecretValues")
+  end
+
+  local function scan(frame, depth)
+    if depth > 8 then
+      return
+    end
+    local children = frameChildren(frame)
+    if not children then
+      return
+    end
+    for i = 1, #children do
+      local child = children[i]
+      local ok, deeper = pcall(inspect, child)
+      if ok and deeper then
+        scan(child, depth + 1)
       end
     end
   end

@@ -182,6 +182,8 @@ local defaults = {
     skyridingPaging = true,
     --- Vehículo / override / possess: la barra 1 muestra esas acciones.
     vehiclePaging = true,
+    --- Barras de bonus 1–4 (páginas 7–10): formas, sigilo y habilidades temporales de misión.
+    bonusPaging = true,
     --- Botón de bajarse sobre la barra 1 (reemplaza el de Blizzard).
     vehicleExitButton = true,
     --- Asignar una vez las teclas por defecto (12345/qwert/asdfg/zxcv) si no hay binds.
@@ -761,6 +763,14 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     end
     return
   end
+  if msg == "barras" or msg == "barras diag" then
+    if ns.ActionBars and ns.ActionBars.PrintDiagnostics then
+      ns.ActionBars:PrintDiagnostics()
+    else
+      print("|cffff9900Chukie UI|r: módulo de barras no disponible.")
+    end
+    return
+  end
   if msg == "botones" then
     if ns.OpenMinimapButtonsPanel and ns.OpenMinimapButtonsPanel() then
       return
@@ -853,6 +863,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
   print("|cff00ff00Chukie UI|r — panel de auras: /chukie-auras (o /chukieui aurapanel)")
   print("|cff00ff00Chukie UI|r — grilla de party clickeable: /chukieui party (menú: Marcos) | /chukie-party (ventana) | /chukieui party on | off | diag")
   print("|cff00ff00Chukie UI|r — panel derecho: /chukieui diag | /chukieui diagbotones | /chukieui fix")
+  print("|cff00ff00Chukie UI|r — barras de acción: /chukieui barras (situación, paginado y quién muestra la barra del evento)")
   print("|cff00ff00Chukie UI|r — Combat Log: Esc → AddOns → Chukie UI → Panel izquierdo")
   if p then
     print("  Perfil: " .. tostring(ns.Profile:GetCurrentName()) .. " — " .. (p.enabled and "activado" or "desactivado"))

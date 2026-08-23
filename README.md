@@ -19,7 +19,7 @@ Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueU
 | **Panel derecho** | `PanelCore.lua` + `RightPanel.lua`: host del minimapa, rejilla de widgets y slot lateral derecho. |
 | **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte y toggle de **Combat Log** en una ranura 2–4 configurable. `CombatLog.lua` permite auto-logging por dificultad (M+, raids, etc.) y por instancia concreta. |
 | **Sector amarillo** | `RightStrip.lua`: grilla inferior fija 2x2 (oro abreviado + huecos libres de bolsas), clic para `ToggleAllBags`, estilo Masque opcional y ocultado de la barra de bolsas Blizzard. |
-| **Barras de acción 1–4** | Matriz fija de **6 × 4** centrada en la pantalla (Offset X −1800…1800, Offset Y −1200…1200 desde el centro). La subpágina **Barras de acción → Transparencia 6 × 4** reproduce las 24 celdas y permite ajustar cada botón entre 10 y 100 % con deslizador o caja de texto (ambos sincronizados). |
+| **Barras de acción 1–4** | Matriz fija de **6 × 4** centrada en la pantalla (Offset X −1800…1800, Offset Y −1200…1200 desde el centro). La subpágina **Barras de acción → Transparencia 6 × 4** reproduce las 24 celdas y permite ajustar cada botón entre 10 y 100 % con deslizador o caja de texto (ambos sincronizados). La barra 1 recibe las barras circunstanciales del juego (vehículo, misión, evento, formas) y mientras duran se muestra opaca; diagnóstico en `/chukieui barras`. |
 | **Opciones** | *Esc → Opciones → AddOns → Chukie UI* (`ConfigPanel.lua`, API Settings de Retail). |
 | **Alertas CD/procs/auras** | Grupos con efectos y condiciones, editor `/chukie-aura`. En **12.1**, un grupo cuya única condición es aura “Presente” y cuyo único efecto visual es icono/textura lo dibuja el cliente (**AuraContainer**), así que también ve las auras que Blizzard oculta; el resto usa el path propio. Media en `Media/Alerts/`. |
 | **Panel de auras** | `AuraPanel.lua`, `/chukie-auras`: un slot grande por aura elegida usando **AuraContainer**, con tamaño, separación, auras por línea, dirección y posición arrastrable. Los slots no se compactan (el addon no sabe cuál está activa). |
@@ -61,6 +61,15 @@ Prioridad aproximada: acción extra → habilidad de zona → ítems especiales 
 - **Instancias específicas**: lista vacía = todas las del tipo marcado; con marcas, sólo esas.
 - «Detener al salir» sólo apaga una sesión que arrancó el addon, no un `/combatlog` manual.
 - Advanced Combat Logging es un CVar aparte (`advancedCombatLogging`).
+
+## Barras circunstanciales en la barra 1
+
+Cuando el juego reemplaza la barra del jugador (vehículo, misión con barra propia, evento, posesión, forma o habilidad temporal), esas acciones aparecen en la **barra 1**.
+
+- Mientras dura la situación, los seis botones de la barra 1 se muestran **al 100 %** y al terminar cada celda recupera su transparencia configurada. Skyriding no cuenta como situación: tiene su propio paginado.
+- *Barras de acción → **Barras de bonus en la barra 1*** (activo por defecto) agrega `[bonusbar:1..4]` → páginas 7–10, el mismo cálculo que hace Blizzard. Sin esto, la barra 1 se queda en las habilidades normales justo cuando el juego cambia de situación.
+- Si el juego declara un reemplazo que la barra 1 **no** cubre (paginado apagado, o un cambio de situación tras morir), se devuelve la **barra con arte de Blizzard** en vez de dejar la habilidad del evento sin ningún botón. Vuelve a ocultarse cuando la barra 1 retoma la situación. Es una llamada protegida: si pasa en combate, se aplica al salir.
+- `/chukieui barras` muestra el reemplazo detectado, si la barra 1 lo cubre, el paginado activo y quién tiene `OverrideActionBar`.
 
 ## Guardado de acciones (barras 1–4)
 

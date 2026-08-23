@@ -2009,6 +2009,16 @@ function ns.RegisterConfigPanel()
   )
   addBoolActionBars(
     barsCategory,
+    "ChukieUi_AB_bonus",
+    "bonusPaging",
+    "Barras de bonus en la barra 1",
+    "Con [bonusbar:1..4] la barra 1 muestra las páginas 7–10: formas, sigilo y las habilidades "
+      .. "temporales que dan algunas misiones o eventos. Es el mismo cálculo que hace Blizzard; "
+      .. "apagado, la barra 1 se queda en la página normal cuando el juego cambia de situación.",
+    true
+  )
+  addBoolActionBars(
+    barsCategory,
     "ChukieUi_AB_vehicleExit",
     "vehicleExitButton",
     "Botón de bajarse sobre la barra 1",

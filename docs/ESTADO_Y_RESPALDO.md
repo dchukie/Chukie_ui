@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
 **Instantánea:** 2026-08-22
-**Versión en `Chukie_Ui.toc`:** 0.5.3
+**Versión en `Chukie_Ui.toc`:** 0.5.4
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,7 +14,7 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.5.3` |
+| `## Version` | `0.5.4` |
 | Branch tipica | `dev` |
 
 Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
@@ -41,6 +41,16 @@ Versión **0.5.3**: la distancia al marco anfitrión y los ajustes X/Y de PartyG
 alejarse media pantalla o quedar por encima del propio marco. Los sliders de la ventana
 propia aceptan rueda del mouse, que mueve de a un paso: con 180 px de barra y 1200 de
 recorrido el arrastre solo sirve para el grueso.
+
+Versión **0.5.4**: las barras circunstanciales (misión, evento, vehículo, formas) se muestran
+opacas en la barra 1, el paginado cubre además las barras de bonus 1–4 y, si el juego declara un
+reemplazo que la barra 1 no cubre, se devuelve la barra con arte de Blizzard en lugar de dejar al
+jugador sin la habilidad del evento. Detalle en «Barras circunstanciales en la barra 1».
+
+También en **0.5.4**: el recorrido del árbol de party de PartyGrid tolera objetos prohibidos
+(«Attempt to access forbidden object from code tainted by an AddOn»). Aparecían con ElvUI, así
+que el fallo se veía en el standalone (0.4.4) y no acá: el error se repetía en cada evento y el
+corte por fallos apagaba la grilla toda la sesión.
 
 `Settings.CreateTextBox` **no existe** en la API de Blizzard (solo checkbox, slider y
 dropdown). Acá siempre estuvo detrás de un `if`, así que las cajas de hechizo y de macro por
@@ -208,6 +218,55 @@ diferido a `PLAYER_REGEN_ENABLED`.
 
 ---
 
+## Barras circunstanciales en la barra 1 (0.5.4)
+
+Cuando el juego reemplaza la barra del jugador —vehículo, misión con barra propia (override),
+posesión, shapeshift temporal o una barra de bonus— la barra 1 pagina a esas acciones. Tres
+cosas cambian en 0.5.4.
+
+**Opacidad.** Mientras dura la situación, los seis botones de la barra 1 van a 100 %: son
+acciones que aparecieron solas y la transparencia configurada podía dejarlas casi invisibles. Al
+terminar, cada celda recupera su porcentaje de `leftButtonAlphaPercent`. Skyriding queda afuera a
+propósito: es un modo que el jugador elige, con su propio paginado, no una barra circunstancial.
+`SetAlpha` no es una llamada protegida, así que el cambio también entra en combate.
+
+**Paginado de barras de bonus.** `buildPageStates` agrega `[bonusbar:1..4] → páginas 7–10`
+(`bonusPaging`, por defecto activo), el mismo cálculo que hace `ActionBarController` con
+`6 + GetBonusBarOffset()`. Antes solo estaban vehículo, override, shapeshift temporal y
+`[bonusbar:5]` (skyriding): si el juego cambiaba a una barra de bonus —una habilidad temporal de
+misión, una forma, el sigilo—, la barra 1 se quedaba en la página normal mostrando las
+habilidades del jugador y las acciones del evento no aparecían en ninguna parte. Esas páginas se
+suman también a `GetLeftActionSlots()`, que ahora filtra duplicados (la página 8 es
+`SKY_PAGE[1]` y `BONUS_PAGE[2]` a la vez).
+
+**Red de seguridad: la barra de Blizzard.** `HideOverrideArtBar` pasa a ser
+`UpdateOverrideArtBar` y decide en cada cambio de situación. `ReplacementBarState()` consulta por
+API qué reemplazo puso el juego (mismo orden de prioridad que Blizzard) y `ReplacementCoverage()`
+mira si la barra 1 tiene un `offset-<estado>` para ese caso. Si hay reemplazo **sin cubrir**
+—paginado apagado o un estado que el driver seguro no contempla— `OverrideActionBar` vuelve a
+`UIParent` y se fuerza su `Show()` en los estados que ese marco atiende (vehículo y override);
+en cuanto la barra 1 vuelve a cubrir la situación, regresa al contenedor oculto. Antes el marco
+se escondía una vez y revertirlo pedía `/reload`, así que un cambio de situación tras morir podía
+dejar al jugador sin ninguna forma de usar la habilidad del evento.
+
+`SetParent`/`Show` sobre un marco protegido no se pueden llamar en combate: si la situación cambia
+ahí, queda `_pendingOverrideArt` y se aplica en `PLAYER_REGEN_ENABLED`. La detección corre en los
+eventos de situación (incluidos `PLAYER_DEAD`, `PLAYER_ALIVE` y `PLAYER_UNGHOST`) y no en los de
+cooldown, que llegan demasiado seguido.
+
+Las consultas de estado pasan por `apiFlag`, que tolera que la función no exista y descarta
+valores secretos: desde 12.0 comparar un secreto desde código con taint aborta la ejecución.
+
+`/chukieui barras` imprime el reemplazo detectado, si la barra 1 lo cubre, el `bonusbar` actual,
+las tres opciones de paginado, el estado y offset de la barra 1 y quién tiene
+`OverrideActionBar`.
+
+Límite conocido: cuando el reemplazo es una barra de bonus y `bonusPaging` está apagado, no hay
+marco de Blizzard que devolver (esas acciones las muestra la barra principal, que el addon
+oculta). Por eso la opción viene activa.
+
+---
+
 ## Grilla de party clickeable (`/chukie-party`)
 
 Grilla propia de `player` + `party1..4` con una habilidad distinta por columna, pegada por defecto
@@ -274,6 +333,12 @@ Correspondencia con la grilla de Blizzard (0.3.7), en tres piezas:
    niveles) y lee `child.unit` o el atributo seguro `unit`; después mapea unidad → marco
    comparando con `UnitIsUnit`, así un `raid3` casa con nuestro `party2`.
    Desde 0.4.6 el recorrido **salta la propia grilla** (`_chukieGrid`): ver más abajo.
+   El árbol se recorre rama por rama y tolerando lo ilegible: `frameChildren` pide los hijos
+   bajo `pcall` y cada hijo se examina dentro de otro `pcall`. Un **objeto prohibido** (de los
+   que el cliente se reserva; con ElvUI aparecen en el árbol de la party) aborta cualquier
+   acceso desde código con taint —incluso preguntar si lo es—, así que se descarta esa rama en
+   lugar de perder el mapa completo. Antes el error se repetía en cada evento y el corte por
+   fallos apagaba la grilla toda la sesión (0.5.4).
    El orden sale de la posición real de cada marco suyo, ordenado por clave numérica y no
    por comparador de posiciones (un comparador contradictorio aborta `table.sort`), de
    modo que respetamos su ordenamiento por rol o grupo sin replicar sus reglas.

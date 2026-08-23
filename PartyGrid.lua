@@ -24,8 +24,11 @@ local UNITS = { "player", "party1", "party2", "party3", "party4" }
 --- Celda cuadrada: un solo lado, porque la celda lleva el icono de una habilidad.
 local SIZE_MIN, SIZE_MAX = 16, 100
 local SPACING_MAX = 20
-local GAP_MIN, GAP_MAX = -60, 300
-local OFFSET_MAX = 400
+--- Distancia a la grilla de Blizzard y ajuste fino. El rango es amplio a propósito: la
+--- grilla puede tener que cruzar media pantalla para quedar donde se la quiere, y el
+--- negativo grande permite meterla por encima del propio marco.
+local GAP_MIN, GAP_MAX = -600, 600
+local OFFSET_MAX = 600
 
 --[[ Columnas: cada unidad tiene una fila de celdas, una por columna, todas con la misma
      unidad detrás (una habilidad distinta por columna). El techo es bajo a
@@ -2119,6 +2122,15 @@ local function makeSlider(parent, key, label, lo, hi, step)
   s:SetMinMaxValues(lo, hi)
   s:SetValueStep(step or 1)
   s:SetObeyStepOnDrag(true)
+  --[[ Con rangos anchos (la distancia y los ajustes llegan a ±600 sobre 180 px de barra) el
+       arrastre no sirve para el ajuste fino: la rueda mueve exactamente un paso. ]]
+  s:EnableMouseWheel(true)
+  s:SetScript("OnMouseWheel", function(slider, delta)
+    if slider.IsEnabled and not slider:IsEnabled() then
+      return
+    end
+    slider:SetValue(slider:GetValue() + delta * (slider:GetValueStep() or 1))
+  end)
   local name = s:GetName()
   _G[name .. "Low"]:SetText(tostring(lo))
   _G[name .. "High"]:SetText(tostring(hi))

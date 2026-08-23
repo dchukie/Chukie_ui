@@ -3125,9 +3125,29 @@ function ns.RegisterConfigPanel()
     framesLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Party: habilidades por columna"))
     framesLayout:AddInitializer(
       CreateSettingsListSectionHeaderInitializer(
-        "Arrastrá hechizos sobre las celdas. Una columna ciclo también acepta nombre/ID y publica una acción /click ch-cl-Hechizo."
+        "Arrastrá hechizos sobre las celdas, o escribí nombre/ID en la ventana /chukie-party. Una columna ciclo publica una acción /click ch-cl-Hechizo."
       )
     )
+    --[[ El panel de Settings no tiene control de texto (no existe Settings.CreateTextBox), así
+         que las cajas de hechizo y de macro de más abajo no se dibujan en este cliente: sin
+         este atajo la sección quedaría con el interruptor de ciclo y nada donde escribir. ]]
+    if not Settings.CreateTextBox and CreateSettingsButtonInitializer then
+      framesLayout:AddInitializer(
+        CreateSettingsButtonInitializer(
+          "Hechizo y macro de cada columna",
+          "Abrir /chukie-party",
+          function()
+            if ns.PartyGrid and ns.PartyGrid.ShowConfig then
+              ns.PartyGrid:ShowConfig()
+            end
+          end,
+          "La ventana propia tiene la caja para escribir nombre o ID por columna y la línea /click lista para copiar a una macro.",
+          true,
+          nil,
+          nil
+        )
+      )
+    end
     for column = 1, 8 do
       local columnIndex = column
       do
@@ -3286,12 +3306,12 @@ function ns.RegisterConfigPanel()
     )
 
     do
-      local lo, hi = range("gap", -60, 300)
+      local lo, hi = range("gap", -600, 600)
       addInt(
         "ChukieUi_PartyGrid_gap",
         "gap",
         "Distancia a la grilla de Blizzard (px)",
-        "Separación respecto de su marco. Solo cuenta con «Pegada a la grilla de Blizzard» activo.",
+        "Separación respecto de su marco. En negativo la grilla se mete por encima del marco. Solo cuenta con «Pegada a la grilla de Blizzard» activo.",
         lo,
         hi,
         1,
@@ -3300,7 +3320,7 @@ function ns.RegisterConfigPanel()
     end
 
     do
-      local lo, hi = range("offset", -400, 400)
+      local lo, hi = range("offset", -600, 600)
       addInt(
         "ChukieUi_PartyGrid_offsetX",
         "offsetX",

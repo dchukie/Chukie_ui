@@ -40,6 +40,8 @@ Comportamiento de celdas, combate 12.1 y ciclos:
 - Rechazo de config en combate, duration objects, secretos, Masque de celdas
 - Guardas de secretos también al leer marcos ajenos (`frameNumber`, `frameFlag`, `sameUnit`):
   un ancho o un `UnitIsUnit` secreto aborta el recorrido, y con ElvUI pasa siempre
+- Cada API opcional del panel de Settings detrás de un `if`. `Settings.CreateTextBox` no
+  existe en ninguna versión: donde hacía falta escribir, el panel manda a la ventana propia
 
 El nombre `ch-cl-…` es el mismo a propósito (macros). No cargar **los dos** addons con ciclos activos: el segundo no pisa el botón.
 

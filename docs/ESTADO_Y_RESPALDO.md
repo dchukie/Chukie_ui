@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
 **Instantánea:** 2026-08-22
-**Versión en `Chukie_Ui.toc`:** 0.5.2
+**Versión en `Chukie_Ui.toc`:** 0.5.3
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,7 +14,7 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.5.2` |
+| `## Version` | `0.5.3` |
 | Branch tipica | `dev` |
 
 Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
@@ -35,6 +35,19 @@ devuelve medidas secretas, y compararlas desde código con taint aborta la ejecu
 rompía el recorrido del árbol al buscar el marco de cada unidad. Ahora un dato ilegible
 cuenta como desconocido, no se baja por ramas marcadas y `UnitIsUnit` pasa por el mismo
 filtro para mapas restringidos.
+
+Versión **0.5.3**: la distancia al marco anfitrión y los ajustes X/Y de PartyGrid pasan a
+±600 px (antes `gap` iba de -60 a 300 y los ajustes a ±400), de modo que la grilla puede
+alejarse media pantalla o quedar por encima del propio marco. Los sliders de la ventana
+propia aceptan rueda del mouse, que mueve de a un paso: con 180 px de barra y 1200 de
+recorrido el arrastre solo sirve para el grueso.
+
+`Settings.CreateTextBox` **no existe** en la API de Blizzard (solo checkbox, slider y
+dropdown). Acá siempre estuvo detrás de un `if`, así que las cajas de hechizo y de macro por
+columna nunca se dibujan en **Marcos → Party**; desde 0.5.3 la sección ofrece un botón que
+abre `/chukie-party`, donde sí se escribe el nombre/ID y se copia la línea `/click`. El
+standalone las llamaba sin guarda y eso abortaba el registro del panel entero: ver
+`tmp/Chukie_PartyGrid`.
 
 `120100` es el Interface de **12.1 live**. Se mantiene `120007` como segundo valor por compat. Tras el patch:
 

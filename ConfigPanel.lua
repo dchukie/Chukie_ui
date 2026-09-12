@@ -1442,8 +1442,7 @@ function ns.RegisterConfigPanel()
       ns.Profile:GetCurrentName()
     )
     profileSetting:SetValueChangedCallback(function()
-      ns.Profile:GetActive()
-      ns.Profile:NotifyChanged()
+      ns.Profile:SetCurrent(ChukieUiDB.currentProfile or "Default")
     end)
     local function profileDropdownOptions()
       local container = Settings.CreateControlTextContainer()
@@ -1452,7 +1451,13 @@ function ns.RegisterConfigPanel()
       end
       return container:GetData()
     end
-    Settings.CreateDropdown(rootCategory, profileSetting, profileDropdownOptions, "«Default» incluye opciones válidas por defecto. Cada perfil guarda su propia copia de ajustes.")
+    Settings.CreateDropdown(
+      rootCategory,
+      profileSetting,
+      profileDropdownOptions,
+      "Cada personaje y especialización usa su propio perfil (se clona la primera vez). "
+        .. "«Default» es la plantilla. Elegir un perfil aquí lo deja vinculado a la spec actual."
+    )
   end
 
   rootLayout:AddInitializer(
@@ -1498,6 +1503,54 @@ function ns.RegisterConfigPanel()
         print("|cff00ff00Chukie UI|r: perfil «" .. ns.Profile:GetCurrentName() .. "» restaurado a los valores por defecto del addon.")
       end,
       "Vuelve a poner este perfil como al instalar (valores por defecto del addon).",
+      true,
+      nil,
+      nil
+    )
+  )
+
+  rootLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Respaldo recuperable"))
+  rootLayout:AddInitializer(
+    CreateSettingsButtonInitializer(
+      "",
+      "Abrir respaldo",
+      function()
+        if ns.Backup and ns.Backup.Show then
+          ns.Backup:Show()
+        end
+      end,
+      "Exporta o importa el perfil actual (layout, barras 1–180, botones de la UI, macros y teclas). "
+        .. "WoW no crea archivos: usá Copiar y pegalo en un .txt. También: /chukieui backup.",
+      true,
+      nil,
+      nil
+    )
+  )
+  rootLayout:AddInitializer(
+    CreateSettingsButtonInitializer(
+      "",
+      "Exportar ahora",
+      function()
+        if ns.Backup and ns.Backup.Encode then
+          ns.Backup:Show(ns.Backup:Encode())
+        end
+      end,
+      "Genera el texto del respaldo de esta spec y abre la ventana con el botón Copiar.",
+      true,
+      nil,
+      nil
+    )
+  )
+  rootLayout:AddInitializer(
+    CreateSettingsButtonInitializer(
+      "",
+      "Contexto spec",
+      function()
+        if ns.Profile and ns.Profile.GetContextStatusText then
+          print("|cff00ff00Chukie UI|r: " .. ns.Profile:GetContextStatusText())
+        end
+      end,
+      "Muestra qué personaje y especialización están vinculados al perfil activo.",
       true,
       nil,
       nil
@@ -2154,14 +2207,14 @@ function ns.RegisterConfigPanel()
     alphaLayout:AddAnchorPoint("BOTTOMRIGHT", 0, 0)
   end
 
-  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Guardar acciones (barras 1–4)"))
+  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Guardar acciones (barras 1–180)"))
   addBoolActionBars(
     barsCategory,
     "ChukieUi_AB_saveLeftLayout",
     "saveLeftLayout",
-    "Guardar acciones de las barras 1–4",
-    "Recuerda qué hay en cada ranura de las barras 1–4 (y sus páginas de skyriding) por personaje "
-      .. "y especialización. Se guarda solo cuando arrastrás algo, no durante un cambio de talentos.",
+    "Guardar acciones de las barras",
+    "Recuerda qué hay en cada ranura persistente (1–180: barras 1–4, barra 6, mini barra y el resto) "
+      .. "por personaje y especialización. Se guarda cuando arrastrás algo, no durante un cambio de talentos.",
     true
   )
   addBoolActionBars(
@@ -2190,7 +2243,7 @@ function ns.RegisterConfigPanel()
           m:SaveNow()
           print("|cff00ff00Chukie UI|r: " .. m:GetStatusText())
         end,
-        "Toma una foto de las barras 1–4 tal como están y la guarda para este personaje y especialización.",
+        "Toma una foto de las ranuras 1–180 tal como están y la guarda para este personaje y especialización.",
         true,
         nil,
         nil
@@ -2206,7 +2259,7 @@ function ns.RegisterConfigPanel()
             m:RestoreNow()
           end
         end,
-        "Vuelve a colocar las acciones guardadas en las barras 1–4. Fuera de combate y con el cursor vacío.",
+        "Vuelve a colocar las acciones guardadas. Fuera de combate y con el cursor vacío. No vacía ranuras.",
         true,
         nil,
         nil

@@ -194,10 +194,10 @@ local defaults = {
     hideBlizzardArt = true,
     --- Hold-and-release / empower (Evoker): pressAndHoldAction + typerelease=actionrelease.
     pressAndHoldRelease = true,
-    --- Guarda el contenido de las barras 1–4 por personaje y especialización
+    --- Guarda el contenido de las ranuras 1–180 por personaje y especialización
     --- (ChukieUiDB.actionLayouts, fuera de los perfiles de UI).
     saveLeftLayout = true,
-    --- Al cambiar talentos / loadout / especialización, repone lo guardado en las barras 1–4.
+    --- Al cambiar talentos / loadout / especialización, repone lo guardado.
     restoreLeftLayoutOnTalents = true,
     rightBar6Enabled = true,
     rightBar6NumButtons = 8,
@@ -574,6 +574,8 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 frame:SetScript("OnEvent", function(_, event, addon)
   if event == "ADDON_LOADED" and addon == ADDON_NAME then
@@ -601,12 +603,33 @@ frame:SetScript("OnEvent", function(_, event, addon)
   end
   if event == "PLAYER_LOGIN" then
     applyCvars()
+    if ns.Profile and ns.Profile.ApplyContext then
+      ns.Profile:ApplyContext()
+    end
     if ns.Alerts and ns.Alerts.Refresh then
       ns.Alerts:Refresh()
     end
     return
   end
+  if event == "PLAYER_SPECIALIZATION_CHANGED" then
+    if addon and addon ~= "player" then
+      return
+    end
+    if ns.Profile and ns.Profile.ApplyContext then
+      ns.Profile:ApplyContext()
+    end
+    return
+  end
+  if event == "PLAYER_REGEN_ENABLED" then
+    if ns.Profile and ns.Profile.OnRegenEnabled then
+      ns.Profile:OnRegenEnabled()
+    end
+    return
+  end
   if event == "PLAYER_ENTERING_WORLD" then
+    if ns.Profile and ns.Profile.ApplyContext then
+      ns.Profile:ApplyContext()
+    end
     ns.ApplyUiTweaks()
     if ns.ActionBars and ns.ActionBars.Refresh then
       ns.ActionBars:Refresh()
@@ -744,6 +767,40 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     end
     return
   end
+  if msg == "backup" or msg == "respaldo" or strmatch(msg, "^backup%s") or strmatch(msg, "^respaldo%s") then
+    local b = ns.Backup
+    if not b then
+      print("|cffff9900Chukie UI|r: módulo de respaldo no disponible.")
+      return
+    end
+    local what = msg
+    if strmatch(msg, "^backup%s") then
+      what = strtrim(strsub(msg, 7))
+    elseif strmatch(msg, "^respaldo%s") then
+      what = strtrim(strsub(msg, 9))
+    else
+      what = ""
+    end
+    if what == "exportar" or what == "export" then
+      local text = b:Encode()
+      b:Show(text)
+      print("|cff00ff00Chukie UI|r: respaldo generado. Pulsá Copiar y pegalo en un archivo .txt.")
+    elseif what == "importar" or what == "import" then
+      b:Show()
+    elseif what == "deshacer" or what == "undo" then
+      local ok, err = b:Undo()
+      if not ok then
+        print("|cffff9900Chukie UI|r: " .. (err or "no hay deshacer"))
+      end
+    else
+      b:Show()
+      if ns.Profile and ns.Profile.GetContextStatusText then
+        print("|cff00ff00Chukie UI|r: " .. ns.Profile:GetContextStatusText())
+      end
+      print("  Uso: /chukieui backup [exportar | importar | deshacer]")
+    end
+    return
+  end
   if msg == "acciones" or strmatch(msg, "^acciones%s") then
     local abl = ns.ActionBarLayouts
     if not abl then
@@ -758,7 +815,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     elseif what == "borrar" then
       abl:ClearSaved()
     else
-      print("|cff00ff00Chukie UI|r: barras 1–4 — " .. abl:GetStatusText())
+      print("|cff00ff00Chukie UI|r: ranuras 1–180 — " .. abl:GetStatusText())
       print("  Uso: /chukieui acciones guardar | restaurar | borrar")
     end
     return
@@ -856,14 +913,14 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       return
     end
   end
-  print("|cff00ff00Chukie UI|r — /chukieui config | panel | minimapa | botones | acciones | mmpos <x> <y> | mmarrow …")
+  print("|cff00ff00Chukie UI|r — /chukieui config | panel | minimapa | botones | acciones | backup | mmpos <x> <y> | mmarrow …")
   print(
     "|cff00ff00Chukie UI|r — alertas: /chukie-aura | /chukieui alertas on | /chukieui auracheck <id> | /chukieui cdcheck <id> | /chukieui auracontainer"
   )
   print("|cff00ff00Chukie UI|r — panel de auras: /chukie-auras (o /chukieui aurapanel)")
   print("|cff00ff00Chukie UI|r — grilla de party clickeable: /chukieui party (menú: Marcos) | /chukie-party (ventana) | /chukieui party on | off | diag")
   print("|cff00ff00Chukie UI|r — panel derecho: /chukieui diag | /chukieui diagbotones | /chukieui fix")
-  print("|cff00ff00Chukie UI|r — barras de acción: /chukieui barras (situación, paginado y quién muestra la barra del evento)")
+  print("|cff00ff00Chukie UI|r — respaldo: /chukieui backup (exportar / importar / deshacer; copiá el texto a un .txt)")
   print("|cff00ff00Chukie UI|r — Combat Log: Esc → AddOns → Chukie UI → Panel izquierdo")
   if p then
     print("  Perfil: " .. tostring(ns.Profile:GetCurrentName()) .. " — " .. (p.enabled and "activado" or "desactivado"))

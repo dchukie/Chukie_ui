@@ -20,7 +20,8 @@ Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueU
 | **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte y toggle de **Combat Log** en una ranura 2–4 configurable. `CombatLog.lua` permite auto-logging por dificultad (M+, raids, etc.) y por instancia concreta. |
 | **Sector amarillo** | `RightStrip.lua`: grilla inferior fija 2x2 (oro abreviado + huecos libres de bolsas), clic para `ToggleAllBags`, estilo Masque opcional y ocultado de la barra de bolsas Blizzard. |
 | **Barras de acción 1–4** | Matriz fija de **6 × 4** centrada en la pantalla (Offset X −1800…1800, Offset Y −1200…1200 desde el centro). La subpágina **Barras de acción → Transparencia 6 × 4** reproduce las 24 celdas y permite ajustar cada botón entre 10 y 100 % con deslizador o caja de texto (ambos sincronizados). La barra 1 recibe las barras circunstanciales del juego (vehículo, misión, evento, formas) y mientras duran se muestra opaca; diagnóstico en `/chukieui barras`. |
-| **Opciones** | *Esc → Opciones → AddOns → Chukie UI* (`ConfigPanel.lua`, API Settings de Retail). |
+| **Perfiles por spec** | Cada personaje y especialización usa su propio perfil de UI (layout, transparencias, PartyGrid, alertas). La primera combinación hereda el perfil actual; las siguientes se clonan. `/chukieui backup` muestra el vínculo. |
+| **Respaldo** | `/chukieui backup`: exporta/importa texto recuperable (perfil, barras 1–180, macros, teclas) con botones Copiar y Pegar. |
 | **Alertas CD/procs/auras** | Grupos con efectos y condiciones, editor `/chukie-aura`. En **12.1**, un grupo cuya única condición es aura “Presente” y cuyo único efecto visual es icono/textura lo dibuja el cliente (**AuraContainer**), así que también ve las auras que Blizzard oculta; el resto usa el path propio. Media en `Media/Alerts/`. |
 | **Panel de auras** | `AuraPanel.lua`, `/chukie-auras`: un slot grande por aura elegida usando **AuraContainer**, con tamaño, separación, auras por línea, dirección y posición arrastrable. Los slots no se compactan (el addon no sabe cuál está activa). |
 | **Grilla de party por habilidades** | `PartyGrid.lua`. Cada columna guarda un hechizo por perfil y cada celda es un `SecureActionButtonTemplate`: clic izquierdo lo lanza sobre `player`/`party1..4`. Una columna puede ser **ciclo**: fuera de combate, clic derecho prende/apaga ese jugador y publica una acción segura `/click ch-cl-NombreDelHechizo` que avanza por los prendidos. Asignación por nombre/ID en opciones o arrastrando desde el libro; la ventana propia permite copiar la macro. Cada grupo puede seguir a su marco Blizzard incluso en layouts horizontales. Soporte Masque en **Chukie UI → PartyGrid**. Toda configuración se rechaza durante el combate. Opciones en **Marcos → Party** (`/chukieui party`), ventana propia (`/chukie-party`) y diagnóstico `/chukieui party diag`. |
@@ -71,15 +72,26 @@ Cuando el juego reemplaza la barra del jugador (vehículo, misión con barra pro
 - Si el juego declara un reemplazo que la barra 1 **no** cubre (paginado apagado, o un cambio de situación tras morir), se devuelve la **barra con arte de Blizzard** en vez de dejar la habilidad del evento sin ningún botón. Vuelve a ocultarse cuando la barra 1 retoma la situación. Es una llamada protegida: si pasa en combate, se aplica al salir.
 - `/chukieui barras` muestra el reemplazo detectado, si la barra 1 lo cubre, el paginado activo y quién tiene `OverrideActionBar`.
 
-## Guardado de acciones (barras 1–4)
+## Guardado de acciones (barras 1–180)
 
-Blizzard guarda un juego de barras **por loadout de talentos**, así que al cambiar de build las ranuras se pisan. `ActionBarLayouts.lua` guarda qué hay en cada ranura de las barras 1–4 (y sus páginas de skyriding) **por personaje y especialización** y lo vuelve a colocar tras un cambio de talentos, loadout o especialización.
+Blizzard guarda un juego de barras **por loadout de talentos**, así que al cambiar de build las ranuras se pisan. `ActionBarLayouts.lua` guarda qué hay en cada ranura persistente (1–180: barras 1–4 y páginas, barra 6, mini barra) **por personaje y especialización** y lo vuelve a colocar tras un cambio de talentos, loadout o especialización.
 
-- Opciones en *Barras de acción → Guardar acciones (barras 1–4)*: guardar automático, restaurar al cambiar talentos y botones **Guardar acciones ahora / Restaurar acciones / Borrar guardado**.
+- Opciones en *Barras de acción → Guardar acciones*: guardar automático, restaurar al cambiar talentos y botones **Guardar acciones ahora / Restaurar acciones / Borrar guardado**.
 - Comandos: `/chukieui acciones` (estado), `… guardar`, `… restaurar`, `… borrar`.
 - Tipos soportados: hechizo, macro (por nombre), ítem, flyout, montura, mascota de combate y conjunto de equipo.
-- Nunca vacía ranuras (solo repone lo guardado) y siempre actúa fuera de combate y con el cursor libre.
-- Los datos viven en `ChukieUiDB.actionLayouts[personaje-reino][specID]`, fuera de los perfiles de UI, para no perderse al cambiar de perfil.
+- El guardado cotidiano nunca vacía ranuras (solo repone lo guardado). Un **importar** de respaldo sí puede vaciar para reproducir el layout exacto. Siempre fuera de combate y con el cursor libre.
+- Los datos viven en `ChukieUiDB.actionLayouts[personaje-reino][specID]`, fuera de los perfiles de UI.
+
+## Respaldo completo
+
+WoW no permite que un addon cree un archivo arbitrario. `/chukieui backup` (también en *Esc → AddOns → Chukie UI*) genera un texto versionado con checksum:
+
+- perfil entero (tamaños, transparencias, offsets, PartyGrid, alertas, widgets)
+- ranuras 1–180
+- macros (globales y de personaje)
+- teclas de las barras y botones Chukie (no movimiento)
+
+**Copiar** deja el texto en el portapapeles (pegalo en un `.txt`). **Pegar** vacía el cuadro y le da el foco: recién entonces Ctrl+V llega al texto en vez de alternar las placas de nombre. Después, Importar → Aplicar. `… backup deshacer` vuelve al estado anterior al último importar, en la misma sesión.
 
 ## Sector amarillo (franja derecha inferior)
 

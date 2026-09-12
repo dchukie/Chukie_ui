@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
-**Instantánea:** 2026-08-22
-**Versión en `Chukie_Ui.toc`:** 0.5.4
+**Instantánea:** 2026-09-11
+**Versión en `Chukie_Ui.toc`:** 0.5.5
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,7 +14,7 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.5.4` |
+| `## Version` | `0.5.5` |
 | Branch tipica | `dev` |
 
 Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
@@ -41,6 +41,12 @@ Versión **0.5.3**: la distancia al marco anfitrión y los ajustes X/Y de PartyG
 alejarse media pantalla o quedar por encima del propio marco. Los sliders de la ventana
 propia aceptan rueda del mouse, que mueve de a un paso: con 180 px de barra y 1200 de
 recorrido el arrastre solo sirve para el grueso.
+
+Versión **0.5.5**: cada personaje y especialización tiene su propio perfil de UI (tamaños,
+transparencias, PartyGrid, alertas, etc.). La primera combinación hereda el perfil actual;
+las siguientes se clonan. Hay un respaldo textual recuperable (`/chukieui backup`) con el
+perfil entero, ranuras 1–180, macros y teclas de barras/botones Chukie. WoW no crea archivos
+arbitrarios: la ventana copia al portapapeles y se pega el texto en un `.txt`.
 
 Versión **0.5.4**: las barras circunstanciales (misión, evento, vehículo, formas) se muestran
 opacas en la barra 1, el paginado cubre además las barras de bonus 1–4 y, si el juego declara un
@@ -75,6 +81,7 @@ En 12.1 esperable: `Interface == 120100`, `auraContainerAPI=true` y `displayBack
 | Check | Estado |
 |-------|--------|
 | TOC `120100` primero | OK |
+| `Backup.lua` en el TOC (después de ActionBarLayouts) | OK |
 | `ActionBarLayouts.lua` en el TOC | OK |
 | `CombatLog.lua` en el TOC (después de ActionBarLayouts) | OK |
 | Sin `getglobal` / `setglobal` propios | OK |
@@ -215,6 +222,35 @@ Como los valores viejos apuntaban a la esquina inferior izquierda del panel, la 
 (marca `actionBars._leftCenterAnchorApplied`), también al cambiar de perfil con
 `SetCurrent`. El bloque se re-anchora fuera de combate; en combate el refresco queda
 diferido a `PLAYER_REGEN_ENABLED`.
+
+---
+
+## Perfiles por spec y respaldo (0.5.5)
+
+`ChukieUiDB.profileBindings[personaje-reino][specID]` apunta al perfil de UI de esa
+combinación. La primera vez que el addon ve un personaje+spec, hereda el perfil activo
+(migración sin pérdida). La siguiente spec o personaje clona ese perfil a un nombre
+`Chuvash — Augmentation`. Cambiar de spec activa el perfil vinculado y refresca los
+módulos; en combate queda pendiente hasta `PLAYER_REGEN_ENABLED`.
+
+El selector de opciones llama `Profile:SetCurrent` y revincula la spec actual. Duplicar o
+eliminar también actualizan el mapa. `cloneProfileData` copia tablas anidadas (tamaños,
+transparencias, PartyGrid, alertas).
+
+`Backup.lua` serializa un paquete versionado (`CHUKIEUI-BACKUP-1`) con checksum: perfil
+completo, ranuras 1–180 (vacíos incluidos), macros (nombre/icono/cuerpo/ámbito) y teclas
+de barras Blizzard/Chukie. Ventana `/chukieui backup`. Importar exige validar, se rechaza
+en combate, guarda deshacer y aplica perfil → macros → acciones → teclas. Las teclas no
+tocan movimiento. WoW no escribe un `.txt` solo: hay que copiar el texto.
+
+La ventana copia con `CopyToClipboard` (función protegida, por eso solo se llama desde el
+clic de un botón y con respaldo a seleccionar + Ctrl+C si falla). No existe API para leer
+el portapapeles: el botón **Pegar** vacía el cuadro y le da el foco. Mientras el cuadro
+está enfocado se bloquea la propagación de teclado (`SetPropagateKeyboardInput(false)`),
+si no el atajo de placas de nombre (Ctrl+V por defecto) se come el pegado.
+
+El guardado cotidiano de `ActionBarLayouts` cubre slots 1–180 sin vaciar ranuras. La
+importación confirmada sí puede vaciar.
 
 ---
 

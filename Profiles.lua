@@ -17,267 +17,99 @@ local function copyDefaults(dest, src)
   end
 end
 
+local function isSecret(v)
+  return issecretvalue and issecretvalue(v) or false
+end
+
+local function deepCopy(value)
+  if type(value) ~= "table" then
+    return value
+  end
+  local out = {}
+  for k, v in pairs(value) do
+    out[k] = deepCopy(v)
+  end
+  return out
+end
+
+--- Personaje-reino y spec actuales. Devuelven nil hasta que el cliente tiene datos.
+function ns.Profile.CharKey()
+  local name = UnitName and UnitName("player")
+  if type(name) ~= "string" or name == "" or isSecret(name) then
+    return nil
+  end
+  local realm = (GetNormalizedRealmName and GetNormalizedRealmName())
+    or (GetRealmName and GetRealmName())
+    or ""
+  if isSecret(realm) then
+    return nil
+  end
+  return name .. "-" .. tostring(realm)
+end
+
+function ns.Profile.SpecId()
+  if PlayerUtil and PlayerUtil.GetCurrentSpecID then
+    local ok, id = pcall(PlayerUtil.GetCurrentSpecID)
+    if ok and tonumber(id) then
+      return math.floor(tonumber(id))
+    end
+  end
+  local getIndex = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+  local getInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
+  if getIndex and getInfo then
+    local okIdx, idx = pcall(getIndex)
+    if okIdx and tonumber(idx) then
+      local okInfo, id, specName = pcall(getInfo, idx)
+      if okInfo and tonumber(id) then
+        return math.floor(tonumber(id)), type(specName) == "string" and specName or nil
+      end
+    end
+  end
+  return 0
+end
+
+function ns.Profile.SpecName()
+  local _, name = ns.Profile.SpecId()
+  if type(name) == "string" and name ~= "" then
+    return name
+  end
+  local getIndex = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+  local getInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
+  if getIndex and getInfo then
+    local okIdx, idx = pcall(getIndex)
+    if okIdx and tonumber(idx) then
+      local okInfo, _, specName = pcall(getInfo, idx)
+      if okInfo and type(specName) == "string" and specName ~= "" then
+        return specName
+      end
+    end
+  end
+  return "Spec"
+end
+
+function ns.Profile.ContextLabel()
+  local ck = ns.Profile.CharKey()
+  local spec = ns.Profile.SpecName()
+  local player = ck and ck:match("^(.-)%-") or ck or "?"
+  return player .. " — " .. spec
+end
+
 local function cloneProfileData(src)
-  local t = {
-    enabled = src.enabled,
-    minimapBar = {},
-    minimapPosition = {},
-    panels = { rightPanel = {} },
-    widgets = { minimapBar = {}, rightPanelWidgets = {} },
-    cvars = {},
-    alerts = { enabled = false, nextId = 1, rules = {}, groups = {}, tickInterval = 0.15 },
-    actionBars = {},
-    horizontalCompass = {},
-    auraPanel = { auras = {} },
-    partyGrid = {},
-  }
-  for k, v in pairs(src.minimapPosition or {}) do
-    t.minimapPosition[k] = v
-    t.panels.rightPanel[k] = v
-  end
-  for k, v in pairs(src.minimapBar or {}) do
-    if (k == "buttonPolicy" or k == "minimenuVisibility") and type(v) == "table" then
-      local np = {}
-      for pk, pv in pairs(v) do
-        np[pk] = pv
-      end
-      t.minimapBar[k] = np
-      t.widgets.minimapBar[k] = np
-    elseif k == "discoveredOrder" and type(v) == "table" then
-      local no = {}
-      for i = 1, #v do
-        no[i] = v[i]
-      end
-      t.minimapBar[k] = no
-      t.widgets.minimapBar[k] = no
-    else
-      t.minimapBar[k] = v
-      t.widgets.minimapBar[k] = v
-    end
-  end
-  for k, v in pairs((((src.panels or {}).rightPanel) or {})) do
-    t.panels.rightPanel[k] = v
-    t.minimapPosition[k] = v
-  end
-  for k, v in pairs((((src.widgets or {}).minimapBar) or {})) do
-    t.widgets.minimapBar[k] = v
-    t.minimapBar[k] = v
-  end
-  for k, v in pairs((((src.widgets or {}).rightPanelWidgets) or {})) do
-    if
-      (k == "teleportGridVisibility"
-        or k == "combatLogTypes"
-        or k == "combatLogInstances"
-        or k == "combatLogInstanceNames")
-      and type(v) == "table"
-    then
-      local np = {}
-      for pk, pv in pairs(v) do
-        np[pk] = pv
-      end
-      t.widgets.rightPanelWidgets[k] = np
-    else
-      t.widgets.rightPanelWidgets[k] = v
-    end
-  end
-  for k, v in pairs(src.cvars or {}) do
-    t.cvars[k] = v
-  end
-  if type(src.alerts) == "table" then
-    t.alerts.enabled = src.alerts.enabled == true
-    t.alerts.nextId = math.floor(tonumber(src.alerts.nextId) or 1)
-    t.alerts.tickInterval = tonumber(src.alerts.tickInterval) or 0.15
-    if t.alerts.nextId < 1 then
-      t.alerts.nextId = 1
-    end
-    t.alerts.rules = {}
-    if type(src.alerts.rules) == "table" then
-      for i = 1, #src.alerts.rules do
-        local r = src.alerts.rules[i]
-        if type(r) == "table" then
-          local nr = {}
-          for rk, rv in pairs(r) do
-            if rk == "point" and type(rv) == "table" then
-              nr.point = { rv[1], rv[2], rv[3] }
-            elseif rk == "color" and type(rv) == "table" then
-              nr.color = { tonumber(rv[1]) or 1, tonumber(rv[2]) or 1, tonumber(rv[3]) or 1 }
-            elseif rk == "overlayFx" and type(rv) == "table" then
-              nr.overlayFx = {
-                pulse = rv.pulse == true,
-                color = rv.color == true,
-                shake = rv.shake == true,
-                glow = rv.glow == true,
-              }
-            elseif rk == "chargeFilter" and type(rv) == "table" then
-              nr.chargeFilter = {
-                enabled = rv.enabled == true,
-                op = rv.op or "gte",
-                value = math.floor(tonumber(rv.value) or 1),
-              }
-            elseif type(rv) ~= "table" then
-              nr[rk] = rv
-            end
-          end
-          t.alerts.rules[#t.alerts.rules + 1] = nr
-        end
-      end
-    end
-    t.alerts.groups = {}
-    if type(src.alerts.groups) == "table" then
-      for i = 1, #src.alerts.groups do
-        local g = src.alerts.groups[i]
-        if type(g) == "table" then
-          local ng = {
-            id = g.id,
-            name = g.name,
-            enabled = g.enabled ~= false,
-            ruleLogic = g.ruleLogic == "or" and "or" or "and",
-            overlayFx = nil,
-            rules = {},
-            effects = {},
-          }
-          if type(g.overlayFx) == "table" then
-            ng.overlayFx = {
-              pulse = g.overlayFx.pulse == true,
-              color = g.overlayFx.color == true,
-              shake = g.overlayFx.shake == true,
-              glow = g.overlayFx.glow == true,
-            }
-          end
-          if type(g.rules) == "table" then
-            for ri = 1, #g.rules do
-              local r = g.rules[ri]
-              if type(r) == "table" then
-                local nr = {}
-                for rk, rv in pairs(r) do
-                  if type(rv) ~= "table" then
-                    nr[rk] = rv
-                  end
-                end
-                ng.rules[#ng.rules + 1] = nr
-              end
-            end
-          end
-          if type(g.effects) == "table" then
-            for ei = 1, #g.effects do
-              local e = g.effects[ei]
-              if type(e) == "table" then
-                local ne = {}
-                for ek, ev in pairs(e) do
-                  if ek == "point" and type(ev) == "table" then
-                    ne.point = { ev[1], ev[2], ev[3] }
-                  elseif ek == "color" and type(ev) == "table" then
-                    ne.color = { tonumber(ev[1]) or 1, tonumber(ev[2]) or 1, tonumber(ev[3]) or 1 }
-                  elseif type(ev) ~= "table" then
-                    ne[ek] = ev
-                  end
-                end
-                ng.effects[#ng.effects + 1] = ne
-              end
-            end
-          end
-          t.alerts.groups[#t.alerts.groups + 1] = ng
-        end
-      end
-    end
-    -- Preserve legacy cd/proc so EnsureSchema can migrate after clone.
-    if type(src.alerts.cd) == "table" then
-      t.alerts.cd = {}
-      for rk, rv in pairs(src.alerts.cd) do
-        if rk == "point" and type(rv) == "table" then
-          t.alerts.cd.point = { rv[1], rv[2], rv[3] }
-        elseif type(rv) ~= "table" then
-          t.alerts.cd[rk] = rv
-        end
-      end
-    end
-    if type(src.alerts.proc) == "table" then
-      t.alerts.proc = {}
-      for rk, rv in pairs(src.alerts.proc) do
-        if rk == "point" and type(rv) == "table" then
-          t.alerts.proc.point = { rv[1], rv[2], rv[3] }
-        elseif type(rv) ~= "table" then
-          t.alerts.proc[rk] = rv
-        end
-      end
-    end
-  end
-  if type(src.actionBars) == "table" then
-    for k, v in pairs(src.actionBars) do
-      if k == "leftButtonAlphaPercent" and type(v) == "table" then
-        t.actionBars.leftButtonAlphaPercent = {}
-        for barId = 1, 4 do
-          local sourceRow = v[barId]
-          if type(sourceRow) == "table" then
-            local targetRow = {}
-            t.actionBars.leftButtonAlphaPercent[barId] = targetRow
-            for buttonIndex = 1, 6 do
-              targetRow[buttonIndex] = sourceRow[buttonIndex]
-            end
-          end
-        end
-      elseif type(v) ~= "table" then
-        t.actionBars[k] = v
-      end
-    end
-  end
-  if type(src.horizontalCompass) == "table" then
-    for k, v in pairs(src.horizontalCompass) do
-      if type(v) ~= "table" then
-        t.horizontalCompass[k] = v
-      end
-    end
-  end
-  if type(src.auraPanel) == "table" then
-    for k, v in pairs(src.auraPanel) do
-      if k == "point" and type(v) == "table" then
-        t.auraPanel.point = { v[1], v[2], v[3] }
-      elseif k == "auras" and type(v) == "table" then
-        for i = 1, #v do
-          local a = v[i]
-          if type(a) == "table" then
-            t.auraPanel.auras[#t.auraPanel.auras + 1] = {
-              spellId = a.spellId,
-              enabled = a.enabled,
-              unit = a.unit,
-              filter = a.filter,
-            }
-          end
-        end
-      elseif type(v) ~= "table" then
-        t.auraPanel[k] = v
-      end
-    end
-  end
-  if type(src.partyGrid) == "table" then
-    for k, v in pairs(src.partyGrid) do
-      if k == "point" and type(v) == "table" then
-        t.partyGrid.point = { v[1], v[2], v[3] }
-      elseif k == "columnSpells" and type(v) == "table" then
-        t.partyGrid.columnSpells = {}
-        for column, spellId in pairs(v) do
-          t.partyGrid.columnSpells[column] = spellId
-        end
-      elseif k == "columnCycles" and type(v) == "table" then
-        t.partyGrid.columnCycles = {}
-        for column, enabled in pairs(v) do
-          t.partyGrid.columnCycles[column] = enabled
-        end
-      elseif k == "columnCycleUnits" and type(v) == "table" then
-        t.partyGrid.columnCycleUnits = {}
-        for column, units in pairs(v) do
-          if type(units) == "table" then
-            t.partyGrid.columnCycleUnits[column] = {}
-            for i = 1, #units do
-              t.partyGrid.columnCycleUnits[column][i] = units[i]
-            end
-          end
-        end
-      elseif type(v) ~= "table" then
-        t.partyGrid[k] = v
-      end
-    end
-  end
+  src = src or {}
+  local t = deepCopy(src)
+  t.panels = t.panels or {}
+  t.widgets = t.widgets or {}
+  t.panels.rightPanel = t.panels.rightPanel or t.minimapPosition or {}
+  t.widgets.minimapBar = t.widgets.minimapBar or t.minimapBar or {}
+  t.widgets.rightPanelWidgets = t.widgets.rightPanelWidgets or {}
+  t.minimapPosition = t.panels.rightPanel
+  t.minimapBar = t.widgets.minimapBar
+  t.actionBars = t.actionBars or {}
+  t.alerts = t.alerts or { enabled = false, nextId = 1, rules = {}, groups = {} }
+  t.horizontalCompass = t.horizontalCompass or {}
+  t.auraPanel = t.auraPanel or { auras = {} }
+  t.partyGrid = t.partyGrid or {}
+  t.cvars = t.cvars or {}
   return t
 end
 
@@ -404,6 +236,125 @@ function ns.Profile:GetCurrentName()
   return ChukieUiDB.currentProfile or DEFAULT_NAME
 end
 
+function ns.Profile.CloneData(src)
+  return cloneProfileData(src)
+end
+
+local function bindingsRoot()
+  ChukieUiDB.profileBindings = type(ChukieUiDB.profileBindings) == "table" and ChukieUiDB.profileBindings or {}
+  return ChukieUiDB.profileBindings
+end
+
+function ns.Profile:BindCurrentContext(name)
+  local ck = self.CharKey()
+  if not ck then
+    return false
+  end
+  name = name or self:GetCurrentName()
+  if type(name) ~= "string" or not ChukieUiDB.profiles[name] then
+    return false
+  end
+  local root = bindingsRoot()
+  root[ck] = type(root[ck]) == "table" and root[ck] or {}
+  root[ck][tostring(self.SpecId())] = name
+  return true
+end
+
+function ns.Profile:SuggestContextName()
+  local base = self.ContextLabel()
+  if not ChukieUiDB.profiles[base] then
+    return base
+  end
+  local i = 2
+  while ChukieUiDB.profiles[base .. " (" .. i .. ")"] do
+    i = i + 1
+  end
+  return base .. " (" .. i .. ")"
+end
+
+local function anyProfileBinding(root)
+  for _, perChar in pairs(root) do
+    if type(perChar) == "table" then
+      for _ in pairs(perChar) do
+        return true
+      end
+    end
+  end
+  return false
+end
+
+--- Primera vez que se ve esta combinación personaje+spec: o se hereda el perfil
+--- actual (migración) o se clona uno propio.
+function ns.Profile:EnsureContextBinding()
+  local ck = self.CharKey()
+  if not ck or type(ChukieUiDB.profiles) ~= "table" then
+    return nil
+  end
+  local specKey = tostring(self.SpecId())
+  local root = bindingsRoot()
+  root[ck] = type(root[ck]) == "table" and root[ck] or {}
+  local bound = root[ck][specKey]
+  if type(bound) == "string" and ChukieUiDB.profiles[bound] then
+    return bound
+  end
+  if not anyProfileBinding(root) then
+    local current = self:GetCurrentName()
+    root[ck][specKey] = current
+    return current
+  end
+  local name = self:SuggestContextName()
+  ChukieUiDB.profiles[name] = cloneProfileData(self:GetActive())
+  if ns.CopyDefaultsIntoProfile then
+    ns.CopyDefaultsIntoProfile(ChukieUiDB.profiles[name])
+  end
+  root[ck][specKey] = name
+  return name
+end
+
+function ns.Profile:ApplyContext()
+  if not self.CharKey() then
+    self._pendingContext = true
+    return false
+  end
+  if (self.SpecId() or 0) == 0 then
+    self._pendingContext = true
+    return false
+  end
+  if InCombatLockdown and InCombatLockdown() then
+    self._pendingContext = true
+    return false
+  end
+  local bound = self:EnsureContextBinding()
+  if not bound then
+    return false
+  end
+  if self:GetCurrentName() == bound then
+    return true
+  end
+  return self:SetCurrent(bound)
+end
+
+function ns.Profile:OnRegenEnabled()
+  if self._pendingContext then
+    self._pendingContext = nil
+    self:ApplyContext()
+  end
+end
+
+function ns.Profile:GetContextStatusText()
+  local ck = self.CharKey() or "?"
+  local bound = nil
+  local root = ChukieUiDB and ChukieUiDB.profileBindings
+  if type(root) == "table" and type(root[ck]) == "table" then
+    bound = root[ck][tostring(self.SpecId())]
+  end
+  return string.format(
+    "Contexto %s → perfil «%s»",
+    self.ContextLabel(),
+    tostring(bound or self:GetCurrentName())
+  )
+end
+
 function ns.Profile:ListSorted()
   local t = {}
   for n in pairs(ChukieUiDB.profiles) do
@@ -426,6 +377,7 @@ function ns.Profile:SetCurrent(name)
     return false
   end
   ChukieUiDB.currentProfile = name
+  self:BindCurrentContext(name)
   self:MigrateActionBarsLeftCenterAnchor()
   self:NotifyChanged()
   return true
@@ -547,6 +499,7 @@ function ns.Profile:DuplicateCurrent()
     ns.CopyDefaultsIntoProfile(ChukieUiDB.profiles[name])
   end
   ChukieUiDB.currentProfile = name
+  self:BindCurrentContext(name)
   self:MigrateMinimapBarPixelOptions()
   self:NotifyChanged()
   return name
@@ -566,6 +519,7 @@ function ns.Profile:DeleteCurrent()
   end
   ChukieUiDB.profiles[name] = nil
   ChukieUiDB.currentProfile = DEFAULT_NAME
+  self:BindCurrentContext(DEFAULT_NAME)
   self:NotifyChanged()
   return true
 end

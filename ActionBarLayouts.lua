@@ -1,9 +1,10 @@
---[[ Guardado de acciones de las barras 1–4 (panel izquierdo).
+--[[ Guardado de acciones de las barras persistentes (slots 1–180, numeración Dominos).
      Blizzard guarda un juego de barras por loadout de talentos, así que al cambiar de build
      (o de especialización) las ranuras se pisan. Aquí se guarda qué hay en cada slot
      (hechizo / macro / ítem / flyout / montura / mascota / equipo) por personaje y
      especialización, y se vuelve a colocar cuando el juego lo cambia.
-     Nunca vacía ranuras: solo repone lo que estaba guardado. Todo fuera de combate. ]]
+     El guardado cotidiano nunca vacía ranuras: solo repone lo que estaba guardado.
+     La importación de un respaldo sí puede vaciar. Todo fuera de combate. ]]
 
 local _, ns = ...
 
@@ -19,6 +20,7 @@ local SAVE_DEBOUNCE = 1.5
 --- Ventana en la que no se guarda nada tras un cambio de talentos (evita guardar la barra pisada).
 local SUPPRESS_SAVE_SECONDS = 10
 local INITIAL_SAVE_DELAY = 6
+local MAX_ACTION_SLOT = 180
 
 local function isSecret(v)
   return issecretvalue and issecretvalue(v) or false
@@ -41,6 +43,14 @@ function ABL:IsRestoreEnabled()
   return opts().restoreLeftLayoutOnTalents ~= false
 end
 
+local function allSlots()
+  local slots = {}
+  for i = 1, MAX_ACTION_SLOT do
+    slots[i] = i
+  end
+  return slots
+end
+
 local function leftSlots()
   if ns.ActionBars and ns.ActionBars.GetLeftActionSlots then
     local slots = ns.ActionBars:GetLeftActionSlots()
@@ -55,6 +65,11 @@ local function leftSlots()
   return fallback
 end
 
+--- Guardado automático: todas las ranuras persistentes. El respaldo añade los vacíos.
+local function saveSlots()
+  return allSlots()
+end
+
 local function leftSlotSet()
   local set = {}
   local slots = leftSlots()
@@ -65,6 +80,9 @@ local function leftSlotSet()
 end
 
 local function charKey()
+  if ns.Profile and ns.Profile.CharKey then
+    return ns.Profile.CharKey()
+  end
   local name = UnitName and UnitName("player")
   if type(name) ~= "string" or name == "" or isSecret(name) then
     return nil
@@ -76,6 +94,9 @@ local function charKey()
 end
 
 local function currentSpecId()
+  if ns.Profile and ns.Profile.SpecId then
+    return ns.Profile.SpecId()
+  end
   if PlayerUtil and PlayerUtil.GetCurrentSpecID then
     local ok, id = pcall(PlayerUtil.GetCurrentSpecID)
     if ok and tonumber(id) then
@@ -445,20 +466,23 @@ end
 local function savedCount(store)
   local n = 0
   if store and type(store.slots) == "table" then
-    for _ in pairs(store.slots) do
-      n = n + 1
+    for _, enc in pairs(store.slots) do
+      if type(enc) == "string" and enc ~= "" then
+        n = n + 1
+      end
     end
   end
   return n
 end
 
 --- `force` permite guardar barras vacías a mano (el guardado automático nunca lo hace).
-function ABL:Save(force)
+--- `includeEmpty` marca ranuras vacías (respaldo). El guardado cotidiano las omite.
+function ABL:Save(force, includeEmpty)
   local store = savedStore(true)
   if not store then
     return false, "no se pudo identificar al personaje"
   end
-  local slots = leftSlots()
+  local slots = includeEmpty and allSlots() or saveSlots()
   local data, count, skipped = {}, 0, 0
   for i = 1, #slots do
     local slot = slots[i]
@@ -468,14 +492,85 @@ function ABL:Save(force)
       count = count + 1
     elseif slotHasAction(slot) then
       skipped = skipped + 1
+    elseif includeEmpty then
+      data[slot] = ""
     end
   end
-  if count == 0 and not force and savedCount(store) > 0 then
+  if count == 0 and not force and not includeEmpty and savedCount(store) > 0 then
     return false, "las barras aún no están cargadas; se conserva lo guardado"
   end
   store.slots = data
   store.savedAt = time()
+  store.maxSlot = includeEmpty and MAX_ACTION_SLOT or nil
   return true, nil, count, skipped
+end
+
+function ABL:CaptureAllSlots()
+  local data, count, skipped, empty = {}, 0, 0, 0
+  for slot = 1, MAX_ACTION_SLOT do
+    local enc = encodeAction(slot)
+    if enc then
+      data[tostring(slot)] = enc
+      count = count + 1
+    elseif slotHasAction(slot) then
+      skipped = skipped + 1
+      data[tostring(slot)] = ""
+      empty = empty + 1
+    else
+      data[tostring(slot)] = ""
+      empty = empty + 1
+    end
+  end
+  return data, count, skipped, empty
+end
+
+local function clearSlot(slot)
+  if not PickupAction then
+    return false
+  end
+  clearCursor()
+  local ok = pcall(PickupAction, slot)
+  clearCursor()
+  return ok and true or false
+end
+
+function ABL:ApplySlots(slots, replaceEmpty)
+  if type(slots) ~= "table" then
+    return false, "sin ranuras", 0, 0
+  end
+  if InCombatLockdown() then
+    return false, "en combate: se restaurará al salir"
+  end
+  if cursorHoldsSomething() then
+    return false, "hay algo en el cursor; se reintenta al soltarlo"
+  end
+  self._restoring = true
+  self:SuppressSaves()
+  local placed, failed, cleared = 0, 0, 0
+  for key, enc in pairs(slots) do
+    local slot = tonumber(key)
+    if slot and slot >= 1 and slot <= MAX_ACTION_SLOT then
+      if type(enc) ~= "string" or enc == "" then
+        if replaceEmpty and slotHasAction(slot) then
+          if clearSlot(slot) then
+            cleared = cleared + 1
+          end
+        end
+      elseif not sameAction(encodeAction(slot), enc) then
+        if placeSaved(slot, enc) then
+          placed = placed + 1
+        else
+          failed = failed + 1
+        end
+      end
+    end
+  end
+  clearCursor()
+  self._restoring = false
+  if ns.ActionBars and ns.ActionBars.UpdateAllVisuals then
+    ns.ActionBars:UpdateAllVisuals()
+  end
+  return true, nil, placed, failed, cleared
 end
 
 function ABL:Restore(attempt)
@@ -499,24 +594,9 @@ function ABL:Restore(attempt)
     return false, "hay algo en el cursor; se reintenta al soltarlo"
   end
   self._cursorWaits = 0
-
-  self._restoring = true
-  self:SuppressSaves()
-  local placed, failed = 0, 0
-  for slot, enc in pairs(store.slots) do
-    if not sameAction(encodeAction(slot), enc) then
-      if placeSaved(slot, enc) then
-        placed = placed + 1
-      else
-        failed = failed + 1
-      end
-    end
-  end
-  clearCursor()
-  self._restoring = false
-
-  if ns.ActionBars and ns.ActionBars.UpdateAllVisuals then
-    ns.ActionBars:UpdateAllVisuals()
+  local ok, err, placed, failed = self:ApplySlots(store.slots, false)
+  if not ok then
+    return ok, err
   end
   if failed > 0 and attempt < #RESTORE_DELAYS then
     self:ScheduleRestore(RESTORE_DELAYS[attempt + 1], attempt + 1)
@@ -560,7 +640,7 @@ function ABL:OnSlotChanged(slot)
   end
   slot = tonumber(slot)
   --- 0 / nil = «cambiaron todas»: es lo que manda el juego al pisar barras, no se guarda.
-  if not slot or slot <= 0 or not leftSlotSet()[slot] then
+  if not slot or slot <= 0 or slot > MAX_ACTION_SLOT then
     return
   end
   self:ScheduleSave()
@@ -598,7 +678,7 @@ function ABL:SaveNow()
     print(WARN_PREFIX .. "no se guardaron las acciones (" .. (err or "error") .. ").")
     return false
   end
-  local msg = PREFIX .. "acciones de las barras 1–4 guardadas (" .. count .. " ranuras)."
+  local msg = PREFIX .. "acciones guardadas (" .. count .. " ranuras, slots 1–" .. MAX_ACTION_SLOT .. ")."
   if skipped and skipped > 0 then
     msg = msg .. " " .. skipped .. " ranura(s) de un tipo no soportado se omitieron."
   end

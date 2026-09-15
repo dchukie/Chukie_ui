@@ -145,6 +145,9 @@ local defaults = {
       --- Toggle de WoWCombatLog.txt en una de las tres celdas de acción.
       combatLogWidgetEnabled = true,
       combatLogWidgetSlot = 4,
+      --- Por defecto el log queda grabando siempre: se revisa fuera de combate al entrar al
+      --- mundo (login, /reload o carga de instancia). Apagarlo devuelve el auto por tipo.
+      combatLogAlwaysOn = true,
       combatLogStopOnExit = true,
       combatLogAdvanced = true,
       combatLogTypes = {
@@ -706,6 +709,14 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     end
     return
   end
+  if msg == "teleport" or msg == "teleports" or msg == "tele" then
+    if ns.TeleportCatalog and ns.TeleportCatalog.PrintSeasonDiagnostics then
+      ns.TeleportCatalog.PrintSeasonDiagnostics()
+    else
+      print("|cffff9900Chukie UI|r: catálogo de teletransporte no disponible.")
+    end
+    return
+  end
   if msg == "fix" or msg == "arreglar" then
     if not (ns.RightPanel and ns.RightPanel.Apply) then
       print("|cffff9900Chukie UI|r: panel derecho no disponible.")
@@ -920,6 +931,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
   print("|cff00ff00Chukie UI|r — panel de auras: /chukie-auras (o /chukieui aurapanel)")
   print("|cff00ff00Chukie UI|r — grilla de party clickeable: /chukieui party (menú: Marcos) | /chukie-party (ventana) | /chukieui party on | off | diag")
   print("|cff00ff00Chukie UI|r — panel derecho: /chukieui diag | /chukieui diagbotones | /chukieui fix")
+  print("|cff00ff00Chukie UI|r — teletransporte: /chukieui teleport (mítica+ de la temporada vs. catálogo)")
   print("|cff00ff00Chukie UI|r — respaldo: /chukieui backup (exportar / importar / deshacer; copiá el texto a un .txt)")
   print("|cff00ff00Chukie UI|r — Combat Log: Esc → AddOns → Chukie UI → Panel izquierdo")
   if p then

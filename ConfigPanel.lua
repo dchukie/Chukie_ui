@@ -1441,9 +1441,23 @@ function ns.RegisterConfigPanel()
       "Perfil activo",
       ns.Profile:GetCurrentName()
     )
-    profileSetting:SetValueChangedCallback(function()
-      ns.Profile:SetCurrent(ChukieUiDB.currentProfile or "Default")
+    profileSetting:SetValueChangedCallback(function(_, value)
+      if ns.Profile._ignoreSetting then
+        return
+      end
+      ns.Profile:PromptSwitch(value or ChukieUiDB.currentProfile or "Default")
     end)
+    ns.Profile.SyncSetting = function(name)
+      if type(name) ~= "string" then
+        return
+      end
+      ns.Profile._ignoreSetting = true
+      ChukieUiDB.currentProfile = name
+      if profileSetting.SetValue then
+        pcall(profileSetting.SetValue, profileSetting, name)
+      end
+      ns.Profile._ignoreSetting = false
+    end
     local function profileDropdownOptions()
       local container = Settings.CreateControlTextContainer()
       for _, name in ipairs(ns.Profile:ListSorted()) do
@@ -1456,7 +1470,7 @@ function ns.RegisterConfigPanel()
       profileSetting,
       profileDropdownOptions,
       "Cada personaje y especialización usa su propio perfil (se clona la primera vez). "
-        .. "«Default» es la plantilla. Elegir un perfil aquí lo deja vinculado a la spec actual."
+        .. "«Default» es la plantilla. Elegir otro perfil pide confirmación y lo deja vinculado a la spec actual."
     )
   end
 
@@ -1469,6 +1483,20 @@ function ns.RegisterConfigPanel()
         print("|cff00ff00Chukie UI|r: nuevo perfil «" .. newName .. "». Vuelve a abrir Opciones si el desplegable no se actualiza.")
       end,
       "Copia el perfil activo a uno nuevo y lo selecciona.",
+      true,
+      nil,
+      nil
+    )
+  )
+
+  rootLayout:AddInitializer(
+    CreateSettingsButtonInitializer(
+      "",
+      "Renombrar",
+      function()
+        ns.Profile:PromptRename()
+      end,
+      "Cambia el nombre del perfil activo. «Default» no se puede renombrar; duplicá y renombrá la copia. Los vínculos personaje+spec siguen al nombre nuevo.",
       true,
       nil,
       nil
@@ -2401,10 +2429,20 @@ function ns.RegisterConfigPanel()
   addCombatLogSlotDropdown(leftCategory)
   addCombatLogBool(
     leftCategory,
+    "ChukieUi_CombatLogAlwaysOn",
+    "combatLogAlwaysOn",
+    "Siempre activado",
+    "Deja el log grabando en todo momento. Se revisa fuera de combate al entrar al mundo: login, /reload o carga de instancia; "
+      .. "si eso pasa en combate, se enciende al terminar la pelea. Podés apagarlo a mano con el botón de la grilla y vuelve a "
+      .. "encenderse en el próximo /reload o cambio de instancia. Con esto activo, «Detener al salir» y el auto-logging por tipo no se usan.",
+    true
+  )
+  addCombatLogBool(
+    leftCategory,
     "ChukieUi_CombatLogStopOnExit",
     "combatLogStopOnExit",
     "Detener al salir",
-    "Sólo detiene una grabación iniciada automáticamente por Chukie UI; nunca apaga una sesión manual o de otro addon.",
+    "Sólo aplica si «Siempre activado» está apagado. Detiene una grabación iniciada automáticamente por Chukie UI; nunca apaga una sesión manual o de otro addon.",
     true
   )
   addCombatLogBool(
@@ -2415,7 +2453,9 @@ function ns.RegisterConfigPanel()
     "Controla el CVar advancedCombatLogging, recomendado para Warcraft Logs.",
     true
   )
-  leftLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Auto-logging: mazmorras"))
+  leftLayout:AddInitializer(
+    CreateSettingsListSectionHeaderInitializer("Auto-logging por tipo (solo si «Siempre activado» está apagado)")
+  )
   addCombatLogTypeBool(leftCategory, "dungeonNormal", "Mazmorra normal", "Autoactivar en dificultad normal.", false)
   addCombatLogTypeBool(leftCategory, "dungeonHeroic", "Mazmorra heroica", "Autoactivar en dificultad heroica.", false)
   addCombatLogTypeBool(leftCategory, "dungeonMythic", "Mazmorra mítica (0)", "Autoactivar en mítica sin piedra.", false)

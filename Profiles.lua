@@ -372,14 +372,215 @@ function ns.Profile:ListSorted()
   return t
 end
 
+function ns.Profile:CommittedName()
+  return self._committedName or self:GetCurrentName()
+end
+
 function ns.Profile:SetCurrent(name)
   if type(name) ~= "string" or not ChukieUiDB.profiles[name] then
     return false
   end
+  local same = self:CommittedName() == name
+  if not same then
+    self._pendingSwitch = nil
+    if StaticPopup_Hide then
+      pcall(StaticPopup_Hide, "CHUKIEUI_SWITCH_PROFILE")
+    end
+  end
   ChukieUiDB.currentProfile = name
+  self._committedName = name
   self:BindCurrentContext(name)
+  if same then
+    return true
+  end
   self:MigrateActionBarsLeftCenterAnchor()
   self:NotifyChanged()
+  return true
+end
+
+local function trimName(name)
+  if type(name) ~= "string" then
+    return ""
+  end
+  return (name:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function popupSafe(text)
+  return tostring(text or ""):gsub("%%", "%%%%")
+end
+
+function ns.Profile:RenameCurrent(newName)
+  local old = self:GetCurrentName()
+  newName = trimName(newName)
+  if old == DEFAULT_NAME then
+    return false, "No se puede renombrar «Default» (es la plantilla)."
+  end
+  if newName == "" then
+    return false, "El nombre no puede estar vacío."
+  end
+  if newName == DEFAULT_NAME then
+    return false, "«Default» está reservado para la plantilla."
+  end
+  if #newName > 40 then
+    return false, "El nombre es demasiado largo (máximo 40)."
+  end
+  if newName == old then
+    return true
+  end
+  if type(ChukieUiDB.profiles) ~= "table" or not ChukieUiDB.profiles[old] then
+    return false, "No hay un perfil activo para renombrar."
+  end
+  if ChukieUiDB.profiles[newName] then
+    return false, "Ya existe un perfil llamado «" .. newName .. "»."
+  end
+  ChukieUiDB.profiles[newName] = ChukieUiDB.profiles[old]
+  ChukieUiDB.profiles[old] = nil
+  ChukieUiDB.currentProfile = newName
+  self._committedName = newName
+  local root = bindingsRoot()
+  for _, perChar in pairs(root) do
+    if type(perChar) == "table" then
+      for specKey, bound in pairs(perChar) do
+        if bound == old then
+          perChar[specKey] = newName
+        end
+      end
+    end
+  end
+  if self.SyncSetting then
+    self.SyncSetting(newName)
+  end
+  self:NotifyChanged()
+  return true
+end
+
+local function popupEditBox(frame)
+  if not frame then
+    return nil
+  end
+  if frame.GetEditBox then
+    local ok, box = pcall(frame.GetEditBox, frame)
+    if ok and box then
+      return box
+    end
+  end
+  return frame.editBox or frame.EditBox
+end
+
+function ns.Profile:EnsureDialogs()
+  if StaticPopupDialogs.CHUKIEUI_SWITCH_PROFILE then
+    return
+  end
+  StaticPopupDialogs.CHUKIEUI_SWITCH_PROFILE = {
+    text = "¿Cambiar del perfil «%s» al perfil «%s»?\nLayout, transparencias y opciones de UI cambian. Las barras de acciones de esta spec no se tocan.",
+    button1 = "Cambiar",
+    button2 = "Cancelar",
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+    OnAccept = function()
+      local pending = ns.Profile._pendingSwitch
+      ns.Profile._pendingSwitch = nil
+      if type(pending) == "string" then
+        ns.Profile:SetCurrent(pending)
+        if ns.Profile.SyncSetting then
+          ns.Profile.SyncSetting(pending)
+        end
+      end
+    end,
+    OnCancel = function()
+      ns.Profile._pendingSwitch = nil
+      local current = ns.Profile:CommittedName()
+      if ns.Profile.SyncSetting then
+        ns.Profile.SyncSetting(current)
+      end
+    end,
+    OnHide = function()
+      if ns.Profile._pendingSwitch then
+        ns.Profile._pendingSwitch = nil
+        local current = ns.Profile:CommittedName()
+        if ns.Profile.SyncSetting then
+          ns.Profile.SyncSetting(current)
+        end
+      end
+    end,
+  }
+  StaticPopupDialogs.CHUKIEUI_RENAME_PROFILE = {
+    text = "Nuevo nombre para el perfil «%s»:",
+    button1 = "Renombrar",
+    button2 = "Cancelar",
+    hasEditBox = true,
+    maxLetters = 40,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+    OnShow = function(self)
+      local box = popupEditBox(self)
+      if box then
+        box:SetText(ns.Profile:GetCurrentName())
+        box:HighlightText()
+        box:SetFocus()
+      end
+    end,
+    OnAccept = function(self)
+      local box = popupEditBox(self)
+      local text = box and box.GetText and box:GetText() or ""
+      local ok, err = ns.Profile:RenameCurrent(text)
+      if not ok then
+        print("|cffff9900Chukie UI|r: " .. (err or "no se pudo renombrar"))
+        return
+      end
+      print("|cff00ff00Chukie UI|r: perfil renombrado a «" .. ns.Profile:GetCurrentName() .. "».")
+    end,
+    EditBoxOnEnterPressed = function(self)
+      local dialog = self:GetParent()
+      if dialog and not dialog.button1 and dialog.GetParent then
+        dialog = dialog:GetParent()
+      end
+      if dialog and dialog.button1 then
+        dialog.button1:Click()
+      end
+    end,
+  }
+end
+
+function ns.Profile:PromptSwitch(newName)
+  self:EnsureDialogs()
+  if type(newName) ~= "string" or not ChukieUiDB.profiles[newName] then
+    return false
+  end
+  local current = self:CommittedName()
+  if newName == current then
+    return self:SetCurrent(newName)
+  end
+  if InCombatLockdown and InCombatLockdown() then
+    print("|cffff9900Chukie UI|r: no se cambia de perfil en combate.")
+    if self.SyncSetting then
+      self.SyncSetting(current)
+    end
+    return false
+  end
+  if StaticPopup_Hide then
+    self._pendingSwitch = nil
+    pcall(StaticPopup_Hide, "CHUKIEUI_SWITCH_PROFILE")
+  end
+  self._pendingSwitch = newName
+  StaticPopup_Show("CHUKIEUI_SWITCH_PROFILE", popupSafe(current), popupSafe(newName))
+  if self.SyncSetting then
+    self.SyncSetting(current)
+  end
+  return true
+end
+
+function ns.Profile:PromptRename()
+  self:EnsureDialogs()
+  if self:GetCurrentName() == DEFAULT_NAME then
+    print("|cffff9900Chukie UI|r: no se puede renombrar «Default». Duplicá y renombrá la copia.")
+    return false
+  end
+  StaticPopup_Show("CHUKIEUI_RENAME_PROFILE", popupSafe(self:GetCurrentName()))
   return true
 end
 
@@ -479,6 +680,8 @@ function ns.Profile:Initialize()
   self:MigrateMinimapBarPixelOptions()
   self:MigrateActionBarsLeftButtons()
   self:MigrateActionBarsLeftCenterAnchor()
+  self._committedName = self:GetCurrentName()
+  self:EnsureDialogs()
 end
 
 function ns.Profile:SuggestDuplicateName()
@@ -499,8 +702,12 @@ function ns.Profile:DuplicateCurrent()
     ns.CopyDefaultsIntoProfile(ChukieUiDB.profiles[name])
   end
   ChukieUiDB.currentProfile = name
+  self._committedName = name
   self:BindCurrentContext(name)
   self:MigrateMinimapBarPixelOptions()
+  if self.SyncSetting then
+    self.SyncSetting(name)
+  end
   self:NotifyChanged()
   return name
 end
@@ -519,7 +726,11 @@ function ns.Profile:DeleteCurrent()
   end
   ChukieUiDB.profiles[name] = nil
   ChukieUiDB.currentProfile = DEFAULT_NAME
+  self._committedName = DEFAULT_NAME
   self:BindCurrentContext(DEFAULT_NAME)
+  if self.SyncSetting then
+    self.SyncSetting(DEFAULT_NAME)
+  end
   self:NotifyChanged()
   return true
 end

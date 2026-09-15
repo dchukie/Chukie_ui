@@ -152,6 +152,16 @@ local list = {
   { key = "spell_hero_1254559", type = "spell", id = 1254559, label = "Maisara Caverns (Hero's Path)" },
   { key = "spell_hero_1254563", type = "spell", id = 1254563, label = "Xenas Nexus Point (Hero's Path)" },
   { key = "spell_hero_1254572", type = "spell", id = 1254572, label = "Magister's Terrace (Hero's Path)" },
+
+  --- Mítica+ de la temporada en curso. Las entradas nuevas van al final: `teleportDefaultIndex`
+  --- guarda un índice de esta lista y insertar en el medio cambiaría el default del jugador.
+  { key = "spell_hero_1286831", type = "spell", id = 1286831, label = "Kings' Rest (Hero's Path)" },
+  { key = "spell_hero_1286828", type = "spell", id = 1286828, label = "Temple of Sethraliss (Hero's Path)" },
+  { key = "spell_hero_1286801", type = "spell", id = 1286801, label = "The Blinding Vale (Hero's Path)" },
+  { key = "spell_hero_1286804", type = "spell", id = 1286804, label = "Voidscar Arena (Hero's Path)" },
+  { key = "spell_hero_1286807", type = "spell", id = 1286807, label = "Den of Nalorakk (Hero's Path)" },
+  { key = "spell_hero_1286809", type = "spell", id = 1286809, label = "Murder Row (Hero's Path)" },
+  { key = "spell_hero_1286812", type = "spell", id = 1286812, label = "Altar of Fangs (Hero's Path)" },
 }
 
 --- One row per type+id (avoids duplicates when merging sources)
@@ -195,4 +205,104 @@ function ns.TeleportCatalog.GetDisplayLabel(entry)
     return entry.label
   end
   return tostring(entry.key or "?")
+end
+
+--- Nombre sin espacios ni puntuación: «Kings' Rest» y «Kings Rest» tienen que coincidir.
+local function normalizeName(text)
+  if type(text) ~= "string" then
+    return ""
+  end
+  return (text:gsub("[%s%p]", "")):lower()
+end
+
+local function spellName(id)
+  if C_Spell and C_Spell.GetSpellInfo then
+    local ok, info = pcall(C_Spell.GetSpellInfo, id)
+    if ok and type(info) == "table" and type(info.name) == "string" and info.name ~= "" then
+      return info.name
+    end
+  end
+  return nil
+end
+
+local function spellInSpellBook(id)
+  if C_SpellBook and C_SpellBook.IsSpellInSpellBook then
+    local ok, known = pcall(C_SpellBook.IsSpellInSpellBook, id)
+    if ok then
+      return known == true
+    end
+  end
+  return IsSpellKnown and IsSpellKnown(id) or false
+end
+
+--- Mazmorras de la temporada de mítica+ en curso, según el cliente.
+function ns.TeleportCatalog.GetSeasonDungeons()
+  local out = {}
+  if not (C_ChallengeMode and C_ChallengeMode.GetMapTable and C_ChallengeMode.GetMapUIInfo) then
+    return out
+  end
+  local ok, maps = pcall(C_ChallengeMode.GetMapTable)
+  if not ok or type(maps) ~= "table" then
+    return out
+  end
+  for i = 1, #maps do
+    local okInfo, name = pcall(C_ChallengeMode.GetMapUIInfo, maps[i])
+    if okInfo and type(name) == "string" and name ~= "" then
+      out[#out + 1] = { mapId = maps[i], name = name }
+    end
+  end
+  return out
+end
+
+--- Contrasta la temporada actual con el catálogo: dice qué teleport falta por ID y qué está
+--- listado pero sin aprender. Sin esto, una temporada nueva se nota solo por ausencia.
+function ns.TeleportCatalog.PrintSeasonDiagnostics()
+  local prefix = "|cff00ff00Chukie UI|r: "
+  local dungeons = ns.TeleportCatalog.GetSeasonDungeons()
+  if #dungeons == 0 then
+    print(prefix .. "el cliente no devolvió la lista de mítica+ de la temporada.")
+    return
+  end
+  --- El nombre del hechizo no siempre es igual al de la mazmorra («Path of the …»), así que
+  --- vale que uno contenga al otro.
+  local named = {}
+  for i = 1, #list do
+    local e = list[i]
+    if e.type == "spell" then
+      local n = spellName(e.id)
+      if n then
+        named[#named + 1] = { norm = normalizeName(n), entry = e }
+      end
+    end
+  end
+  local function findEntry(dungeonName)
+    local target = normalizeName(dungeonName)
+    if target == "" then
+      return nil
+    end
+    for i = 1, #named do
+      local n = named[i].norm
+      if n == target or n:find(target, 1, true) or target:find(n, 1, true) then
+        return named[i].entry
+      end
+    end
+    return nil
+  end
+  print(prefix .. "mítica+ de la temporada (" .. #dungeons .. " mazmorras):")
+  local missing = 0
+  for i = 1, #dungeons do
+    local d = dungeons[i]
+    local entry = findEntry(d.name)
+    if not entry then
+      missing = missing + 1
+      print("  |cffff9900falta en el catálogo|r: " .. d.name .. " (map " .. tostring(d.mapId) .. ")")
+    elseif spellInSpellBook(entry.id) then
+      print("  |cff00ff00ok|r: " .. d.name .. " → " .. tostring(entry.id))
+    else
+      print("  |cffaaaaaasin aprender|r: " .. d.name .. " → " .. tostring(entry.id))
+    end
+  end
+  if missing > 0 then
+    print(prefix .. missing .. " sin entrada: hay que agregar su ID de hechizo al catálogo.")
+  end
 end

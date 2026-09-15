@@ -188,6 +188,10 @@ function CL:ApplyAdvancedSetting()
   end
 end
 
+function CL:IsAlwaysOn()
+  return db().combatLogAlwaysOn ~= false
+end
+
 function CL:EvaluateAuto()
   local d = db()
   local active = self:GetState(false)
@@ -200,6 +204,18 @@ function CL:EvaluateAuto()
     return
   end
   self:ApplyAdvancedSetting()
+  --- Salvo que se apague la opción, el log graba en todo momento y nunca se detiene solo.
+  if self:IsAlwaysOn() then
+    if not active then
+      if InCombatLockdown and InCombatLockdown() then
+        self._pendingEvaluate = true
+      elseif self:SetState(true, "auto") then
+        notify("Combat Log activado (queda siempre grabando).")
+      end
+    end
+    self:RefreshWidget()
+    return
+  end
   local shouldLog = self:ContextMatches(self:GetCurrentContext())
   if shouldLog then
     if not active and self:SetState(true, "auto") then
@@ -244,6 +260,7 @@ local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+events:RegisterEvent("PLAYER_REGEN_ENABLED")
 pcall(events.RegisterEvent, events, "CHALLENGE_MODE_START")
 pcall(events.RegisterEvent, events, "CHALLENGE_MODE_COMPLETED")
 pcall(events.RegisterEvent, events, "ACTIVE_DELVE_DATA_UPDATE")
@@ -256,6 +273,14 @@ events:SetScript("OnEvent", function(_, event, arg1)
     local profile = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
     if not profile or profile.enabled ~= false then
       CL:ApplyAdvancedSetting()
+    end
+    return
+  end
+  --- Si el mundo cargó en combate (muerte, wipe, reload en pelea), se resuelve al salir.
+  if event == "PLAYER_REGEN_ENABLED" then
+    if CL._pendingEvaluate then
+      CL._pendingEvaluate = nil
+      CL:EvaluateAuto()
     end
     return
   end

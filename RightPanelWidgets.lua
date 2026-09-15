@@ -1261,11 +1261,26 @@ end
 
 --- Teletransporte (reserved1): catálogo en TeleportCatalog.lua; clic izq = secure default, der = grilla.
 
+--- Los teleports de Camino del Héroe no siempre responden a `IsSpellKnown` (algunos solo
+--- figuran en el libro de hechizos), así que basta con que una de las vías lo confirme.
 local function spellKnown(spellId)
-  if C_SpellBook and C_SpellBook.IsSpellKnown then
-    return C_SpellBook.IsSpellKnown(spellId) == true
+  local checks = {
+    C_SpellBook and C_SpellBook.IsSpellKnown,
+    C_SpellBook and C_SpellBook.IsSpellInSpellBook,
+    IsSpellKnownOrOverridesKnown,
+    IsPlayerSpell,
+    IsSpellKnown,
+  }
+  for i = 1, #checks do
+    local fn = checks[i]
+    if type(fn) == "function" then
+      local ok, known = pcall(fn, spellId)
+      if ok and known == true then
+        return true
+      end
+    end
   end
-  return IsSpellKnown and IsSpellKnown(spellId) or false
+  return false
 end
 
 local function checkQuestCompletion(quest)
@@ -2464,6 +2479,9 @@ function RW:ApplyCombatLogVisual()
       active and 0.35 or 0.8
     )
     GameTooltip:AddLine("Clic izquierdo: activar/desactivar.", 1, 1, 1)
+    if ns.CombatLog and ns.CombatLog.IsAlwaysOn and ns.CombatLog:IsAlwaysOn() then
+      GameTooltip:AddLine("Siempre activado: si lo apagás, vuelve en el próximo /reload o instancia.", 0.7, 0.7, 0.7, true)
+    end
     GameTooltip:Show()
   end)
   button:SetScript("OnLeave", GameTooltip_Hide)

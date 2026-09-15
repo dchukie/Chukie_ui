@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
 **Instantánea:** 2026-09-11
-**Versión en `Chukie_Ui.toc`:** 0.5.5
+**Versión en `Chukie_Ui.toc`:** 0.5.6
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,7 +14,7 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.5.5` |
+| `## Version` | `0.5.6` |
 | Branch tipica | `dev` |
 
 Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
@@ -41,6 +41,14 @@ Versión **0.5.3**: la distancia al marco anfitrión y los ajustes X/Y de PartyG
 alejarse media pantalla o quedar por encima del propio marco. Los sliders de la ventana
 propia aceptan rueda del mouse, que mueve de a un paso: con 180 px de barra y 1200 de
 recorrido el arrastre solo sirve para el grueso.
+
+Versión **0.5.6**: se puede **renombrar** un perfil (no `Default`) y el desplegable pide
+confirmación antes de cambiar de uno a otro. El cambio automático al cambiar de spec no
+pregunta. Los vínculos personaje+spec siguen el nombre nuevo. Además entran al catálogo de
+teletransporte las siete mazmorras de mítica+ de la temporada en curso que faltaban y hay
+un diagnóstico (`/chukieui teleport`) que compara temporada contra catálogo. El Combat Log
+pasa a estar **activado por defecto**: se revisa fuera de combate en cada `/reload` o carga
+de instancia y solo queda apagado si se desmarca «Siempre activado».
 
 Versión **0.5.5**: cada personaje y especialización tiene su propio perfil de UI (tamaños,
 transparencias, PartyGrid, alertas, etc.). La primera combinación hereda el perfil actual;
@@ -154,10 +162,17 @@ desaturado/tachado cuando está apagado. La consulta se cachea y sólo se resinc
 5 segundos para convivir con el límite de llamadas de Blizzard y detectar `/combatlog` u
 otro logger.
 
-En **Panel izquierdo → Combat Log** se elige la celda, Advanced Combat Logging, parada al
-salir y autoactivación independiente para mazmorras normal/heroica/mítica/M+, raids
-LFR/normal/heroica/mítica, Timewalking, escenarios/Delves y PvP. M+ y raid mítica vienen
-activadas por defecto.
+Desde 0.5.6 la opción **Siempre activado** (`combatLogAlwaysOn`, por defecto `true`) manda:
+el log tiene que estar grabando siempre. Se controla al entrar al mundo —login, `/reload` o
+carga de instancia— y solo fuera de combate: si el evento llega en pelea queda pendiente
+(`_pendingEvaluate`) y se enciende en `PLAYER_REGEN_ENABLED`. Un apagado manual con el botón
+de la grilla se respeta hasta el próximo `/reload` o cambio de instancia, donde vuelve a
+encenderse. Con esta opción activa no se usan «Detener al salir» ni el auto por tipo.
+
+En **Panel izquierdo → Combat Log** se elige la celda, Advanced Combat Logging, «Siempre
+activado», parada al salir y —solo si «Siempre activado» está apagado— autoactivación
+independiente para mazmorras normal/heroica/mítica/M+, raids LFR/normal/heroica/mítica,
+Timewalking, escenarios/Delves y PvP. M+ y raid mítica vienen activadas por defecto.
 
 La subpágina **Instancias específicas** obtiene M+ de temporada desde `C_ChallengeMode` y
 mazmorras/raids desde Encounter Journal. Lista vacía significa todas las instancias de los
@@ -233,8 +248,9 @@ combinación. La primera vez que el addon ve un personaje+spec, hereda el perfil
 `Chuvash — Augmentation`. Cambiar de spec activa el perfil vinculado y refresca los
 módulos; en combate queda pendiente hasta `PLAYER_REGEN_ENABLED`.
 
-El selector de opciones llama `Profile:SetCurrent` y revincula la spec actual. Duplicar o
-eliminar también actualizan el mapa. `cloneProfileData` copia tablas anidadas (tamaños,
+El selector de opciones pide confirmación y luego llama `Profile:SetCurrent` (revincula la
+spec actual). Duplicar, **renombrar** o eliminar también actualizan el mapa. `Default` no
+se puede renombrar ni borrar. `cloneProfileData` copia tablas anidadas (tamaños,
 transparencias, PartyGrid, alertas).
 
 `Backup.lua` serializa un paquete versionado (`CHUKIEUI-BACKUP-1`) con checksum: perfil
@@ -251,6 +267,32 @@ si no el atajo de placas de nombre (Ctrl+V por defecto) se come el pegado.
 
 El guardado cotidiano de `ActionBarLayouts` cubre slots 1–180 sin vaciar ranuras. La
 importación confirmada sí puede vaciar.
+
+---
+
+## Catálogo de teletransporte y temporada de mítica+ (0.5.6)
+
+`TeleportCatalog.lua` es una lista curada: cada entrada es objeto, juguete o hechizo, y la
+celda solo muestra lo válido para el personaje. Los teleports de mítica+ son hechizos, así
+que una temporada nueva no aparece sola: hay que agregar el ID.
+
+Los IDs de la temporada en curso se tomaron de los datos autogenerados de KeystoneLoot
+(`data/dungeons.lua`, build 12.1.0) y se cruzaron con `teleportId` de MythicDungeonTools:
+Kings' Rest `1286831`, Temple of Sethraliss `1286828`, The Blinding Vale `1286801`,
+Voidscar Arena `1286804`, Den of Nalorakk `1286807`, Murder Row `1286809`, Altar of Fangs
+`1286812`. Ruby Life Pools (`393256`) ya estaba.
+
+Las entradas nuevas van **al final** de la lista: `teleportDefaultIndex` guarda un índice y
+insertar en el medio cambiaría el default del jugador.
+
+`/chukieui teleport` recorre `C_ChallengeMode.GetMapTable()`, compara cada nombre con el
+nombre de hechizo de las entradas del catálogo (normalizado, aceptando que uno contenga al
+otro por los nombres tipo «Path of the …») e imprime `ok`, `sin aprender` o `falta en el
+catálogo`. Así una temporada futura se detecta sin adivinar.
+
+`spellKnown` prueba `C_SpellBook.IsSpellKnown`, `IsSpellInSpellBook`,
+`IsSpellKnownOrOverridesKnown`, `IsPlayerSpell` e `IsSpellKnown`: algunos teleports figuran
+en el libro pero no responden a la primera vía.
 
 ---
 

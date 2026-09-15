@@ -18,9 +18,10 @@ Activa **Chukie UI** en el selector de addons. Opcional: **Masque**, **DialogueU
 | **Barra de iconos** | Proxies (LibDBIcon, etc.), política por botón, Masque, micromenú configurable. |
 | **Panel derecho** | `PanelCore.lua` + `RightPanel.lua`: host del minimapa, rejilla de widgets y slot lateral derecho. |
 | **Widgets del panel** | `RightPanelWidgets.lua`: LFG, rastreo, correo, dificultad, teletransporte y toggle de **Combat Log** en una ranura 2–4 configurable. `CombatLog.lua` permite auto-logging por dificultad (M+, raids, etc.) y por instancia concreta. |
+| **Teletransporte** | `TeleportCatalog.lua`: solo aparece lo válido para el personaje (objeto en bolsas, juguete o hechizo aprendido). `/chukieui teleport` compara la mítica+ de la temporada en curso con el catálogo y avisa si falta alguna. |
 | **Sector amarillo** | `RightStrip.lua`: grilla inferior fija 2x2 (oro abreviado + huecos libres de bolsas), clic para `ToggleAllBags`, estilo Masque opcional y ocultado de la barra de bolsas Blizzard. |
 | **Barras de acción 1–4** | Matriz fija de **6 × 4** centrada en la pantalla (Offset X −1800…1800, Offset Y −1200…1200 desde el centro). La subpágina **Barras de acción → Transparencia 6 × 4** reproduce las 24 celdas y permite ajustar cada botón entre 10 y 100 % con deslizador o caja de texto (ambos sincronizados). La barra 1 recibe las barras circunstanciales del juego (vehículo, misión, evento, formas) y mientras duran se muestra opaca; diagnóstico en `/chukieui barras`. |
-| **Perfiles por spec** | Cada personaje y especialización usa su propio perfil de UI (layout, transparencias, PartyGrid, alertas). La primera combinación hereda el perfil actual; las siguientes se clonan. `/chukieui backup` muestra el vínculo. |
+| **Perfiles por spec** | Cada personaje y especialización usa su propio perfil de UI. La primera combinación hereda el perfil actual; las siguientes se clonan. En opciones: duplicar, **renombrar** y confirmar al cambiar de perfil. `/chukieui backup` muestra el vínculo. |
 | **Respaldo** | `/chukieui backup`: exporta/importa texto recuperable (perfil, barras 1–180, macros, teclas) con botones Copiar y Pegar. |
 | **Alertas CD/procs/auras** | Grupos con efectos y condiciones, editor `/chukie-aura`. En **12.1**, un grupo cuya única condición es aura “Presente” y cuyo único efecto visual es icono/textura lo dibuja el cliente (**AuraContainer**), así que también ve las auras que Blizzard oculta; el resto usa el path propio. Media en `Media/Alerts/`. |
 | **Panel de auras** | `AuraPanel.lua`, `/chukie-auras`: un slot grande por aura elegida usando **AuraContainer**, con tamaño, separación, auras por línea, dirección y posición arrastrable. Los slots no se compactan (el addon no sabe cuál está activa). |
@@ -58,9 +59,10 @@ Prioridad aproximada: acción extra → habilidad de zona → ítems especiales 
 ## Combat Log
 
 - Toggle en **Panel izquierdo → Combat Log** (ranura 2, 3 o 4 de la grilla 2 × 4).
-- Por defecto autoactiva M+ y raid mítica; el resto de tipos va desmarcado.
+- **Siempre activado** (por defecto): el log graba en todo momento. Se revisa fuera de combate en cada login, `/reload` o carga de instancia; si eso ocurre en pelea, se enciende al terminarla. Un apagado manual dura hasta el próximo `/reload` o cambio de instancia.
+- Con «Siempre activado» apagado vuelve el auto por tipo: M+ y raid mítica marcadas, el resto no.
 - **Instancias específicas**: lista vacía = todas las del tipo marcado; con marcas, sólo esas.
-- «Detener al salir» sólo apaga una sesión que arrancó el addon, no un `/combatlog` manual.
+- «Detener al salir» sólo apaga una sesión que arrancó el addon, no un `/combatlog` manual, y no se usa con «Siempre activado».
 - Advanced Combat Logging es un CVar aparte (`advancedCombatLogging`).
 
 ## Barras circunstanciales en la barra 1

@@ -249,7 +249,10 @@ function AB:UpdateButtonVisual(btn)
     return
   end
   -- Preferir atributo (ID=0); si Blizzard expone CalculateAction, usarlo como fallback.
-  local action = tonumber(btn:GetAttribute("action")) or 0
+  --- El paginado de una situación puede dejar el atributo con un valor secreto: no se puede leer
+  --- desde acá, así que se cae al último conocido en lugar de romper el refresco.
+  local raw = btn:GetAttribute("action")
+  local action = (not isSecret(raw) and tonumber(raw)) or 0
   if action <= 0 and ActionButton_CalculateAction then
     local ok, calc = pcall(ActionButton_CalculateAction, btn)
     if ok and type(calc) == "number" then
@@ -395,8 +398,23 @@ local SITUATION_EVENTS = {
 --- Opacidad de la barra 1 y quién muestra las acciones del evento: las dos dependen de la
 --- situación, no del contenido de los slots.
 function AB:UpdateSituation()
+  self:LearnSpecialPages()
+  self:ReapplyPaging()
   self:ApplyLeftButtonAlphas()
   self:UpdateOverrideArtBar()
+  --[[ Las dos cosas se miden sobre lo que quedó en el botón 1, y el driver seguro pagina por su
+       cuenta: puede hacerlo después de este evento. Se vuelve a mirar un instante más tarde, que es
+       la única forma de no decidir sobre un estado a medio aplicar. Las dos llamadas no hacen nada
+       si la decisión no cambió. ]]
+  if not self._situationRecheck and C_Timer and C_Timer.After then
+    self._situationRecheck = true
+    C_Timer.After(0.2, function()
+      AB._situationRecheck = nil
+      AB:ReapplyPaging()
+      AB:ApplyLeftButtonAlphas()
+      AB:UpdateOverrideArtBar()
+    end)
+  end
 end
 
 function AB:EnsureVisualEvents()
@@ -645,12 +663,75 @@ local function specialPageOffset(page)
   return (page - 1) * BUTTONS_PER_BAR
 end
 
---- Aplica `offset-<estado>` a los botones. `newstate` existe en `_onstate-page`; en `Execute` no.
+--[[ El índice de las páginas de vehículo / override / forma temporal solo existe mientras el juego
+     tiene esa barra activa: fuera de la situación las funciones devuelven nil. Además el número
+     cambió entre versiones (12/13/14 en su día, 16/17/18 en Midnight), así que no se puede fijar.
+     Se recuerda el último visto para tenerlo como respaldo del cálculo seguro. ]]
+local specialPageSeen = {}
+
+local function specialPage(key, fn)
+  if type(fn) == "function" then
+    local ok, value = pcall(fn)
+    if ok and not isSecret(value) then
+      local page = tonumber(value)
+      if page and page > 0 then
+        specialPageSeen[key] = page
+      end
+    end
+  end
+  return specialPageSeen[key]
+end
+
+--[[ Aplica el offset de página a los botones. `newstate` existe en `_onstate-page`; en `Execute` no.
+     La página de la situación se pregunta acá adentro, en el entorno seguro y en el momento en que
+     el juego la declara: preguntarla desde Lua al iniciar sesión devolvía nil —la barra todavía no
+     existía— y entonces la barra 1 se quedaba en la página normal justo cuando aparecía la barra de
+     misión o evento. Los `offset-<estado>` guardados quedan como respaldo.
+
+     La barra que el juego declara manda sobre el nombre del estado, igual que hace
+     `ActionBarController`. Hace falta porque las condiciones de macro no distinguen todos los
+     casos: en las misiones que sientan al jugador en un puesto de venta `[vehicleui]`,
+     `[possessbar]` y `[overridebar]` son falsas y el estado queda en `normal`, pero
+     `HasVehicleActionBar()` es verdadero y la página tiene las acciones del evento. ]]
 local APPLY_PAGE_OFFSET = [[
   local state = newstate or self:GetAttribute("state-page") or "normal"
-  local offset = self:GetAttribute("offset-" .. state)
+  local perPage = self:GetAttribute("buttonsPerPage") or 12
+  local normal = self:GetAttribute("offset-normal") or 0
+  local offset
+  local page
+  --- Solo la barra 1 recibe las situaciones. Las cuatro tienen driver por skyriding, así que sin
+  --- este filtro las otras tres también paginaban a la página del vehículo.
+  local canAsk = self:GetAttribute("situationBar")
+    and HasVehicleActionBar
+    and HasOverrideActionBar
+    and HasTempShapeshiftActionBar
+  if canAsk then
+    if HasVehicleActionBar() and GetVehicleBarIndex then
+      page = GetVehicleBarIndex()
+    elseif HasOverrideActionBar() and GetOverrideBarIndex then
+      page = GetOverrideBarIndex()
+    elseif HasTempShapeshiftActionBar() and GetTempShapeshiftBarIndex then
+      page = GetTempShapeshiftBarIndex()
+    end
+  end
+  if not page and GetBonusBarIndex then
+    if state == "bonus1" or state == "bonus2" or state == "bonus3" or state == "bonus4" then
+      page = GetBonusBarIndex()
+    end
+  end
+  if page and page > 0 then
+    offset = (page - 1) * perPage
+  elseif canAsk and (state == "vehicle" or state == "override" or state == "shapeshift") then
+    --- Se pudo preguntar y el juego no declara barra: se queda con la página normal. `[canexitvehicle]`
+    --- también es cierto en vehículos que dejan al jugador con sus propias habilidades, y ahí usar el
+    --- `offset-<estado>` guardado daría una fila de botones vacíos.
+    offset = normal
+  end
   if not offset then
-    offset = self:GetAttribute("offset-normal") or 0
+    offset = self:GetAttribute("offset-" .. state)
+  end
+  if not offset then
+    offset = normal
   end
   self:SetAttribute("actionOffset", offset)
   local n = self:GetAttribute("numButtons") or 12
@@ -708,7 +789,14 @@ end
      y no solo dentro del entorno seguro, para decidir dos cosas que las condiciones de macro no
      pueden: la opacidad de la fila y si conviene devolverle la barra con arte a Blizzard. ]]
 function AB:ReplacementBarState()
-  if apiFlag(UnitHasVehicleUI, "player") or apiFlag(HasVehicleActionBar) or apiFlag(IsPossessBarVisible) then
+  --- `CanExitVehicle` entra en la lista porque en las misiones que sientan al jugador en un puesto
+  --- (el vendedor que te deja a cargo) es la única de estas que responde con un valor legible.
+  if
+    apiFlag(UnitHasVehicleUI, "player")
+    or apiFlag(HasVehicleActionBar)
+    or apiFlag(IsPossessBarVisible)
+    or apiFlag(CanExitVehicle)
+  then
     return "vehicle"
   end
   if apiFlag(HasOverrideActionBar) then
@@ -727,24 +815,103 @@ function AB:ReplacementBarState()
   return nil
 end
 
---[[ El estado activo y si la barra 1 lo tiene cubierto. «Cubierto» significa que su driver
-     seguro tiene un `offset-<estado>` para ese caso: sin él, la barra sigue en la página normal
-     mostrando las habilidades del jugador aunque el juego haya cambiado de situación. ]]
+--- Tri-estado: `nil` cuando la ranura no se puede leer (valor secreto o API ausente). Afirmar
+--- «no hay acción» sobre un dato ilegible dejaría al jugador sin barra.
+local function actionExists(slot)
+  if type(HasAction) ~= "function" or not slot then
+    return nil
+  end
+  local ok, value = pcall(HasAction, slot)
+  if not ok or isSecret(value) then
+    return nil
+  end
+  return value and true or false
+end
+
+--- La página que el juego usa para la situación actual, con su prioridad. Devuelve el offset de
+--- slots o nil si el cliente todavía no la expone.
+function AB:SituationOffset(state)
+  if state == "vehicle" or state == "override" or state == "shapeshift" then
+    if apiFlag(UnitHasVehicleUI, "player") or apiFlag(HasVehicleActionBar) then
+      return specialPageOffset(specialPage("vehicle", GetVehicleBarIndex))
+    end
+    if apiFlag(HasOverrideActionBar) then
+      return specialPageOffset(specialPage("override", GetOverrideBarIndex))
+    end
+    if apiFlag(HasTempShapeshiftActionBar) then
+      return specialPageOffset(specialPage("shapeshift", GetTempShapeshiftBarIndex))
+    end
+    return nil
+  end
+  local bonus = bonusBarOffset()
+  if bonus >= 1 and bonus <= 4 then
+    return pageOffset(BONUS_PAGE[bonus])
+  end
+  if state == "sky" then
+    return pageOffset(SKY_PAGE[VEHICLE_BAR_ID])
+  end
+  return nil
+end
+
+--[[ El estado activo y si la barra 1 lo tiene cubierto de verdad. La prueba es lo que el jugador
+     tiene en la mano: el primer botón apuntando a la primera ranura de la página de la situación.
+     Mirar el driver no alcanzaba —tener la condición registrada no significa que se haya activado—
+     y decirse «cubierto» de más es el peor caso: esconde la barra de Blizzard y deja al jugador sin
+     forma de avanzar la misión. Ante cualquier dato ilegible o ausente se declara sin cubrir. ]]
 function AB:ReplacementCoverage()
   local state = self:ReplacementBarState()
   if not state then
     return nil, false
   end
-  local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
-  if not bar then
+  local offset = self:SituationOffset(state)
+  if not offset or actionExists(offset + 1) == false then
     return state, false
   end
-  return state, bar:GetAttribute("offset-" .. state) ~= nil
+  local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
+  local first = bar and bar.buttons and bar.buttons[1]
+  local raw = first and first:GetAttribute("action")
+  local action = (not isSecret(raw)) and tonumber(raw) or nil
+  return state, action == offset + 1
+end
+
+--- Mientras la situación está activa el índice de página sí existe: se aprende para el respaldo del
+--- entorno seguro y para el diagnóstico. Los atributos de la barra se tocan solo fuera de combate.
+function AB:LearnSpecialPages()
+  local vehicle = specialPage("vehicle", GetVehicleBarIndex)
+  local override = specialPage("override", GetOverrideBarIndex)
+  local shapeshift = specialPage("shapeshift", GetTempShapeshiftBarIndex)
+  local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
+  if not bar or InCombatLockdown() then
+    return
+  end
+  bar:SetAttribute("offset-vehicle", specialPageOffset(vehicle))
+  bar:SetAttribute("offset-override", specialPageOffset(override))
+  bar:SetAttribute("offset-shapeshift", specialPageOffset(shapeshift))
+end
+
+--[[ Reaplica el paginado de la barra 1 en cada cambio de situación. El snippet pregunta primero por
+     la barra que declara el juego, así que corregir el desfase no depende de que el driver haya
+     llegado a cambiar de estado —en las misiones de puesto de venta ninguna condición de macro se
+     activa— ni de que los eventos lleguen en orden. Va por `Execute` justamente para que también
+     funcione en combate: cambiar el `action` de un botón seguro desde Lua ahí está prohibido. ]]
+function AB:ReapplyPaging()
+  if not self._bars then
+    return
+  end
+  --- Las cuatro, no solo la barra 1: las de skyriding también pueden quedar en una página vieja si
+  --- su estado no cambió, y entonces la fila se queda con los iconos de la situación anterior.
+  for barId = 1, 4 do
+    local bar = self._bars[tostring(barId)]
+    if bar and bar.Execute then
+      bar:Execute(APPLY_PAGE_OFFSET)
+    end
+  end
 end
 
 --- Estados de página por barra, en orden de prioridad (vehículo gana sobre skyriding).
 local function buildPageStates(bar, barId)
   local conditions = {}
+  bar:SetAttribute("situationBar", barId == VEHICLE_BAR_ID)
   bar:SetAttribute("offset-normal", pageOffset(barId))
   bar:SetAttribute("offset-vehicle", nil)
   bar:SetAttribute("offset-override", nil)
@@ -754,23 +921,26 @@ local function buildPageStates(bar, barId)
     bar:SetAttribute("offset-bonus" .. bonus, nil)
   end
 
-  --- Mismo orden que ActionBarController de Blizzard: vehículo, override, shapeshift temporal.
+  --[[ Mismo orden que ActionBarController de Blizzard: vehículo, override, shapeshift temporal.
+       Los tres estados se registran siempre, aunque el índice de página todavía no exista: sin la
+       condición en el driver la barra 1 nunca se enteraba de la situación. El offset lo resuelve
+       `APPLY_PAGE_OFFSET` cuando el juego declara la barra. ]]
   if barId == VEHICLE_BAR_ID and db().vehiclePaging ~= false then
-    local vehicle = specialPageOffset(GetVehicleBarIndex and GetVehicleBarIndex())
-    local override = specialPageOffset(GetOverrideBarIndex and GetOverrideBarIndex())
-    local shapeshift = specialPageOffset(GetTempShapeshiftBarIndex and GetTempShapeshiftBarIndex())
-    if vehicle then
-      bar:SetAttribute("offset-vehicle", vehicle)
-      conditions[#conditions + 1] = "[vehicleui][possessbar] vehicle"
-    end
-    if override then
-      bar:SetAttribute("offset-override", override)
-      conditions[#conditions + 1] = "[overridebar] override"
-    end
-    if shapeshift then
-      bar:SetAttribute("offset-shapeshift", shapeshift)
-      conditions[#conditions + 1] = "[shapeshift] shapeshift"
-    end
+    bar:SetAttribute("offset-vehicle", specialPageOffset(specialPage("vehicle", GetVehicleBarIndex)))
+    bar:SetAttribute("offset-override", specialPageOffset(specialPage("override", GetOverrideBarIndex)))
+    bar:SetAttribute(
+      "offset-shapeshift",
+      specialPageOffset(specialPage("shapeshift", GetTempShapeshiftBarIndex))
+    )
+    --[[ `[canexitvehicle]` entra en la lista aunque parezca de más: en las misiones que sientan al
+         jugador en un puesto —el vendedor que te deja a cargo— las otras tres condiciones son
+         falsas y el driver se quedaba en `normal`, así que el snippet no corría nunca y la barra 1
+         seguía con las habilidades del jugador. Es la misma condición que muestra la flecha de
+         salir, que en esas misiones sí aparece. Que la situación tenga barra propia lo decide el
+         snippet: si el juego no declara ninguna, trata el estado como normal. ]]
+    conditions[#conditions + 1] = "[vehicleui][possessbar][canexitvehicle] vehicle"
+    conditions[#conditions + 1] = "[overridebar] override"
+    conditions[#conditions + 1] = "[shapeshift] shapeshift"
   end
 
   --[[ Barras de bonus 1–4 (páginas 7–10). Sin estos estados la barra 1 se queda en la página
@@ -810,6 +980,11 @@ local function applySecurePaging(bar, barId)
   end
   bar:SetAttribute("_onstate-page", APPLY_PAGE_OFFSET)
   RegisterStateDriver(bar, "page", driver)
+  --[[ `ensureButton` acaba de reescribir el `action` de cada botón con su ranura normal, y el driver
+       solo vuelve a correr el snippet cuando su estado *cambia*: si el refresco cae en medio de una
+       situación —el juego manda varios eventos seguidos— la barra 1 se quedaba con las habilidades
+       del jugador y un `actionOffset` de la situación que ya nadie aplicaba. Se reaplica a mano. ]]
+  bar:Execute(APPLY_PAGE_OFFSET)
 end
 
 -- ActionBarButtonTemplate fija cromado (Normal/borde) en tamaño nativo;
@@ -1092,6 +1267,8 @@ function AB:EnsureBar(barId, numButtons)
 
   numButtons = math.max(1, math.min(BUTTONS_PER_BAR, tonumber(numButtons) or BUTTONS_PER_BAR))
   bar:SetAttribute("numButtons", numButtons)
+  --- Los slots de una página siguen siendo 12 aunque la barra muestre 6 botones.
+  bar:SetAttribute("buttonsPerPage", BUTTONS_PER_BAR)
 
   for i = 1, numButtons do
     local btn = ensureButton(bar, barId, i)
@@ -1193,15 +1370,15 @@ function AB:HideStockBars()
 end
 
 --[[ Barra de misión / vehículo con arte propio (OverrideActionBar): Blizzard la muestra flotando
-     cuando hay override/vehículo con skin. Mientras nuestra barra 1 pagine a esas acciones
-     ([overridebar]/[vehicleui], índices 12/14/13) la de Blizzard duplica, así que va a un
-     contenedor oculto, que resiste los Show() del juego incluso en combate.
+     cuando hay override o vehículo. Solo se manda al contenedor oculto —que resiste los Show() del
+     juego incluso en combate— cuando la barra 1 está mostrando esas mismas acciones y la de
+     Blizzard duplica.
 
-     La excepción es lo que importa: si el juego tiene una barra de reemplazo que nuestro
-     paginado NO cubre —el paginado apagado, o un estado que el driver seguro no contempla tras
-     morir o cambiar de situación—, ocultarla dejaría al jugador sin ninguna forma de usar la
-     habilidad del evento y sin poder avanzar. En ese caso se devuelve a UIParent y manda
-     Blizzard. Son llamadas protegidas: en combate quedan pendientes hasta salir. ]]
+     Lo que importa es el sesgo de la duda: si el estado no se puede leer, si el cliente no expone
+     la página, si esa página está vacía o si la barra 1 se quedó en las habilidades del jugador,
+     ocultarla dejaría al jugador sin forma de usar la habilidad del evento y sin poder avanzar la
+     misión. En todos esos casos se devuelve a UIParent y manda Blizzard. Son llamadas protegidas:
+     en combate quedan pendientes hasta salir. ]]
 function AB:UpdateOverrideArtBar()
   local bar = _G.OverrideActionBar
   if not bar then
@@ -1209,8 +1386,11 @@ function AB:UpdateOverrideArtBar()
   end
   local state, covered = self:ReplacementCoverage()
   local routed = self.IsEnabled() and db().leftEnabled ~= false and db().vehiclePaging ~= false
-  local uncovered = state ~= nil and not covered
-  local hide = routed and not uncovered
+  --[[ Se esconde solo con certeza: situación detectada y con la barra 1 mostrando sus acciones. Si
+       el estado no se puede leer —desde 12.0 estas API pueden devolver valores secretos— o la barra
+       1 se quedó en las habilidades del jugador, manda Blizzard: quedarse sin la barra del evento
+       traba la misión, que es el peor resultado posible. ]]
+  local hide = routed and state ~= nil and covered
   if self._overrideArtHidden == hide then
     return
   end
@@ -1484,16 +1664,34 @@ function AB:PrintDiagnostics()
       .. " skyriding="
       .. tostring(d.skyridingPaging ~= false)
   )
+  print(
+    "  páginas de situación vistas: vehículo="
+      .. tostring(specialPageSeen.vehicle or "todavía ninguna")
+      .. " override="
+      .. tostring(specialPageSeen.override or "todavía ninguna")
+      .. " forma="
+      .. tostring(specialPageSeen.shapeshift or "todavía ninguna")
+  )
+  local situationOffset = state and self:SituationOffset(state)
+  print(
+    "  situación: offset="
+      .. tostring(situationOffset or "el cliente no la expone")
+      .. " primera acción="
+      .. tostring(situationOffset and actionExists(situationOffset + 1))
+      .. " el botón 1 debería quedar en="
+      .. tostring(situationOffset and (situationOffset + 1) or "-")
+  )
   local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
   if bar then
     local first = bar.buttons and bar.buttons[1]
+    local rawAction = first and first:GetAttribute("action")
     print(
       "  barra 1: estado="
         .. tostring(bar:GetAttribute("state-page") or "sin driver")
         .. " offset="
         .. tostring(bar:GetAttribute("actionOffset"))
         .. " acción del botón 1="
-        .. tostring(first and first:GetAttribute("action"))
+        .. (isSecret(rawAction) and "secreta" or tostring(rawAction))
     )
   else
     print("  barra 1: todavía no creada.")

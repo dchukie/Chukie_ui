@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
 **Instantánea:** 2026-09-11
-**Versión en `Chukie_Ui.toc`:** 0.5.6
+**Versión en `Chukie_Ui.toc`:** 0.5.7
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,7 +14,7 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.5.6` |
+| `## Version` | `0.5.7` |
 | Branch tipica | `dev` |
 
 Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
@@ -41,6 +41,14 @@ Versión **0.5.3**: la distancia al marco anfitrión y los ajustes X/Y de PartyG
 alejarse media pantalla o quedar por encima del propio marco. Los sliders de la ventana
 propia aceptan rueda del mouse, que mueve de a un paso: con 180 px de barra y 1200 de
 recorrido el arrastre solo sirve para el grueso.
+
+Versión **0.5.7**: la barra 1 vuelve a paginar cuando aparece una barra de misión, evento,
+vehículo o forma temporal. La página la resuelve el entorno seguro preguntando por la barra que
+declara el juego, no el nombre del estado: en las misiones que sientan al jugador en un puesto de
+venta ninguna condición de macro se activa y la barra 1 se quedaba con las habilidades del
+jugador. Y la barra de Blizzard ahora solo se esconde con certeza de que la barra 1 muestra esas
+acciones, medida en el `action` del botón. Detalle en «Página de la situación resuelta en el
+entorno seguro».
 
 Versión **0.5.6**: se puede **renombrar** un perfil (no `Default`) y el desplegable pide
 confirmación antes de cambiar de uno a otro. El cambio automático al cambiar de spec no
@@ -296,6 +304,97 @@ en el libro pero no responden a la primera vía.
 
 ---
 
+## Página de la situación resuelta en el entorno seguro (0.5.7)
+
+La barra 1 no cambiaba al aparecer una barra de misión, evento o vehículo. La causa estaba en
+`buildPageStates`: leía el índice de página con `GetVehicleBarIndex()`,
+`GetOverrideBarIndex()` y `GetTempShapeshiftBarIndex()` **al armar el driver** (login o
+refresco) y solo agregaba la condición si obtenía un número. Esas funciones devuelven `nil`
+mientras el juego no tiene esa barra activa, así que `[vehicleui]`, `[overridebar]` y
+`[shapeshift]` casi nunca entraban al driver: la barra 1 se quedaba en `normal` con las
+habilidades del jugador. Encima el número no es fijo —fue 12/13/14 y en Midnight es 16/17/18—
+así que tampoco se puede escribir a mano.
+
+Ahora los tres estados se registran siempre y el offset se calcula dentro de
+`APPLY_PAGE_OFFSET`, en el entorno seguro y en el momento en que el juego declara la barra
+(mismo patrón que usan Dominos y Bartender). El snippet consulta `HasVehicleActionBar` /
+`HasOverrideActionBar` / `HasTempShapeshiftActionBar` y el índice correspondiente, y para
+`bonus1..4` prefiere `GetBonusBarIndex()`. Si algo de eso no está disponible cae al
+`offset-<estado>` guardado y, en último caso, a `offset-normal`. `buttonsPerPage` = 12 aunque
+la barra muestre 6 botones: una página son 12 slots.
+
+`AB:LearnSpecialPages()` corre en cada cambio de situación y guarda en `specialPageSeen` el
+índice que el cliente informó, para el respaldo y para el diagnóstico; los atributos solo se
+tocan fuera de combate. `UpdateButtonVisual` tolera que el atributo `action` sea un valor
+secreto: cae al último conocido en vez de romper el refresco.
+
+### La condición de macro no alcanza: manda la barra que declara el juego
+
+Con lo anterior la barra 1 seguía sin cambiar en «My Stuff's Better Than Your Stuff», la misión
+donde el vendedor te deja a cargo del puesto. `/chukieui barras` durante la situación dio el dato
+que faltaba:
+
+```
+reemplazo del juego=vehicle cubierto por la barra 1=true
+situación: offset=180 primera acción=true
+barra 1: estado=normal offset=180 acción del botón 1=1
+```
+
+El juego declaraba la página 16 con acciones (offset 180), pero el driver seguro estaba en
+`normal` y el botón 1 apuntaba a la ranura 1: las habilidades del jugador. Es decir, **ninguna de
+las condiciones de macro se activa en esa misión**: `[vehicleui]` pide `UnitHasVehicleUI`,
+`[possessbar]` y `[overridebar]` tampoco responden, y sin cambio de estado el snippet nunca corre.
+Lo único que sí se activa es `[canexitvehicle]` —de hecho la flecha de salir aparecía—, así que
+entra en la condición del estado `vehicle`.
+
+Como `[canexitvehicle]` también es cierto en vehículos que dejan al jugador con sus propias
+habilidades, el nombre del estado dejó de decidir el offset: `APPLY_PAGE_OFFSET` pregunta primero
+por la barra que **declara el juego** (`HasVehicleActionBar` → `HasOverrideActionBar` →
+`HasTempShapeshiftActionBar`), igual que `ActionBarController`, y solo cae a `bonus1..4` por
+`GetBonusBarIndex()`. Si se pudo preguntar y el juego no declara ninguna, usa `offset-normal` en
+vez del `offset-<estado>` guardado, que daría una fila de botones vacíos. El respaldo por
+`offset-<estado>` queda solo para el caso de que esas funciones no existan en el entorno
+restringido.
+
+Esa consulta va detrás del atributo `situationBar`, que solo tiene la barra 1: las cuatro barras
+tienen driver por skyriding, así que sin el filtro las otras tres también paginaban a la página del
+vehículo y aparecían con los iconos de la situación repetidos.
+
+Con esa consulta adentro, el paginado ya no depende de que el driver cambie de estado:
+`AB:ReapplyPaging()` corre `bar:Execute(APPLY_PAGE_OFFSET)` en cada evento de situación y resuelve
+lo mismo. Recorre las cuatro barras, no solo la 1: una fila cuyo estado no cambió se quedaba con la
+página anterior hasta que otro cambio —montar y desmontar, por ejemplo— disparaba su driver. Va por `Execute` a propósito, porque en combate cambiar el `action` de un botón seguro
+desde Lua está prohibido y dentro del entorno seguro no. `applySecurePaging` lo llama también
+después de registrar el driver: `ensureButton` acababa de reescribir cada `action` con su ranura
+normal y el driver solo dispara el snippet cuando su estado *cambia*, así que un refresco en medio
+de una situación dejaba la barra 1 con las habilidades del jugador y un `actionOffset` que ya nadie
+aplicaba —exactamente el `offset=180` con `acción del botón 1=1` del diagnóstico.
+
+### La cobertura se mide en el botón, no en el driver
+
+`ReplacementCoverage()` ya no pregunta si el driver tiene registrada la condición: compara el
+atributo `action` del botón 1 con la primera ranura de la página de la situación
+(`AB:SituationOffset(state)`). Es lo que el jugador tiene en la mano, y era la única de las tres
+lecturas que en la misión del puesto decía la verdad. Ante cualquier dato ilegible o ausente
+—`actionExists` es tri-estado y devuelve `nil` cuando `HasAction` no se puede leer— se declara sin
+cubrir.
+
+Con eso, `UpdateOverrideArtBar` esconde la barra de Blizzard **solo con certeza**
+(`state ~= nil and covered`). Antes la condición era «esconder salvo que detecte una situación sin
+cubrir», así que cuando el estado no se podía leer —desde 12.0 estas API devuelven valores
+secretos y `apiFlag` los descarta como `false`— la escondía igual y el jugador quedaba trabado.
+`ReplacementBarState()` suma `CanExitVehicle` por el mismo motivo que el driver.
+
+Como la cobertura se mide sobre el botón y el driver seguro pagina por su cuenta, `UpdateSituation`
+repite la evaluación 0,2 s después con `C_Timer.After`: decidir sobre un estado a medio aplicar
+dejaría las dos barras a la vez. Las dos llamadas no hacen nada si la decisión no cambió.
+
+`/chukieui barras` imprime las páginas de situación vistas, el offset de la situación, si su
+primera acción existe y en qué ranura debería quedar el botón 1: comparado con «acción del botón
+1», dice de un vistazo si la barra 1 está cubriendo la situación.
+
+---
+
 ## Barras circunstanciales en la barra 1 (0.5.4)
 
 Cuando el juego reemplaza la barra del jugador —vehículo, misión con barra propia (override),
@@ -320,8 +419,10 @@ suman también a `GetLeftActionSlots()`, que ahora filtra duplicados (la página
 **Red de seguridad: la barra de Blizzard.** `HideOverrideArtBar` pasa a ser
 `UpdateOverrideArtBar` y decide en cada cambio de situación. `ReplacementBarState()` consulta por
 API qué reemplazo puso el juego (mismo orden de prioridad que Blizzard) y `ReplacementCoverage()`
-mira si la barra 1 tiene un `offset-<estado>` para ese caso. Si hay reemplazo **sin cubrir**
-—paginado apagado o un estado que el driver seguro no contempla— `OverrideActionBar` vuelve a
+mira si el driver cubre ese caso (en 0.5.4 por `offset-<estado>`; desde 0.5.7 comparando el
+`action` del botón 1 con la página de la situación). Si hay reemplazo **sin cubrir** —paginado
+apagado, un estado ilegible, una página que el cliente no expone o la barra 1 que se quedó en las
+habilidades del jugador— `OverrideActionBar` vuelve a
 `UIParent` y se fuerza su `Show()` en los estados que ese marco atiende (vehículo y override);
 en cuanto la barra 1 vuelve a cubrir la situación, regresa al contenedor oculto. Antes el marco
 se escondía una vez y revertirlo pedía `/reload`, así que un cambio de situación tras morir podía

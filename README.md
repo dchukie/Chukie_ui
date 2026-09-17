@@ -71,8 +71,9 @@ Cuando el juego reemplaza la barra del jugador (vehículo, misión con barra pro
 
 - Mientras dura la situación, los seis botones de la barra 1 se muestran **al 100 %** y al terminar cada celda recupera su transparencia configurada. Skyriding no cuenta como situación: tiene su propio paginado.
 - *Barras de acción → **Barras de bonus en la barra 1*** (activo por defecto) agrega `[bonusbar:1..4]` → páginas 7–10, el mismo cálculo que hace Blizzard. Sin esto, la barra 1 se queda en las habilidades normales justo cuando el juego cambia de situación.
-- Si el juego declara un reemplazo que la barra 1 **no** cubre (paginado apagado, o un cambio de situación tras morir), se devuelve la **barra con arte de Blizzard** en vez de dejar la habilidad del evento sin ningún botón. Vuelve a ocultarse cuando la barra 1 retoma la situación. Es una llamada protegida: si pasa en combate, se aplica al salir.
-- `/chukieui barras` muestra el reemplazo detectado, si la barra 1 lo cubre, el paginado activo y quién tiene `OverrideActionBar`.
+- La página la resuelve el entorno seguro preguntando **qué barra declara el juego** (`HasVehicleActionBar` y compañía), no el nombre del estado: hay misiones —el puesto de venta donde el vendedor te deja a cargo— en las que ninguna condición de macro se activa y la barra 1 se quedaba con las habilidades del jugador. Además el índice de esa página solo existe mientras la situación está activa y cambió entre versiones (16/17/18 en Midnight).
+- Si el juego declara un reemplazo que la barra 1 **no** cubre (paginado apagado, un cambio de situación tras morir, o datos que el cliente no expone), se devuelve la **barra con arte de Blizzard** en vez de dejar la habilidad del evento sin ningún botón. La cobertura se mide en la acción real del botón 1, así que ante cualquier duda manda Blizzard: quedarse sin la barra del evento traba la misión. Vuelve a ocultarse cuando la barra 1 retoma la situación; es una llamada protegida, si pasa en combate se aplica al salir.
+- `/chukieui barras` muestra el reemplazo detectado, si la barra 1 lo cubre, el offset de la situación, en qué ranura debería quedar el botón 1, el paginado activo y quién tiene `OverrideActionBar`.
 
 ## Guardado de acciones (barras 1–180)
 

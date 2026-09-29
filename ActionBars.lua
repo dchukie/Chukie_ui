@@ -24,13 +24,17 @@ local SKY_PAGE = { [1] = 8, [2] = 9, [3] = 10, [4] = 11 }
 -- Condición segura usada por Dominos/Bartender para skyriding.
 local SKYRIDING_COND = "[bonusbar:5]"
 
--- Defaults de teclas (barras 1–4, botones 1–5). Barra 4 sin tecla en el 5.º.
-local DEFAULT_KEYS = {
-  [1] = { "1", "2", "3", "4", "5" },
-  [2] = { "Q", "W", "E", "R", "T" },
-  [3] = { "A", "S", "D", "F", "G" },
-  [4] = { "Z", "X", "C", "V" },
-}
+local function padMode()
+  if ns.ButtonPad and ns.ButtonPad.Current then
+    return ns.ButtonPad.Current()
+  end
+  return {
+    flow = "row",
+    buttonsPerBar = LEFT_BUTTONS_PER_BAR,
+    columns = LEFT_BUTTONS_PER_BAR,
+    keys = {},
+  }
+end
 
 local STOCK_BARS_TO_HIDE = {
   "MainMenuBar", -- arte clásico / ≤11.2.5
@@ -519,6 +523,13 @@ local function updateHotkeyText(btn)
   if not btn or not btn.HotKey then
     return
   end
+  --- En Keyzen el rótulo es el número JOY, no el nombre PAD que usa el binding.
+  if btn._chukieJoyLabel then
+    btn.HotKey:SetText(btn._chukieJoyLabel)
+    btn.HotKey:Show()
+    btn.HotKey:SetAlpha(0.9)
+    return
+  end
   local cmd = btn._commandName
   local key = cmd and GetBindingKey and GetBindingKey(cmd)
   if key and key ~= "" then
@@ -553,7 +564,165 @@ local function updateOverrideBindings(btn)
       SetOverrideBindingClick(bind, false, keys[i], name, "LeftButton")
     end
   end
+  --- JOY #N llega como botón de mando (PAD*), no como la tecla 1/Q/R. El override lo
+  --- escucha aunque el binding visible del botón siga siendo la tecla de Nostromo.
+  if btn._chukiePadKey then
+    SetOverrideBindingClick(bind, false, btn._chukiePadKey, name, "LeftButton")
+  end
   updateHotkeyText(btn)
+end
+
+local function bindingAlready(cmd, key)
+  if not GetBindingKey or not key then
+    return false
+  end
+  local first, second = GetBindingKey(cmd)
+  return first == key or second == key
+end
+
+--- JOY #10 no es una tecla. WoW solo dispara el binding si ese botón crudo está mapeado a un
+--- nombre PAD*. El índice crudo es el número del software menos uno: JOY #1 → 0, JOY #10 → 9.
+local function keyzenMappings(mode)
+  local mappings = {}
+  local padByJoy = mode and mode.padByJoy
+  if not padByJoy then
+    return mappings
+  end
+  for joy, pad in pairs(padByJoy) do
+    mappings[#mappings + 1] = { rawIndex = joy - 1, button = pad, comment = "JOY #" .. joy }
+  end
+  return mappings
+end
+
+local function gamepadDevices()
+  if not C_GamePad or not C_GamePad.GetAllDeviceIDs or not C_GamePad.GetDeviceRawState then
+    return {}
+  end
+  local ok, ids = pcall(C_GamePad.GetAllDeviceIDs)
+  if not ok or type(ids) ~= "table" then
+    return {}
+  end
+  local devices = {}
+  for i = 1, #ids do
+    local okState, state = pcall(C_GamePad.GetDeviceRawState, ids[i])
+    if okState and type(state) == "table" then
+      state.deviceID = ids[i]
+      devices[#devices + 1] = state
+    end
+  end
+  return devices
+end
+
+local function applyKeyzenGamepad(mode)
+  local mappings = keyzenMappings(mode)
+  if #mappings == 0 or not C_GamePad or not C_GamePad.SetConfig or not C_GamePad.ApplyConfigs then
+    return false
+  end
+  if SetCVar then
+    pcall(SetCVar, "GamePadEnable", "1")
+    --- En 1, WoW se queda con la cara XInput y no lee los JOY del perfil DirectInput.
+    pcall(SetCVar, "GamePadForceXInput", "0")
+    --- Si no, el bumper y el gatillo que usamos como PAD se comen el botón (Ctrl, Shift, clic).
+    pcall(SetCVar, "GamePadEmulateCtrl", "NONE")
+    pcall(SetCVar, "GamePadEmulateShift", "NONE")
+    pcall(SetCVar, "GamePadCursorLeftClick", "NONE")
+    pcall(SetCVar, "GamePadCursorRightClick", "NONE")
+  end
+  local wrote = false
+  local devices = gamepadDevices()
+  for i = 1, #devices do
+    local state = devices[i]
+    local count = tonumber(state.rawButtonCount) or 0
+    --- El Keyzen entra a WoW como XInput de 21 botones, no de 24.
+    if count >= 16 then
+      local fitted = {}
+      for m = 1, #mappings do
+        if mappings[m].rawIndex < count then
+          fitted[#fitted + 1] = mappings[m]
+        end
+      end
+      local configID = { vendorID = state.vendorID, productID = state.productID }
+      local config = {
+        name = state.name,
+        configID = configID,
+        rawButtonMappings = fitted,
+        rawAxisMappings = {},
+        axisConfigs = {},
+        stickConfigs = {},
+      }
+      if C_GamePad.GetConfig then
+        local ok, current = pcall(C_GamePad.GetConfig, configID)
+        if ok and type(current) == "table" then
+          current.rawButtonMappings = fitted
+          current.configID = configID
+          config = current
+        end
+      end
+      local ok, result = pcall(C_GamePad.SetConfig, config)
+      if ok and result ~= false then
+        wrote = true
+      else
+        AB._joyConfigError = result
+      end
+    end
+  end
+  if wrote then
+    pcall(C_GamePad.ApplyConfigs)
+  end
+  return wrote
+end
+
+function AB:PrintJoyDiagnostics()
+  if self._joyListen then
+    self._joyListen:Cancel()
+    self._joyListen = nil
+  end
+  local enabled = GetCVar and GetCVar("GamePadEnable") or "?"
+  local forceX = GetCVar and GetCVar("GamePadForceXInput") or "?"
+  local devices = gamepadDevices()
+  print("|cff00ff00Chukie UI|r: mando " .. tostring(enabled) .. ", forzar XInput " .. tostring(forceX) .. ". Escucho 6 segundos: soltá teclado y mouse, y apretá el botón.")
+  if #devices == 0 then
+    print("  WoW no ve ningún mando. El perfil del Keyzen tiene que seguir en JOY, no en teclado.")
+    return
+  end
+  for i = 1, #devices do
+    local state = devices[i]
+    print(string.format(
+      "  %s | vendor %s | product %s | botones %s",
+      tostring(state.name or state.deviceID),
+      tostring(state.vendorID),
+      tostring(state.productID),
+      tostring(state.rawButtonCount)
+    ))
+  end
+  local seen = {}
+  local ticks = 0
+  local ticker
+  ticker = C_Timer.NewTicker(0.1, function()
+    ticks = ticks + 1
+    local now = gamepadDevices()
+    for i = 1, #now do
+      local buttons = now[i].rawButtons
+      if type(buttons) == "table" then
+        for index, down in pairs(buttons) do
+          if down and not seen[index] then
+            seen[index] = true
+            local rawIndex = tonumber(index)
+            rawIndex = rawIndex and (rawIndex - 1) or "?"
+            print("  llegó: posición " .. tostring(index) .. " (rawIndex " .. tostring(rawIndex) .. ")")
+          end
+        end
+      end
+    end
+    if ticks >= 60 then
+      ticker:Cancel()
+      AB._joyListen = nil
+      if not next(seen) then
+        print("|cffff9900Chukie UI|r: en 6 segundos ese mando no mandó ningún botón.")
+      end
+    end
+  end)
+  self._joyListen = ticker
 end
 
 function AB:EnsureDefaultKeybinds()
@@ -564,22 +733,52 @@ function AB:EnsureDefaultKeybinds()
   if d.applyDefaultKeybinds == false then
     return
   end
-  if d._defaultKeybindsApplied then
+  local mode = padMode()
+  local token = mode.bindToken or mode.id
+  if mode.padByJoy and SetCVar then
+    pcall(SetCVar, "GamePadEnable", "1")
+    pcall(SetCVar, "GamePadForceXInput", "0")
+  end
+  if d._defaultKeybindsApplied == token then
     return
   end
+  local padOk = true
+  if mode.padByJoy then
+    padOk = applyKeyzenGamepad(mode)
+    if not padOk and not self._joyWarned then
+      self._joyWarned = true
+      print("|cffff9900Chukie UI|r: el Keyzen sigue en JOY, pero WoW no dejó registrar el mando. Corré /chukieui joy con un botón apretado.")
+    end
+  end
   local changed = false
+  local keysByBar = mode.keys or {}
   for barId = 1, 4 do
-    local keys = DEFAULT_KEYS[barId]
+    local keys = keysByBar[barId] or {}
     for i = 1, #keys do
+      local key = keys[i]
       local cmd = bindingCommand(barId, i)
-      if not GetBindingKey(cmd) then
-        if SetBinding(keys[i], cmd) then
+      if key and not bindingAlready(cmd, key) then
+        if SetBinding(key, cmd) then
           changed = true
         end
       end
     end
   end
-  d._defaultKeybindsApplied = true
+  local cells = mode.cells
+  if cells then
+    for i = 1, #cells do
+      local cell = cells[i]
+      local cmd = bindingCommand(cell.bar, cell.index)
+      if cell.pad and not bindingAlready(cmd, cell.pad) then
+        if SetBinding(cell.pad, cmd) then
+          changed = true
+        end
+      end
+    end
+  end
+  if padOk then
+    d._defaultKeybindsApplied = token
+  end
   if changed and SaveBindings and GetCurrentBindingSet then
     pcall(SaveBindings, GetCurrentBindingSet())
   end
@@ -1442,6 +1641,7 @@ function AB:EnsureLeftBlock()
   if not block then
     block = CreateFrame("Frame", "ChukieUi_LeftBarsBlock", UIParent)
     block:EnableMouse(false)
+    block:SetMovable(true)
     self._leftBlock = block
   end
   block:SetFrameStrata(LEFT_BLOCK_STRATA)
@@ -1522,6 +1722,216 @@ function AB:ResetLeftButtonAlphas()
   end
 end
 
+--- El pliegue tiene que ser seguro: en combate un clic normal no puede ocultar estos botones.
+--- `skipclick` lo pone el arrastre, también en código seguro, para que mover no pliegue.
+local PAD_TOGGLE_CLICK = [[
+  if self:GetAttribute("skipclick") then
+    self:SetAttribute("skipclick", false)
+    return
+  end
+  local pad = self:GetFrameRef("pad")
+  if not pad then return end
+  if pad:IsShown() then
+    pad:Hide()
+  else
+    pad:Show()
+  end
+  self:SetAttribute("padshown", pad:IsShown() and true or false)
+]]
+
+local PAD_TOGGLE_DRAG = [[
+  self:SetAttribute("skipclick", true)
+]]
+
+local function padToggleLocked()
+  return db().keyzenPadLocked ~= false
+end
+
+local function applyPadToggleChrome(toggle, locked)
+  if toggle.Border then
+    if locked then
+      toggle.Border:SetColorTexture(0.72, 0.6, 0.22, 0.95)
+    else
+      toggle.Border:SetColorTexture(0.2, 0.75, 0.32, 0.95)
+    end
+  end
+  if locked or (InCombatLockdown and InCombatLockdown()) then
+    toggle:RegisterForDrag()
+  else
+    toggle:RegisterForDrag("LeftButton")
+  end
+  if toggle.EnableMouseWheel then
+    pcall(toggle.EnableMouseWheel, toggle, not locked)
+  end
+end
+
+local function showPadToggleTip(toggle)
+  GameTooltip:SetOwner(toggle, "ANCHOR_RIGHT")
+  local shown = toggle:GetAttribute("padshown")
+  local locked = padToggleLocked()
+  GameTooltip:SetText((shown == true or shown == 1) and "Ocultar botonera" or "Mostrar botonera")
+  GameTooltip:AddLine(locked and "Clic derecho: desbloquear" or "Clic derecho: bloquear", 1, 1, 1)
+  if not locked then
+    GameTooltip:AddLine("Arrastrá con el clic izquierdo para mover.", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Rueda: zoom, con este botón fijo.", 0.8, 0.8, 0.8)
+  end
+  GameTooltip:Show()
+end
+
+--- La rueda cambia el tamaño de toda la botonera y corrige el offset para que
+--- el botón de la esquina siga en el mismo punto de la pantalla.
+local function zoomKeyzenPad(toggle, delta)
+  if not toggle or padToggleLocked() or (InCombatLockdown and InCombatLockdown()) then
+    return
+  end
+  local d = db()
+  local old = math.max(18, math.min(64, tonumber(d.leftButtonSize) or 36))
+  local new = math.max(18, math.min(64, old + (delta > 0 and 2 or -2)))
+  if new == old then
+    return
+  end
+  local ax, ay = toggle:GetCenter()
+  local aScale = toggle:GetEffectiveScale() or 1
+  if ax and ay then
+    ax, ay = ax * aScale, ay * aScale
+  end
+  d.leftButtonSize = new
+  AB:Refresh()
+  if not ax or not ay then
+    return
+  end
+  local bx, by = toggle:GetCenter()
+  local bScale = toggle:GetEffectiveScale() or 1
+  local parentScale = UIParent:GetEffectiveScale() or 1
+  if not bx or not by or parentScale == 0 then
+    return
+  end
+  bx, by = bx * bScale, by * bScale
+  d.leftOffsetX = clampLeftOffset((tonumber(d.leftOffsetX) or 0) + (ax - bx) / parentScale)
+  d.leftOffsetY = clampLeftOffset((tonumber(d.leftOffsetY) or 0) + (ay - by) / parentScale)
+  AB:Refresh()
+end
+
+local function saveBlockCenter(block)
+  local cx, cy = block:GetCenter()
+  local ux, uy = UIParent:GetCenter()
+  if not cx or not cy or not ux or not uy then
+    return
+  end
+  local scale = block:GetEffectiveScale() or 1
+  local parentScale = UIParent:GetEffectiveScale() or 1
+  if parentScale == 0 then
+    return
+  end
+  local offX = clampLeftOffset(((cx * scale) - (ux * parentScale)) / parentScale)
+  local offY = clampLeftOffset(((cy * scale) - (uy * parentScale)) / parentScale)
+  local d = db()
+  d.leftOffsetX = offX
+  d.leftOffsetY = offY
+  block:ClearAllPoints()
+  block:SetPoint("CENTER", UIParent, "CENTER", offX, offY)
+end
+
+local function syncPadToggleLabel(toggle, shown)
+  if toggle.Label then
+    toggle.Label:SetText(shown and "–" or "+")
+  end
+end
+
+function AB:EnsureKeyzenPad(block)
+  local pad = self._keyzenPad
+  if not pad then
+    pad = CreateFrame("Frame", "ChukieUi_KeyzenPad", block, "SecureHandlerBaseTemplate")
+    pad:EnableMouse(false)
+    self._keyzenPad = pad
+  elseif pad:GetParent() ~= block then
+    pad:SetParent(block)
+  end
+  pad:ClearAllPoints()
+  pad:SetAllPoints(block)
+  pad:SetFrameStrata(LEFT_BLOCK_STRATA)
+  pad:SetFrameLevel(LEFT_BLOCK_LEVEL + 4)
+
+  local toggle = self._keyzenToggle
+  if not toggle then
+    toggle = CreateFrame("Button", "ChukieUi_KeyzenPadToggle", block, "SecureHandlerClickTemplate,SecureHandlerDragTemplate")
+    toggle:RegisterForClicks("LeftButtonUp")
+    toggle:SetFrameRef("pad", pad)
+    toggle:SetAttribute("_onclick", PAD_TOGGLE_CLICK)
+    toggle:SetAttribute("_ondragstart", PAD_TOGGLE_DRAG)
+    local border = toggle:CreateTexture(nil, "BORDER")
+    border:SetAllPoints()
+    border:SetColorTexture(0.72, 0.6, 0.22, 0.95)
+    toggle.Border = border
+    local bg = toggle:CreateTexture(nil, "BACKGROUND")
+    bg:SetPoint("TOPLEFT", 1, -1)
+    bg:SetPoint("BOTTOMRIGHT", -1, 1)
+    bg:SetColorTexture(0.06, 0.06, 0.06, 0.94)
+    toggle.Bg = bg
+    local label = toggle:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    label:SetPoint("CENTER", 0, 1)
+    toggle.Label = label
+    toggle:SetScript("OnAttributeChanged", function(self, key, value)
+      if key ~= "padshown" then
+        return
+      end
+      local shown = value == true or value == 1
+      db().keyzenPadHidden = not shown
+      syncPadToggleLabel(self, shown)
+    end)
+    toggle:SetScript("OnEnter", function(self)
+      self.Bg:SetColorTexture(0.16, 0.14, 0.08, 0.96)
+      showPadToggleTip(self)
+    end)
+    toggle:SetScript("OnLeave", function(self)
+      self.Bg:SetColorTexture(0.06, 0.06, 0.06, 0.94)
+      GameTooltip:Hide()
+    end)
+    toggle:SetScript("OnMouseDown", function(self)
+      self.Label:SetPoint("CENTER", 1, 0)
+    end)
+    toggle:SetScript("OnMouseUp", function(self, button)
+      self.Label:SetPoint("CENTER", 0, 1)
+      if button ~= "RightButton" then
+        return
+      end
+      local d = db()
+      d.keyzenPadLocked = d.keyzenPadLocked == false
+      applyPadToggleChrome(self, d.keyzenPadLocked ~= false)
+      if GameTooltip:IsOwned(self) then
+        showPadToggleTip(self)
+      end
+    end)
+    toggle:HookScript("OnDragStart", function(self)
+      local host = self._chukieBlock
+      if not host or padToggleLocked() or (InCombatLockdown and InCombatLockdown()) then
+        return
+      end
+      host:StartMoving()
+    end)
+    toggle:HookScript("OnDragStop", function(self)
+      local host = self._chukieBlock
+      if not host then
+        return
+      end
+      host:StopMovingOrSizing()
+      saveBlockCenter(host)
+    end)
+    toggle:SetScript("OnMouseWheel", function(self, wheelDelta)
+      zoomKeyzenPad(self, wheelDelta)
+    end)
+    self._keyzenToggle = toggle
+  elseif toggle:GetParent() ~= block then
+    toggle:SetParent(block)
+    toggle:SetFrameRef("pad", pad)
+  end
+  toggle._chukieBlock = block
+  toggle:SetFrameStrata(LEFT_BLOCK_STRATA)
+  toggle:SetFrameLevel(LEFT_BLOCK_LEVEL + 12)
+  applyPadToggleChrome(toggle, padToggleLocked())
+  return pad, toggle
+end
+
 function AB:LayoutLeftBars()
   local d = db()
   if not self.IsEnabled() or d.leftEnabled == false then
@@ -1539,7 +1949,11 @@ function AB:LayoutLeftBars()
   end
 
   local block = self:EnsureLeftBlock()
-  local numButtons = LEFT_BUTTONS_PER_BAR
+  local mode = padMode()
+  local placed = mode.flow == "placed" and type(mode.cells) == "table"
+  local numButtons = math.max(1, math.min(LEFT_BUTTONS_PER_BAR, tonumber(mode.buttonsPerBar) or LEFT_BUTTONS_PER_BAR))
+  local cols = math.max(1, math.min(numButtons, tonumber(mode.columns) or numButtons))
+  local columns = mode.flow == "column"
   local size = math.max(18, math.min(64, tonumber(d.leftButtonSize) or 36))
   local gap = math.max(0, math.min(16, tonumber(d.leftSpacing) or 2))
   local barGap = math.max(0, math.min(24, tonumber(d.leftBarSpacing) or 4))
@@ -1551,7 +1965,7 @@ function AB:LayoutLeftBars()
   for i = 1, #LEFT_BAR_IDS do
     local id = LEFT_BAR_IDS[i]
     local bar = self:EnsureBar(id, numButtons)
-    layoutBarButtons(bar, numButtons, size, gap)
+    layoutBarButtons(bar, cols, size, gap)
     if bar:GetParent() ~= block then
       bar:SetParent(block)
     end
@@ -1560,11 +1974,32 @@ function AB:LayoutLeftBars()
     bar:SetFrameLevel(LEFT_BLOCK_LEVEL + 5)
     bar:Show()
     bars[i] = bar
-    totalW = math.max(totalW, bar:GetWidth())
-    totalH = totalH + bar:GetHeight()
-    if i < #LEFT_BAR_IDS then
-      totalH = totalH + barGap
+    if placed then
+      --- El tamaño lo marca la grilla de celdas, no cada fila.
+    elseif columns then
+      totalH = math.max(totalH, bar:GetHeight())
+      totalW = totalW + bar:GetWidth()
+      if i < #LEFT_BAR_IDS then
+        totalW = totalW + barGap
+      end
+    else
+      totalW = math.max(totalW, bar:GetWidth())
+      totalH = totalH + bar:GetHeight()
+      if i < #LEFT_BAR_IDS then
+        totalH = totalH + barGap
+      end
     end
+  end
+
+  if placed then
+    local gridCols, gridRows = 1, 1
+    for i = 1, #mode.cells do
+      local cell = mode.cells[i]
+      gridCols = math.max(gridCols, (cell.col or 0) + 1)
+      gridRows = math.max(gridRows, (cell.row or 0) + 1)
+    end
+    totalW = gridCols * size + math.max(0, gridCols - 1) * gap
+    totalH = gridRows * size + math.max(0, gridRows - 1) * barGap
   end
 
   --- El centro del bloque queda en el centro de la pantalla más el offset elegido.
@@ -1573,15 +2008,106 @@ function AB:LayoutLeftBars()
   block:SetPoint("CENTER", UIParent, "CENTER", offX, offY)
   block:Show()
 
-  self:LayoutVehicleExitButton(bars[1], size, barGap)
+  self:LayoutVehicleExitButton(placed and block or bars[1], size, barGap)
 
-  -- Barra 1 arriba → 4 abajo (como Dominos en el screenshot).
-  local y = 0
-  for i = 1, #bars do
-    local bar = bars[i]
-    bar:ClearAllPoints()
-    bar:SetPoint("TOP", block, "TOP", 0, -y)
-    y = y + bar:GetHeight() + barGap
+  if placed then
+    local pad, toggle = self:EnsureKeyzenPad(block)
+    for i = 1, #mode.cells do
+      local cell = mode.cells[i]
+      local bar = bars[cell.bar]
+      local btn = bar and bar.buttons and bar.buttons[cell.index]
+      if btn then
+        if btn:GetParent() ~= pad then
+          btn:SetParent(pad)
+        end
+        btn:ClearAllPoints()
+        applyButtonSize(btn, size)
+        btn:SetPoint(
+          "TOPLEFT",
+          block,
+          "TOPLEFT",
+          (cell.col or 0) * (size + gap),
+          -((cell.row or 0) * (size + barGap))
+        )
+        btn._chukieJoyLabel = cell.label
+        btn._chukiePadKey = cell.pad
+        if not InCombatLockdown() then
+          btn:SetAttribute("statehidden", false)
+        end
+        btn:Show()
+        updateHotkeyText(btn)
+      end
+    end
+    --- Esquina inferior izquierda: el hueco bajo JOY #23, a la izquierda de JOY #24.
+    toggle:ClearAllPoints()
+    toggle:SetSize(size, size)
+    local font, _, flags = toggle.Label:GetFont()
+    toggle.Label:SetFont(font, math.max(14, math.floor(size * 0.7)), flags or "OUTLINE")
+    --- Los botones del keypad están escalados y su offset se achica en esa proporción;
+    --- el pliegue no tiene escala, así que se le aplica la misma para quedar en la fila.
+    local rowScale = 1
+    local ref = bars[4] and bars[4].buttons and bars[4].buttons[1]
+    if ref and ref:GetScale() and ref:GetScale() > 0 then
+      rowScale = ref:GetScale()
+    end
+    toggle:SetPoint("TOPLEFT", block, "TOPLEFT", 0, -(4 * (size + barGap)) * rowScale)
+    local shown = d.keyzenPadHidden ~= true
+    if shown then
+      pad:Show()
+    else
+      pad:Hide()
+    end
+    toggle:SetAttribute("padshown", shown)
+    syncPadToggleLabel(toggle, shown)
+    toggle:Show()
+    for i = 1, #bars do
+      bars[i]:Hide()
+    end
+  elseif columns then
+    --- Torres de izquierda a derecha: la barra 1 es la primera columna.
+    local x = 0
+    for i = 1, #bars do
+      local bar = bars[i]
+      bar:ClearAllPoints()
+      bar:SetPoint("TOPLEFT", block, "TOPLEFT", x, 0)
+      x = x + bar:GetWidth() + barGap
+    end
+  else
+    --- Barra 1 arriba → 4 abajo.
+    local y = 0
+    for i = 1, #bars do
+      local bar = bars[i]
+      bar:ClearAllPoints()
+      bar:SetPoint("TOP", block, "TOP", 0, -y)
+      y = y + bar:GetHeight() + barGap
+    end
+  end
+  if not placed then
+    if self._keyzenToggle then
+      self._keyzenToggle:Hide()
+    end
+    if self._keyzenPad then
+      self._keyzenPad:Hide()
+    end
+    for i = 1, #bars do
+      local bar = bars[i]
+      local buttons = bar and bar.buttons
+      if buttons then
+        for b = 1, #buttons do
+          local btn = buttons[b]
+          if btn then
+            if btn:GetParent() ~= bar then
+              btn:SetParent(bar)
+            end
+            if btn._chukieJoyLabel or btn._chukiePadKey then
+              btn._chukieJoyLabel = nil
+              btn._chukiePadKey = nil
+              updateHotkeyText(btn)
+            end
+          end
+        end
+      end
+    end
   end
   self:ApplyLeftButtonAlphas()
 end

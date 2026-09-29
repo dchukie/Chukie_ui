@@ -1,7 +1,7 @@
 ## Interface: 120100, 120007
 ## Title: Chukie UI
 ## Notes: Ajustes de interfaz (Retail 12.1 Interface 120100; compat 12.0.7).
-## Version: 0.5.7
+## Version: 0.5.8
 ## OptionalDeps: Masque, DialogueUI, LibSharedMedia-3.0, SharedMedia
 ## SavedVariables: ChukieUiDB
 
@@ -19,6 +19,7 @@ HorizontalCompass.lua
 TeleportCatalog.lua
 DynamicReservedSlots.lua
 MiniActionBar.lua
+ButtonPadModes.lua
 ActionBars.lua
 ActionBarLayouts.lua
 Backup.lua

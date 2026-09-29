@@ -128,11 +128,14 @@ local function applyLeftAlphaPercent(barId, buttonIndex, value)
   end
 end
 
---- Canvas 6 × 4 que imita las barras izquierdas. Cada celda previsualiza su icono y
+--- Canvas que imita la botonera principal. Cada celda previsualiza su icono y
 --- controla la opacidad del botón real; el texto queda opaco para que 10 % siga legible.
+--- Nostromo la muestra en filas; Keyzen, en torres. Las celdas son las mismas 24.
 local function createLeftButtonAlphaCanvas()
   local panel = CreateFrame("Frame")
   panel.cells = {}
+  panel.columnLabels = {}
+  panel.rowLabels = {}
 
   local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   title:SetPoint("TOPLEFT", 20, -18)
@@ -143,7 +146,7 @@ local function createLeftButtonAlphaCanvas()
   help:SetWidth(520)
   help:SetJustifyH("LEFT")
   help:SetText(
-    "La cuadrícula reproduce las 4 barras de 6 botones. Cada deslizador ajusta el botón "
+    "La cuadrícula reproduce los 24 botones del modo activo. Cada deslizador ajusta el botón "
       .. "que tiene encima (10–100 %) y la caja de abajo acepta el valor exacto: mover el "
       .. "deslizador actualiza la caja y escribir en la caja mueve el deslizador. En combate "
       .. "se guarda el valor y se aplica al terminar."
@@ -158,15 +161,16 @@ local function createLeftButtonAlphaCanvas()
   local cellWidth, rowHeight = 76, 108
   for column = 1, 6 do
     local label = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("TOP", panel, "TOPLEFT", left + (column - 1) * cellWidth + 25, top + 20)
     label:SetText("Botón " .. column)
+    panel.columnLabels[column] = label
+  end
+  for row = 1, 6 do
+    local rowLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    rowLabel:SetText("Barra " .. row)
+    panel.rowLabels[row] = rowLabel
   end
 
   for barId = 1, 4 do
-    local rowLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    rowLabel:SetPoint("RIGHT", panel, "TOPLEFT", left - 12, top - (barId - 1) * rowHeight - 28)
-    rowLabel:SetText("Barra " .. barId)
-
     for buttonIndex = 1, 6 do
       local cellBarId, cellButtonIndex = barId, buttonIndex
       local x = left + (buttonIndex - 1) * cellWidth
@@ -299,6 +303,7 @@ local function createLeftButtonAlphaCanvas()
       box:SetScript("OnLeave", GameTooltip_Hide)
 
       panel.cells[#panel.cells + 1] = {
+        frame = cell,
         barId = cellBarId,
         buttonIndex = cellButtonIndex,
         action = (cellBarId - 1) * 12 + cellButtonIndex,
@@ -309,7 +314,56 @@ local function createLeftButtonAlphaCanvas()
     end
   end
 
+  function panel:ApplyPadMode()
+    local mode = ns.ButtonPad and ns.ButtonPad.Current and ns.ButtonPad.Current()
+    local placed = mode and mode.flow == "placed"
+    if placed then
+      title:SetText("Transparencia individual — modo Keyzen")
+    else
+      title:SetText("Transparencia individual — modo Nostromo")
+    end
+    for i = 1, 6 do
+      local col = self.columnLabels[i]
+      local row = self.rowLabels[i]
+      col:SetShown(not placed)
+      row:SetShown(not placed and i <= 4)
+      if not placed then
+        col:ClearAllPoints()
+        col:SetPoint("TOP", self, "TOPLEFT", left + (i - 1) * cellWidth + 25, top + 20)
+        col:SetText("Botón " .. i)
+        row:ClearAllPoints()
+        row:SetPoint("RIGHT", self, "TOPLEFT", left - 12, top - (i - 1) * rowHeight - 28)
+        row:SetText("Barra " .. i)
+      end
+    end
+    for i = 1, #self.cells do
+      local cell = self.cells[i]
+      local padCell = placed and ns.ButtonPad.Cell(mode, cell.barId, cell.buttonIndex)
+      local x, y
+      if padCell then
+        x = left + padCell.col * cellWidth
+        y = top - padCell.row * rowHeight
+      else
+        x = left + (cell.buttonIndex - 1) * cellWidth
+        y = top - (cell.barId - 1) * rowHeight
+      end
+      cell.frame:ClearAllPoints()
+      cell.frame:SetPoint("TOPLEFT", x, y)
+      if not cell.joyText then
+        cell.joyText = cell.frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        cell.joyText:SetPoint("BOTTOM", cell.preview, "TOP", 0, 1)
+      end
+      if padCell and padCell.label then
+        cell.joyText:SetText(padCell.label)
+        cell.joyText:Show()
+      else
+        cell.joyText:Hide()
+      end
+    end
+  end
+
   function panel:Refresh()
+    self:ApplyPadMode()
     for i = 1, #self.cells do
       local cell = self.cells[i]
       local alpha = 100
@@ -2150,12 +2204,56 @@ function ns.RegisterConfigPanel()
     Settings.CreateCheckbox(
       barsCategory,
       setting,
-      "En el primer uso (o al reactivar esta opción) asigna: barra1=12345, barra2=QWERTY, barra3=ASDFG, barra4=ZXCV. "
-        .. "También en Esc → Teclado → Chukie UI - Barras 1–4. Desmarcá y volvé a marcar para reaplicar."
+      "En el primer uso de cada formato asigna sus teclas. Los dos usan 12345 / QWERT / ASDFG / ZXCV. "
+        .. "En Keyzen esas teclas caen en la posición del keypad (9=R, 4=F, 18=C, y 10 11 12 13 5 = barra 1). "
+        .. "No pisa una tecla que ese botón ya tenga. También en Esc → Teclado → Chukie UI - Barras 1–4."
     )
   end
 
-  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Bloque 6 × 4 (barras 1–4)"))
+  barsLayout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Botonera principal"))
+  do
+    local function dropdownData()
+      local c = Settings.CreateControlTextContainer()
+      local modes = ns.ButtonPad and ns.ButtonPad.Modes or {}
+      for i = 1, #modes do
+        c:Add(modes[i].id, modes[i].label)
+      end
+      return c:GetData()
+    end
+    local function get()
+      local id = actionBarsDB().buttonPadMode
+      if ns.ButtonPad and ns.ButtonPad.Get then
+        return ns.ButtonPad.Get(id).id
+      end
+      return "nostromo"
+    end
+    local function set(value)
+      local mode = ns.ButtonPad and ns.ButtonPad.Get and ns.ButtonPad.Get(value)
+      actionBarsDB().buttonPadMode = mode and mode.id or "nostromo"
+      refreshActionBars()
+      if ns._leftAlphaCanvas and ns._leftAlphaCanvas.Refresh then
+        ns._leftAlphaCanvas:Refresh()
+      end
+    end
+    local setting = Settings.RegisterProxySetting(
+      barsCategory,
+      "ChukieUi_AB_buttonPadMode",
+      Settings.VarType.String,
+      "Formato de la botonera",
+      "nostromo",
+      get,
+      set
+    )
+    Settings.CreateDropdown(
+      barsCategory,
+      setting,
+      dropdownData,
+      "Nostromo es el setup de 4 filas, teclas 12345 / QWERT / ASDFG / ZXCV. "
+        .. "Keyzen muestra solo esos botones, centrados y con la forma del keypad. El perfil del aparato se deja en JOY: JOY #10 es el botón 1. "
+        .. "10 11 12 13 5 son los cinco primeros de la barra 1 (misión, vehículo y vuelo). "
+        .. "El stick, la cruceta y JOY #20–#22 no entran."
+    )
+  end
   addBoolActionBars(
     barsCategory,
     "ChukieUi_AB_leftEnabled",
@@ -2166,8 +2264,8 @@ function ns.RegisterConfigPanel()
   )
   barsLayout:AddInitializer(
     CreateSettingsListSectionHeaderInitializer(
-      "Fijas en 6 botones por fila (matriz 6 × 4). El centro del bloque se ancla al centro "
-        .. "de la pantalla; Offset X/Y lo mueven desde ahí."
+      "24 botones, siempre las mismas ranuras. Nostromo los pone en 4 filas; Keyzen, en la forma del keypad. "
+        .. "El centro del bloque se ancla al centro de la pantalla; Offset X/Y lo mueven desde ahí."
     )
   )
   addIntSliderActionBars(
@@ -2197,7 +2295,7 @@ function ns.RegisterConfigPanel()
     "ChukieUi_AB_leftBarGap",
     "leftBarSpacing",
     "Espacio entre filas",
-    "Separación vertical entre barras 1–4.",
+    "En Nostromo separa las filas. En Keyzen separa las filas del keypad.",
     0,
     24,
     1,
@@ -2227,8 +2325,9 @@ function ns.RegisterConfigPanel()
   )
 
   local alphaCanvas = createLeftButtonAlphaCanvas()
+  ns._leftAlphaCanvas = alphaCanvas
   local alphaCategory, alphaLayout =
-    Settings.RegisterCanvasLayoutSubcategory(barsCategory, alphaCanvas, "Transparencia 6 × 4")
+    Settings.RegisterCanvasLayoutSubcategory(barsCategory, alphaCanvas, "Transparencia de la botonera")
   alphaCategory.ID = "ChukieUi_ActionBars_AlphaGrid"
   if alphaLayout and alphaLayout.AddAnchorPoint then
     alphaLayout:AddAnchorPoint("TOPLEFT", 0, 0)

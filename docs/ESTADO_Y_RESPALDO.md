@@ -1,7 +1,7 @@
 # Chukie UI — estado del proyecto y respaldo
 
-**Instantánea:** 2026-09-11
-**Versión en `Chukie_Ui.toc`:** 0.5.7
+**Instantánea:** 2026-09-28
+**Versión en `Chukie_Ui.toc`:** 0.5.8
 **Interface WoW:** `120100, 120007` (Retail **12.1** + compat 12.0.7)  
 **Cliente local detectado:** `12.1.0.69382` (`WoW.exe` / `.build.info`)
 
@@ -14,7 +14,7 @@ Este documento describe el estado del addon y cómo restaurarlo.
 | Campo | Valor |
 |-------|--------|
 | `## Interface` | `120100, 120007` |
-| `## Version` | `0.5.7` |
+| `## Version` | `0.5.8` |
 | Branch tipica | `dev` |
 
 Hito **0.4.9** (2026-08-21): versión que corre bien en cliente. Incluye party grid clickeable,
@@ -41,6 +41,13 @@ Versión **0.5.3**: la distancia al marco anfitrión y los ajustes X/Y de PartyG
 alejarse media pantalla o quedar por encima del propio marco. Los sliders de la ventana
 propia aceptan rueda del mouse, que mueve de a un paso: con 180 px de barra y 1200 de
 recorrido el arrastre solo sirve para el grueso.
+
+Versión **0.5.8**: la botonera principal tiene formatos cargables. **Nostromo** guarda el setup
+de 4 filas × 6 (teclas 12345 / QWERT / ASDFG / ZXCV). **Keyzen** dibuja los mismos 24 botones
+con la forma del keypad y esas mismas teclas. El perfil del aparato tiene que mandar teclado:
+WoW ve el Keyzen como XInput y no recibe los botones JOY. En la esquina inferior izquierda hay
+un botón de pliegue (clic izquierdo), bloqueo (clic derecho: amarillo fijo, verde movible) y
+zoom con la rueda cuando está verde. Detalle en «Formatos de botonera».
 
 Versión **0.5.7**: la barra 1 vuelve a paginar cuando aparece una barra de misión, evento,
 vehículo o forma temporal. La página la resuelve el entorno seguro preguntando por la barra que
@@ -303,6 +310,42 @@ catálogo`. Así una temporada futura se detecta sin adivinar.
 en el libro pero no responden a la primera vía.
 
 ---
+
+## Formatos de botonera (0.5.8)
+
+`ButtonPadModes.lua` define el formato. Se elige en Barras de acción → Formato de la botonera
+(`actionBars.buttonPadMode`). Las 24 ranuras no cambian: barra N, botón i sigue siendo el slot
+`(N−1)×12+i`. En pantalla solo se ven los botones.
+
+**Nostromo** (`flow = row`): 4 filas de 6. Teclas `1 2 3 4 5` / `Q W E R T` / `A S D F G` /
+`Z X C V`. El sexto botón de cada fila no tiene tecla por defecto.
+
+**Keyzen** (`flow = placed`): la misma grilla de habilidades, centrada, con la forma del keypad.
+Entran JOY #5, #26 y #27 y todo lo que está a su izquierda. Quedan afuera el stick, la cruceta
+y JOY #20, #21 y #22. La fila 10 11 12 13 5 es la barra 1, botones 1–5: ahí caen misión,
+vehículo y vuelo. El vuelo además pagina las barras 2–4 (`[bonusbar:5]`). El resto sigue las
+teclas de Nostromo (9=R, 4=F, 18=C).
+
+El perfil del Keyzen en modo JOY no llega al juego. WoW enumera `Azeron Keypad - XInput`
+(vendor 5840, product 5098, 21 botones) y, manteniendo apretado JOY #10 y JOY #1 durante
+varios segundos, `C_GamePad.GetDeviceRawState` no marca ningún botón. No existe un atajo
+llamado `JOY10`. `/chukieui joy` escucha 6 segundos y lista el aparato y los índices crudos
+que sí cambian. Para que el botón físico dispare la habilidad, el perfil del aparato tiene
+que mandar la tecla de Nostromo de esa celda (`1` en el que el software llama JOY #10, y el
+resto igual).
+
+En Keyzen, el hueco de abajo a la izquierda (columna 0, fila 4, bajo JOY #23) es un botón:
+
+- Clic izquierdo pliega o muestra la botonera. Plegada no recibe clics; las teclas siguen
+  lanzando las habilidades. El estado queda en `keyzenPadHidden`.
+- Clic derecho alterna bloqueo. Amarillo (`keyzenPadLocked`, el default) no se mueve. Verde
+  permite arrastrar ese botón: al soltar se guardan `leftOffsetX` / `leftOffsetY`.
+- Con el botón verde, la rueda encima de él cambia `leftButtonSize` de a 2 px (18–64) y
+  corrige el offset para que ese botón siga en el mismo punto de la pantalla. El resto de la
+  botonera crece o se encoge alrededor.
+
+El pliegue corre en un handler seguro, así que también funciona en combate. Mover y hacer
+zoom no: en combate no se puede reubicar un marco que contiene botones seguros.
 
 ## Página de la situación resuelta en el entorno seguro (0.5.7)
 

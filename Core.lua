@@ -172,7 +172,13 @@ local defaults = {
   actionBars = {
     enabled = true,
     leftEnabled = true,
-    --- Las barras 1–4 son una matriz fija de 6 × 4.
+    --- Formato de la botonera principal. `nostromo` es el setup de 4 filas × 6.
+    buttonPadMode = "nostromo",
+    --- Modo Keyzen: la botonera arranca visible. El botón de la esquina la pliega.
+    keyzenPadHidden = false,
+    --- Amarillo: la botonera no se mueve. Verde: se arrastra desde ese botón.
+    keyzenPadLocked = true,
+    --- Las barras 1–4 son 24 botones. El modo decide si van en filas o en torres.
     --- Cada fila/columna puede tener su propia opacidad (10–100 %).
     leftButtonAlphaPercent = {},
     leftButtonSize = 36,
@@ -828,6 +834,14 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     else
       print("|cff00ff00Chukie UI|r: ranuras 1–180 — " .. abl:GetStatusText())
       print("  Uso: /chukieui acciones guardar | restaurar | borrar")
+    end
+    return
+  end
+  if msg == "joy" then
+    if ns.ActionBars and ns.ActionBars.PrintJoyDiagnostics then
+      ns.ActionBars:PrintJoyDiagnostics()
+    else
+      print("|cffff9900Chukie UI|r: diagnóstico de mando no disponible.")
     end
     return
   end

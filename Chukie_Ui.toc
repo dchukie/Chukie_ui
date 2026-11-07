@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: Chukie UI
-## Notes: WoW Forever (Interface 16001). Núcleo, perfiles y botonera Keyzen.
+## Notes: WoW Forever (Interface 16001). Núcleo, botonera Keyzen y panel derecho.
 ## Version: 0.5.8
 ## SavedVariables: ChukieUiDB
 
@@ -8,6 +8,11 @@ Libs\LibStub\LibStub.lua
 
 Core.lua
 Profiles.lua
+PanelCore.lua
+RightPanel.lua
+RightStrip.lua
+MinimapBar.lua
+HorizontalCompass.lua
 ButtonPadModes.lua
 ActionBars.lua
 DragSlots.lua

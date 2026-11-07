@@ -671,6 +671,17 @@ function ns.Profile:MigrateActionBarsLeftCenterAnchor()
   a.leftOffsetY = 0
 end
 
+--- El primer guardado de Forever copió el default de retail (limpieza prendida)
+--- antes de que existiera el reemplazo. Se apaga una sola vez.
+function ns.Profile:MigrateForeverMinimapStrip()
+  local m = self:GetActive().minimapBar
+  if not m or m._foreverStripOff then
+    return
+  end
+  m._foreverStripOff = true
+  m.stripBlizzardMinimap = false
+end
+
 function ns.Profile:Initialize()
   self:Migrate()
   self:MigrateMinimapBarPixelOptions()
@@ -680,6 +691,7 @@ function ns.Profile:Initialize()
   self:MigrateMinimapBarPixelOptions()
   self:MigrateActionBarsLeftButtons()
   self:MigrateActionBarsLeftCenterAnchor()
+  self:MigrateForeverMinimapStrip()
   self._committedName = self:GetCurrentName()
   self:EnsureDialogs()
 end

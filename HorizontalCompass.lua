@@ -390,12 +390,26 @@ local function strataIndex(frame)
     return 0
   end
   local s = frame:GetFrameStrata()
+  if isSecret(s) then
+    return 0
+  end
   for i = 1, #STRATA_ORDER do
     if STRATA_ORDER[i] == s then
       return i
     end
   end
   return 0
+end
+
+local function frameLevel(frame)
+  if not frame or not frame.GetFrameLevel then
+    return 0
+  end
+  local level = frame:GetFrameLevel()
+  if isSecret(level) then
+    return 0
+  end
+  return tonumber(level) or 0
 end
 
 --[[ El minimapa vive en el mismo slot y se dibuja encima: al reparentar el host,
@@ -407,13 +421,7 @@ local function raiseAboveMinimap(host)
   -- Sin contar el propio host: si no, subiría un plano en cada layout.
   local idx = math.max(strataIndex(map), strataIndex(cluster), 2)
   local strata = STRATA_ORDER[math.min(idx + 1, #STRATA_ORDER)] or "HIGH"
-  local level = 0
-  if map and map.GetFrameLevel then
-    level = math.max(level, tonumber(map:GetFrameLevel()) or 0)
-  end
-  if cluster and cluster.GetFrameLevel then
-    level = math.max(level, tonumber(cluster:GetFrameLevel()) or 0)
-  end
+  local level = math.max(frameLevel(map), frameLevel(cluster))
   host:SetFrameStrata(strata)
   host:SetFrameLevel(level + 20)
 end

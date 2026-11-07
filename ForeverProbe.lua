@@ -37,6 +37,33 @@ local function auraContainerAvailable()
   return false
 end
 
+local function frameFlag(name)
+  return _G[name] ~= nil
+end
+
+local function microButtonNote()
+  if type(MICRO_BUTTONS) ~= "table" then
+    return "no"
+  end
+  return "sí (" .. tostring(#MICRO_BUTTONS) .. ")"
+end
+
+--- La ranura 145 es la primera de la barra 6. «sí, vacía» quiere decir que la función existe.
+local function hasAction145Note()
+  local fn = (C_ActionBar and C_ActionBar.HasAction) or HasAction
+  if type(fn) ~= "function" then
+    return "no"
+  end
+  local ok, has = pcall(fn, 145)
+  if not ok or (issecretvalue and issecretvalue(has)) then
+    return "no"
+  end
+  if has then
+    return "sí, con acción"
+  end
+  return "sí, vacía"
+end
+
 function ns.PrintForeverProbe()
   print("|cff00ff00Chukie UI|r — sonda Forever")
   if type(GetBuildInfo) == "function" then
@@ -67,6 +94,21 @@ function ns.PrintForeverProbe()
     { "GetSpecialization", type(GetSpecialization) == "function" },
     { "C_GamePad", type(C_GamePad) == "table" },
     { "C_GamePad.SetConfig", type(C_GamePad) == "table" and type(C_GamePad.SetConfig) == "function" },
+    { "MinimapCluster", frameFlag("MinimapCluster") },
+    { "Minimap", frameFlag("Minimap") },
+    { "MicroMenu", frameFlag("MicroMenu") },
+    { "MicroMenuContainer", frameFlag("MicroMenuContainer") },
+    { "MICRO_BUTTONS", type(MICRO_BUTTONS) == "table", microButtonNote() },
+    { "ExpansionLandingPageMinimapButton", frameFlag("ExpansionLandingPageMinimapButton") },
+    { "AddonCompartmentFrame", frameFlag("AddonCompartmentFrame") },
+    { "GameTimeFrame", frameFlag("GameTimeFrame") },
+    { "ChatFrame1EditBox", frameFlag("ChatFrame1EditBox") },
+    { "MultiBar5", frameFlag("MultiBar5") },
+    { "HasAction(145)", type((C_ActionBar and C_ActionBar.HasAction) or HasAction) == "function", hasAction145Note() },
+    { "ExtraActionButton1", frameFlag("ExtraActionButton1") },
+    { "PVEFrame", frameFlag("PVEFrame") },
+    { "LFDParentFrame", frameFlag("LFDParentFrame") },
+    { "LFGParentFrame", frameFlag("LFGParentFrame") },
   }
   for i = 1, #rows do
     local name, ok, note = rows[i][1], rows[i][2], rows[i][3]

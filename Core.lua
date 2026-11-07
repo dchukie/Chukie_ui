@@ -253,7 +253,8 @@ local defaults = {
     minimenuBarOffsetX = 0,
     --- Por botón: false = oculto; nil/true = visible (tabla dispersa).
     minimenuVisibility = {},
-    stripBlizzardMinimap = true,
+    --- Forever: la limpieza tapa correo, reloj y zona, y sus reemplazos no están cargados.
+    stripBlizzardMinimap = false,
     --- Barra de addons (px); cellSize/pad se rellenan al migrar perfiles antiguos.
     addonBarIconWidth = 34,
     addonBarIconHeight = 34,

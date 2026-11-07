@@ -119,12 +119,12 @@ Listo:
 - `git` 2.53.0 (Windows).
 - `gh` autenticado como `dchukie` (scopes `repo`, `workflow`).
 - Worktree limpio en `C:\chukie-dev\Chukie_ui-wow-forever` con la rama `wow-forever` publicada en `origin`. El checkout de retail (rama `dev`) no se tocó.
+- **`wow-forever` ya incluye `dev`.** El 2026-11-07 se mergeó `origin/dev` (`ab51ace`, v0.5.8) sobre la rama que salía de `main` (`79536e6`). El merge fue limpio, sin conflictos (commit `a14ce82`). El código del addon en esta rama es el de v0.5.8. Las ramas `main` y `dev` no se movieron.
 - Ruta del cliente Forever confirmada: `C:\Program Files (x86)\World of Warcraft\_forever_`.
 - Empaquetado: alcanza con `releases/pack_backup.ps1` (PowerShell, ya existe en `dev`). No hace falta instalar nada.
 
 Falta:
 - **Número de interface de Forever**: hay que leerlo en el juego con `/dump select(4, GetBuildInfo())`.
-- **La rama `wow-forever` sale de `main` (`79536e6`), que está 23 commits detrás de `dev` (`ab51ace`, v0.5.8).** El análisis de arriba es de `dev`. Antes de empezar el paso 1, hay que decidir si se trae `dev` a `wow-forever` (merge de `origin/dev`) o si se parte de `main`. Recomendado: merge de `dev`, porque es la versión que el usuario usa.
 - No hay `lua`/`luacheck` instalados. Son opcionales (chequeo de sintaxis fuera del juego); no se instalaron.
 - Escribir en `_forever_\Interface\AddOns` necesita permisos sobre `Program Files (x86)`. La forma de cargar el addon (copia, o un enlace de directorio desde el worktree) queda a decisión del usuario.
 

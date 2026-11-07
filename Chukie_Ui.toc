@@ -10,4 +10,5 @@ Core.lua
 Profiles.lua
 ButtonPadModes.lua
 ActionBars.lua
+DragSlots.lua
 ForeverProbe.lua

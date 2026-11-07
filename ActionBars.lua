@@ -2146,6 +2146,9 @@ function AB:LayoutLeftBars()
     end
   end
   self:ApplyLeftButtonAlphas()
+  if ns.DragSlots and ns.DragSlots.Layout and self._leftBlock and self._leftBlock:IsShown() then
+    ns.DragSlots:Layout(self._leftBlock, size, gap)
+  end
 end
 
 function AB:LayoutRightBar6()

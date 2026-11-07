@@ -11,6 +11,7 @@ Este documento es solo un plan. En esta pasada **no** se escribió código del a
 | Instalación WoW (raíz) | `C:\Program Files (x86)\World of Warcraft` | `.build.info` lista dos productos activos |
 | Cliente **Forever** | `C:\Program Files (x86)\World of Warcraft\_forever_` | `.flavor.info` = `wowf`; `Wow.exe` FileVersion `1.60.1.70862` |
 | Build Forever | `1.60.1.70862`, producto `wowf` (`.build.info`) | `gx.log`: "World of Warcraft Retail x86_64 1.60.1.70862" |
+| Interface Forever | `16001` | `/dump select(4, GetBuildInfo())` en el juego (Diego, captura) |
 | Cliente Retail (no es Forever) | `C:\Program Files (x86)\World of Warcraft\_retail_`, build `12.1.5.70783` | `.build.info` |
 | Addons Forever | `_forever_\Interface\AddOns` — **vacía** | listado directo |
 | Cuenta/personaje Forever | `_forever_\WTF\Account\DCHUKIE\91\Churie-Fasciglione` | sin addons propios; solo SavedVariables Blizzard |
@@ -22,9 +23,7 @@ Búsqueda acotada (profundidad 3) en `Program Files`, `Program Files (x86)`, `C:
 
 ### Versión de interface y API esperable
 
-- **Número `## Interface` de Forever: NO verificado.** No hay TOC de terceros en el cliente, no aparece en logs ni en `Config.wtf`, y los TOC de Blizzard están dentro del CASC. Primer paso de la implementación: entrar al juego y ejecutar
-  `/dump select(4, GetBuildInfo())` y `/dump WOW_PROJECT_ID, WOW_PROJECT_MAINLINE`.
-  Con una versión 1.60.1 el valor probable sigue el esquema `XYYZZ` → algo como `16001`, pero **no hay que asumirlo**.
+- **Número `## Interface` de Forever: 16001 (verificado).** Diego lo leyó en el juego con `/dump select(4, GetBuildInfo())`, que devuelve `16001` para WoW Forever (captura de pantalla de Diego, 2026-11-07). El TOC del addon en Forever tiene que llevar `## Interface: 16001`.
 - **El cliente es Mainline, no un Classic viejo.** Evidencia: `Wow.exe` contiene `EditModeLayoutConsts_Mainline`, `ItemScript_Mainline.cpp`, `C_GameRules.SetForeverExperiencePresetPreLogin`, `ForeverExperiencePreset`; los logs tienen `EditMode.log`, `Housing.log`; el personaje tiene SavedVariables de `Blizzard_DamageMeter`, `Blizzard_Professions`, `Blizzard_Communities`, y `AddOns.txt` habilita `Blizzard_ObjectiveTracker` y `Blizzard_CompactRaidFrames`. `Config.wtf` tiene `hasSelectedExperiencePreset "1"`.
 - Conclusión razonable: Forever es el motor/FrameXML de retail 12.x con un "preset de experiencia" (`C_GameRules`) que cambia reglas de juego y contenido. Hay que esperar **la API de retail 12.x** (Settings, Edit Mode, `C_Spell`, `C_UnitAuras`, `C_Container`, valores secretos, restricciones de combate de Midnight), pero con contenido distinto: puede no haber Míticas+ de temporada, teletransportes de temporada, Skyriding, especializaciones o talentos iguales. **Lo que más riesgo tiene** es la API nueva de 12.1 (`AuraContainer`) y todo lo que dependa de contenido de temporada.
 
@@ -99,7 +98,7 @@ Lo que se separa: Alertas/AuraPanel (bloque K) y PartyGrid (J) quedan aislados p
 
 ## 4. Orden de implementación (de a una parte)
 
-1. **A — Núcleo y sonda.** TOC Forever con `## Interface` verificado en el juego, `LibStub`, `Core` (solo arranque, perfiles, slash) y `Profiles`. Agregar `/chukieui forever` que imprima `GetBuildInfo()`, `WOW_PROJECT_ID` y qué existe: `C_UnitAuras`, `AuraContainer`, `issecretvalue`, `Settings`, `EditModeManagerFrame`, `C_ChallengeMode`, `C_ClassTalents`, `GetSpecialization`. **Criterio de entrega:** el addon aparece en la lista, carga sin errores de Lua y crea `ChukieUiDB`. Esta es la pieza más chica que se puede cargar sin arrastrar el resto.
+1. **A — Núcleo y sonda.** TOC Forever con `## Interface: 16001`, `LibStub`, `Core` (solo arranque, perfiles, slash) y `Profiles`. Agregar `/chukieui forever` que imprima `GetBuildInfo()`, `WOW_PROJECT_ID` y qué existe: `C_UnitAuras`, `AuraContainer`, `issecretvalue`, `Settings`, `EditModeManagerFrame`, `C_ChallengeMode`, `C_ClassTalents`, `GetSpecialization`. **Criterio de entrega:** el addon aparece en la lista, carga sin errores de Lua y crea `ChukieUiDB`. Esta es la pieza más chica que se puede cargar sin arrastrar el resto.
 2. **B — Combat Log.** Sumar `CombatLog.lua`; `/chukieui` para prender/apagar. Probar en una instancia.
 3. **C — Franja de oro y bolsas.** `PanelCore` + `RightStrip`, anclada a `UIParent`.
 4. **D — Opciones mínimas.** Panel de Settings nuevo con páginas solo para A–C.
@@ -124,7 +123,6 @@ Listo:
 - Empaquetado: alcanza con `releases/pack_backup.ps1` (PowerShell, ya existe en `dev`). No hace falta instalar nada.
 
 Falta:
-- **Número de interface de Forever**: hay que leerlo en el juego con `/dump select(4, GetBuildInfo())`.
 - No hay `lua`/`luacheck` instalados. Son opcionales (chequeo de sintaxis fuera del juego); no se instalaron.
 - Escribir en `_forever_\Interface\AddOns` necesita permisos sobre `Program Files (x86)`. La forma de cargar el addon (copia, o un enlace de directorio desde el worktree) queda a decisión del usuario.
 

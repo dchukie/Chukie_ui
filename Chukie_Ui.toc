@@ -8,13 +8,14 @@ Libs\LibStub\LibStub.lua
 
 Core.lua
 Profiles.lua
+Backup.lua
 PanelCore.lua
 RightPanel.lua
 RightStrip.lua
 MinimapBar.lua
 HorizontalCompass.lua
-SettingsPage.lua
 ButtonPadModes.lua
 ActionBars.lua
 DragSlots.lua
+SettingsPage.lua
 ForeverProbe.lua

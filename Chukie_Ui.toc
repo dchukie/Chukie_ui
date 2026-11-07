@@ -13,6 +13,7 @@ RightPanel.lua
 RightStrip.lua
 MinimapBar.lua
 HorizontalCompass.lua
+SettingsPage.lua
 ButtonPadModes.lua
 ActionBars.lua
 DragSlots.lua

@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: Chukie UI
-## Notes: Núcleo para WoW Forever (Interface 16001). Paso A: arranque, perfiles y /chukieui forever.
+## Notes: WoW Forever (Interface 16001). Núcleo, perfiles y botonera Keyzen.
 ## Version: 0.5.8
 ## SavedVariables: ChukieUiDB
 
@@ -8,4 +8,6 @@ Libs\LibStub\LibStub.lua
 
 Core.lua
 Profiles.lua
+ButtonPadModes.lua
+ActionBars.lua
 ForeverProbe.lua

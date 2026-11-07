@@ -172,8 +172,8 @@ local defaults = {
   actionBars = {
     enabled = true,
     leftEnabled = true,
-    --- Formato de la botonera principal. `nostromo` es el setup de 4 filas × 6.
-    buttonPadMode = "nostromo",
+    --- Formato de la botonera principal. En Forever arranca en Keyzen.
+    buttonPadMode = "keyzen",
     --- Modo Keyzen: la botonera arranca visible. El botón de la esquina la pliega.
     keyzenPadHidden = false,
     --- Amarillo: la botonera no se mueve. Verde: se arrastra desde ese botón.
@@ -187,12 +187,13 @@ local defaults = {
     --- Offsets desde el centro de la pantalla hasta el centro del bloque de barras 1–4.
     leftOffsetX = 0,
     leftOffsetY = 0,
-    --- Skyriding: barras 1–4 → páginas 8–11 ([bonusbar:5]).
-    skyridingPaging = true,
-    --- Vehículo / override / possess: la barra 1 muestra esas acciones.
-    vehiclePaging = true,
+    --- Skyriding: barras 1–4 → páginas 8–11 ([bonusbar:5]). Apagado en el primer corte de Forever.
+    skyridingPaging = false,
+    --- Vehículo / override / possess: la barra 1 muestra esas acciones. Apagado en el primer corte de Forever.
+    vehiclePaging = false,
     --- Barras de bonus 1–4 (páginas 7–10): formas, sigilo y habilidades temporales de misión.
-    bonusPaging = true,
+    --- Apagado en el primer corte de Forever: esas situaciones las muestra Blizzard.
+    bonusPaging = false,
     --- Botón de bajarse sobre la barra 1 (reemplaza el de Blizzard).
     vehicleExitButton = true,
     --- Asignar una vez las teclas por defecto (12345/qwert/asdfg/zxcv) si no hay binds.
@@ -208,7 +209,8 @@ local defaults = {
     saveLeftLayout = true,
     --- Al cambiar talentos / loadout / especialización, repone lo guardado.
     restoreLeftLayoutOnTalents = true,
-    rightBar6Enabled = true,
+    --- Apagada en el primer corte de Forever: sin panel derecho quedaría suelta en la esquina.
+    rightBar6Enabled = false,
     rightBar6NumButtons = 8,
     --- 2 columnas × 4 filas.
     rightBar6Cols = 2,
@@ -663,6 +665,40 @@ SlashCmdList["CHUKIEUI"] = function(msg)
     end
     return
   end
+  if msg == "botonera" or strmatch(msg, "^botonera%s") then
+    local what = strtrim(strsub(msg, 9))
+    if not p then
+      print("|cffff9900Chukie UI|r: perfil no disponible.")
+      return
+    end
+    p.actionBars = p.actionBars or {}
+    local bars = p.actionBars
+    if what == "keyzen" or what == "nostromo" then
+      bars.buttonPadMode = what
+      bars.enabled = true
+    elseif what == "on" then
+      bars.enabled = true
+    elseif what == "off" then
+      bars.enabled = false
+    else
+      print("|cffff9900Chukie UI|r: uso — /chukieui botonera keyzen | nostromo | on | off")
+      return
+    end
+    if not (ns.ActionBars and ns.ActionBars.Refresh) then
+      print("|cffff9900Chukie UI|r: módulo de barras no disponible.")
+      return
+    end
+    ns.ActionBars:Refresh()
+    if bars.enabled == false then
+      print("|cff00ff00Chukie UI|r: botonera OFF.")
+    else
+      print("|cff00ff00Chukie UI|r: botonera ON, formato " .. tostring(bars.buttonPadMode or "keyzen") .. ".")
+    end
+    if InCombatLockdown and InCombatLockdown() then
+      print("|cffff9900Chukie UI|r: en combate; se aplica al salir.")
+    end
+    return
+  end
   if msg == "" or msg == "config" or msg == "opciones" then
     if ns.OpenConfigPanel and ns.OpenConfigPanel() then
       return
@@ -946,7 +982,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       return
     end
   end
-  print("|cff00ff00Chukie UI|r — /chukieui forever | config | panel | minimapa | botones | acciones | backup | mmpos <x> <y> | mmarrow …")
+  print("|cff00ff00Chukie UI|r — /chukieui forever | botonera keyzen|nostromo|on|off | config | panel | minimapa | botones | acciones | backup | mmpos <x> <y> | mmarrow …")
   print(
     "|cff00ff00Chukie UI|r — alertas: /chukie-aura | /chukieui alertas on | /chukieui auracheck <id> | /chukieui cdcheck <id> | /chukieui auracontainer"
   )

@@ -65,6 +65,8 @@ function ns.PrintForeverProbe()
     { "C_ChallengeMode", type(C_ChallengeMode) == "table" },
     { "C_ClassTalents", type(C_ClassTalents) == "table" },
     { "GetSpecialization", type(GetSpecialization) == "function" },
+    { "C_GamePad", type(C_GamePad) == "table" },
+    { "C_GamePad.SetConfig", type(C_GamePad) == "table" and type(C_GamePad.SetConfig) == "function" },
   }
   for i = 1, #rows do
     local name, ok, note = rows[i][1], rows[i][2], rows[i][3]

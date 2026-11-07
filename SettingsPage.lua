@@ -292,6 +292,8 @@ local function addBackup(layout)
   )
 end
 
+local addMinimapCaptureList
+
 local function addRightPanel(category, layout)
   addHeader(layout, "Posición")
   rightSlider(
@@ -387,6 +389,128 @@ local function addRightPanel(category, layout)
   choices:Add(1, "Siempre máximo alejado")
   choices:Add(2, "Siempre máximo acercado")
   Settings.CreateDropdown(category, setting, choices:GetData(), "Usa los niveles de zoom que ya tiene el minimapa.")
+  addMinimapCaptureList(category, layout)
+end
+
+local POLICY_ON_MAP, POLICY_BAR, POLICY_HIDDEN = 0, 1, 2
+
+local function minimapBarModel()
+  local m
+  if ns.Profile and ns.Profile.GetMinimapBarModel then
+    m = ns.Profile:GetMinimapBarModel()
+  end
+  if not m then
+    return nil
+  end
+  m.buttonPolicy = m.buttonPolicy or {}
+  m.discoveredOrder = m.discoveredOrder or {}
+  return m
+end
+
+local function policyId(frameName)
+  local s = tostring(frameName or "x"):gsub("[^%w]", "_")
+  if #s > 48 then
+    s = strsub(s, 1, 48)
+  end
+  return "ChukieUi_MM_pol_addon_" .. s
+end
+
+local function policyChoices()
+  local c = Settings.CreateControlTextContainer()
+  c:Add(POLICY_ON_MAP, "Dejar en el mapa")
+  c:Add(POLICY_BAR, "Capturar a la barra")
+  c:Add(POLICY_HIDDEN, "Oculto")
+  return c:GetData()
+end
+
+local function addCaptureDropdown(category, frameName)
+  local function get()
+    local db = minimapBarModel()
+    local v = db and db.buttonPolicy[frameName]
+    if v == "default" or v == POLICY_ON_MAP then
+      return POLICY_ON_MAP
+    end
+    if v == "hidden" or v == POLICY_HIDDEN then
+      return POLICY_HIDDEN
+    end
+    if v == "bar" or v == POLICY_BAR or v == nil then
+      return POLICY_BAR
+    end
+    local n = tonumber(v)
+    if n == POLICY_ON_MAP or n == POLICY_HIDDEN then
+      return n
+    end
+    return POLICY_BAR
+  end
+  local function set(v)
+    local db = minimapBarModel()
+    if not db then
+      return
+    end
+    v = tonumber(v)
+    if v ~= POLICY_ON_MAP and v ~= POLICY_BAR and v ~= POLICY_HIDDEN then
+      v = POLICY_BAR
+    end
+    if v == POLICY_BAR then
+      db.buttonPolicy[frameName] = nil
+    else
+      db.buttonPolicy[frameName] = v
+    end
+    if ns.MinimapBar and ns.MinimapBar.Refresh then
+      ns.MinimapBar:Refresh()
+    end
+  end
+  local setting = Settings.RegisterProxySetting(
+    category,
+    policyId(frameName),
+    Settings.VarType.Number,
+    frameName,
+    POLICY_BAR,
+    get,
+    set
+  )
+  Settings.CreateDropdown(
+    category,
+    setting,
+    policyChoices,
+    "Dejar en el mapa lo deja en el círculo. Capturar a la barra lo mueve a la fila de botones del minimapa. Oculto lo esconde."
+  )
+end
+
+function addMinimapCaptureList(category, layout)
+  if not (Settings.CreateDropdown and Settings.CreateControlTextContainer and category) then
+    return
+  end
+  addHeader(layout, "Botones a capturar")
+  if ns.MinimapBar and ns.MinimapBar.UpdateDiscoveredOrder then
+    ns.MinimapBar:UpdateDiscoveredOrder()
+  end
+  ns._mmAddonPolicyRegistered = ns._mmAddonPolicyRegistered or {}
+  ns._minimapAddonPolicyCategory = category
+  local db = minimapBarModel()
+  local order = db and db.discoveredOrder or {}
+  for i = 1, #order do
+    local name = order[i]
+    if not ns._mmAddonPolicyRegistered[name] then
+      ns._mmAddonPolicyRegistered[name] = true
+      addCaptureDropdown(category, name)
+    end
+  end
+  function ns.AppendMinimapDiscoveryPolicyRows()
+    if not ns.configPanelRegistered or not ns._minimapAddonPolicyCategory then
+      return
+    end
+    local cat = ns._minimapAddonPolicyCategory
+    local model = minimapBarModel()
+    local names = model and model.discoveredOrder or {}
+    for i = 1, #names do
+      local name = names[i]
+      if not ns._mmAddonPolicyRegistered[name] then
+        ns._mmAddonPolicyRegistered[name] = true
+        addCaptureDropdown(cat, name)
+      end
+    end
+  end
 end
 
 local function padModes()

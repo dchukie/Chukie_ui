@@ -189,22 +189,65 @@ function DS:Ensure(parent)
   end
 end
 
+--- Columna de botones del panel derecho: el slot izquierdo del árbol (al lado del mapa).
+local function buttonColumn()
+  local rp = ns.RightPanel
+  local slot = rp and rp._panelTreeLeft
+  if not slot and ns.PanelCore and ns.PanelCore.GetSlotFrame then
+    slot = ns.PanelCore:GetSlotFrame("rightPanel", "left")
+  end
+  if not slot or not slot.GetWidth then
+    return nil
+  end
+  local w, h = slot:GetWidth(), slot:GetHeight()
+  if (w or 0) < 16 or (h or 0) < 16 then
+    return nil
+  end
+  return slot
+end
+
 function DS:Layout(block, size, gap)
-  if not block then
+  if inCombat() then
+    if ns.RightPanel and ns.RightPanel.RequestApplyAfterCombat then
+      ns.RightPanel:RequestApplyAfterCombat()
+    end
     return
   end
-  self:Ensure(block)
+  local column = buttonColumn()
+  local parent = column or block
+  if not parent then
+    return
+  end
+  self:Ensure(column and UIParent or parent)
   size = math.max(18, tonumber(size) or 36)
   gap = math.max(0, tonumber(gap) or 2)
-  local x = block:GetWidth() + gap
+  local pad = 2
+  if column then
+    local roomW = math.max(18, (column:GetWidth() or size) - pad * 2)
+    local roomH = (column:GetHeight() or size) - pad * 2 - gap * (#self._buttons - 1)
+    local fitted = math.floor(math.min(roomW, roomH / #self._buttons) + 0.5)
+    size = math.max(18, math.min(size, fitted))
+  end
+  local x = (not column) and (block:GetWidth() + gap) or 0
   for i = 1, #self._buttons do
     local btn = self._buttons[i]
-    if btn:GetParent() ~= block then
-      btn:SetParent(block)
+    btn:SetFrameStrata("MEDIUM")
+    btn:SetFrameLevel(80)
+    if column then
+      if btn:GetParent() ~= UIParent then
+        btn:SetParent(UIParent)
+      end
+      btn:SetSize(size, size)
+      btn:ClearAllPoints()
+      btn:SetPoint("TOP", column, "TOP", 0, -(pad + (i - 1) * (size + gap)))
+    else
+      if btn:GetParent() ~= block then
+        btn:SetParent(block)
+      end
+      btn:SetSize(size, size)
+      btn:ClearAllPoints()
+      btn:SetPoint("TOPLEFT", block, "TOPLEFT", x, -((i - 1) * (size + gap)))
     end
-    btn:SetSize(size, size)
-    btn:ClearAllPoints()
-    btn:SetPoint("TOPLEFT", block, "TOPLEFT", x, -((i - 1) * (size + gap)))
     btn:Show()
     refresh(btn)
   end

@@ -1252,6 +1252,10 @@ function MB:ApplyBlizzardStripOrRestore()
       end
     end
   end
+  --- El anillo y los botones +/− quedan ocultos aunque la limpieza general esté apagada.
+  if ns.RightPanel and ns.RightPanel.HideMinimapChrome then
+    ns.RightPanel:HideMinimapChrome()
+  end
 end
 
 function MB:EnumerateManagedCandidates()

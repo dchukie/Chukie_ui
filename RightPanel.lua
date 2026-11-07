@@ -139,13 +139,74 @@ local function isCompassOrRingTexture(texObj)
   return false
 end
 
-local function forceHideMinimapCompassAndRing()
-  for _, f in ipairs({ MinimapBorder, MinimapCompassTexture, MinimapNorthTag }) do
+local function chromeNameShouldHide(name)
+  if type(name) ~= "string" or name == "" then
+    return false
+  end
+  local low = name:lower()
+  if low:find("chukie", 1, true) or low:find("arrow", 1, true) or low:find("player", 1, true) then
+    return false
+  end
+  --- La pastilla de zona no es el anillo circular.
+  if low:find("bordertop", 1, true) or low:find("zonetext", 1, true) or low:find("mail", 1, true) or low:find("clock", 1, true) then
+    return false
+  end
+  if low:find("zoom", 1, true) or low:find("backdrop", 1, true) or low:find("compass", 1, true) or low:find("northtag", 1, true) or low:find("ring", 1, true) then
+    return true
+  end
+  if low:find("border", 1, true) then
+    return true
+  end
+  return false
+end
+
+local function isLargeBorderLayer(texObj)
+  if not texObj or not texObj.GetDrawLayer or texObj:GetDrawLayer() ~= "BORDER" then
+    return false
+  end
+  local w = texObj.GetWidth and texObj:GetWidth() or 0
+  return (tonumber(w) or 0) >= 64
+end
+
+--- Anillo, borde circular y botones +/−. La rueda del mapa no pasa por esos botones.
+function MP:HideMinimapChrome()
+  local named = {
+    MinimapBorder,
+    MinimapBackdrop,
+    MinimapCompassTexture,
+    MinimapNorthTag,
+    MinimapZoomIn,
+    MinimapZoomOut,
+    Minimap and Minimap.ZoomIn,
+    Minimap and Minimap.ZoomOut,
+    Minimap and Minimap.Border,
+    Minimap and Minimap.Backdrop,
+    MinimapCluster and MinimapCluster.Border,
+    MinimapCluster and MinimapCluster.Backdrop,
+  }
+  for _, f in ipairs(named) do
     forceHideMinimapRingFrame(f)
   end
+  local function walk(host, depth)
+    if not host or depth > 2 or not host.GetNumChildren then
+      return
+    end
+    local n = host:GetNumChildren() or 0
+    for i = 1, n do
+      local child = select(i, host:GetChildren())
+      if child then
+        local name = child.GetName and child:GetName()
+        if chromeNameShouldHide(name) then
+          forceHideMinimapRingFrame(child)
+        end
+        walk(child, depth + 1)
+      end
+    end
+  end
   for _, host in ipairs({ Minimap, MinimapCluster }) do
+    walk(host, 0)
     for _, r in ipairs(listRegions(host)) do
-      if isCompassOrRingTexture(r) then
+      if isCompassOrRingTexture(r) or isLargeBorderLayer(r) then
         forceHideMinimapRingFrame(r)
       end
     end
@@ -668,8 +729,8 @@ function MP:EnforceMinimapInCenterTopArea()
   Minimap:ClearAllPoints()
   Minimap:SetSize(s, s)
   Minimap:SetPoint("TOP", center, "TOP", 0, -(MINIMAP_TOP_PAD + compassH))
-  --- Ocultar anillo cardinal y borde circular del minimapa, sin depender de opciones.
-  forceHideMinimapCompassAndRing()
+  --- Ocultar anillo, borde circular y botones de zoom. La rueda sigue en el mapa.
+  self:HideMinimapChrome()
   if ns.MinimapBar then
     if ns.MinimapBar.PositionAddonBarCentered then
       ns.MinimapBar:PositionAddonBarCentered()
@@ -1320,6 +1381,9 @@ function MP:Apply()
     end
     if ns.ActionBars and ns.ActionBars.Refresh then
       ns.ActionBars:Refresh()
+    end
+    if ns.DragSlots and ns.DragSlots.Layout then
+      ns.DragSlots:Layout()
     end
     if ns.RightStrip and ns.RightStrip.Layout then
       ns.RightStrip:Layout()

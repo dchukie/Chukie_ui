@@ -1,0 +1,2307 @@
+--[[ Barras de acción estilo Dominos (fase 1).
+     - Panel izquierdo: barras 1–4 (filas horizontales).
+     - Skyriding ([bonusbar:5]): paginan a barras 8–11.
+     - Panel derecho: barra 6 en grilla 2×4 (8 botones).
+     IDs de acción = numeración Dominos: barra N botón i → (N-1)*12+i.
+     Retail 12+: sin ActionBarActionEventsFrame; visual manual (secret-safe). ]]
+
+local _, ns = ...
+
+local AB = {}
+ns.ActionBars = AB
+
+local SHOWGRID_REASON = 32
+local BUTTONS_PER_BAR = 12
+local LEFT_BUTTONS_PER_BAR = 6
+--- Tope de botones con entrada en Bindings.xml (barras 1–4).
+local BINDABLE_BUTTONS_PER_BAR = LEFT_BUTTONS_PER_BAR
+local LEFT_BAR_IDS = { 1, 2, 3, 4 }
+local RIGHT_BAR_ID = 6
+--- Barra que toma las páginas de vehículo / override / possess.
+local VEHICLE_BAR_ID = 1
+local SKY_PAGE = { [1] = 8, [2] = 9, [3] = 10, [4] = 11 }
+
+-- Condición segura usada por Dominos/Bartender para skyriding.
+local SKYRIDING_COND = "[bonusbar:5]"
+
+local function padMode()
+  if ns.ButtonPad and ns.ButtonPad.Current then
+    return ns.ButtonPad.Current()
+  end
+  return {
+    flow = "row",
+    buttonsPerBar = LEFT_BUTTONS_PER_BAR,
+    columns = LEFT_BUTTONS_PER_BAR,
+    keys = {},
+  }
+end
+
+local STOCK_BARS_TO_HIDE = {
+  "MainMenuBar", -- arte clásico / ≤11.2.5
+  "MainActionBar", -- Retail 11.2.7+ / 12
+  "MultiBarBottomLeft",
+  "MultiBarBottomRight",
+  "MultiBarRight",
+  "MultiBarLeft",
+  "MultiBar5",
+  "MultiBar6",
+  "MultiBar7",
+  "MultiBar8",
+  "StanceBar",
+  "PetActionBar",
+  "PossessActionBar",
+  "StatusTrackingBarManager", -- XP/rep bajo la barra principal
+}
+
+local STOCK_BUTTON_PREFIXES = {
+  "ActionButton",
+  "MultiBarBottomLeftButton",
+  "MultiBarBottomRightButton",
+  "MultiBarRightButton",
+  "MultiBarLeftButton",
+  "MultiBar5Button",
+  "MultiBar6Button",
+  "MultiBar7Button",
+  "MultiBar8Button",
+}
+
+local function getBlizzHider()
+  if not AB._blizzHider then
+    local h = CreateFrame("Frame", "ChukieUi_ActionBarBlizzHider")
+    h:Hide()
+    AB._blizzHider = h
+  end
+  return AB._blizzHider
+end
+
+local function hideBarFrame(frame, clearEvents)
+  if not frame then
+    return
+  end
+  if clearEvents and frame.UnregisterAllEvents then
+    pcall(frame.UnregisterAllEvents, frame)
+  end
+  -- Edit Mode sustituye Hide; preferir HideBase para no taint.
+  if frame.HideBase then
+    pcall(frame.HideBase, frame)
+  elseif frame.Hide then
+    pcall(frame.Hide, frame)
+  end
+  if frame.SetParent then
+    pcall(frame.SetParent, frame, getBlizzHider())
+  end
+end
+
+--- Devuelve un marco de Blizzard a UIParent. `show` solo cuando el juego tiene algo que mostrar
+--- ahí: forzarlo sin situación activa dejaría un marco vacío en pantalla.
+local function restoreBarFrame(frame, show)
+  if not frame then
+    return
+  end
+  if frame.SetParent then
+    pcall(frame.SetParent, frame, UIParent)
+  end
+  if not show then
+    return
+  end
+  if frame.ShowBase then
+    pcall(frame.ShowBase, frame)
+  elseif frame.Show then
+    pcall(frame.Show, frame)
+  end
+end
+
+local function hideBarButton(button)
+  if not button then
+    return
+  end
+  if button.SetAttribute then
+    pcall(function()
+      button:SetAttribute("statehidden", true)
+    end)
+  end
+  if button.UnregisterAllEvents then
+    pcall(button.UnregisterAllEvents, button)
+  end
+  if button.Hide then
+    pcall(button.Hide, button)
+  end
+end
+
+local function db()
+  local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
+  if not p then
+    return {}
+  end
+  p.actionBars = p.actionBars or {}
+  return p.actionBars
+end
+
+function AB.IsEnabled()
+  local d = db()
+  return d.enabled ~= false
+end
+
+local function isSecret(v)
+  return issecretvalue and issecretvalue(v) or false
+end
+
+local function pageOffset(page)
+  page = tonumber(page) or 1
+  local offset = (page - 1) * BUTTONS_PER_BAR
+  -- Dominos: salta la página 12 (slots de possess no usables en esta numeración).
+  if offset >= 132 then
+    offset = offset + BUTTONS_PER_BAR
+  end
+  return offset
+end
+
+local function actionFor(page, index)
+  return pageOffset(page) + index
+end
+
+local function setShowGridInsecure(btn, show, reason)
+  if not btn or InCombatLockdown() then
+    return
+  end
+  reason = reason or SHOWGRID_REASON
+  local value = tonumber(btn:GetAttribute("showgrid")) or 0
+  local prev = value
+  if show then
+    if value % (reason * 2) < reason then
+      value = value + reason
+    end
+  elseif value % (reason * 2) >= reason then
+    value = value - reason
+  end
+  if prev ~= value then
+    btn:SetAttribute("showgrid", value)
+  end
+  local action = tonumber(btn:GetAttribute("action")) or 0
+  local has = HasAction and HasAction(action)
+  if isSecret(has) then
+    has = false
+  end
+  local shouldShow = (value > 0 or has) and not btn:GetAttribute("statehidden")
+  if shouldShow then
+    btn:Show()
+  else
+    btn:Hide()
+  end
+end
+
+local function disconnectBlizzardActionEvents(btn)
+  if not btn then
+    return
+  end
+  if ActionBarActionEventsFrame and ActionBarActionEventsFrame.UnregisterFrame then
+    pcall(function()
+      ActionBarActionEventsFrame:UnregisterFrame(btn)
+    end)
+  end
+  if btn.UnregisterAllEvents then
+    btn:UnregisterAllEvents()
+  end
+  btn:SetScript("OnEvent", nil)
+end
+
+local function applyActionCooldown(cd, action)
+  if not cd or not action then
+    return
+  end
+  if cd.SetCooldownFromDurationObject and C_ActionBar and C_ActionBar.GetActionCooldownDuration then
+    local ok, dur = pcall(C_ActionBar.GetActionCooldownDuration, action)
+    if ok and dur then
+      pcall(cd.SetCooldownFromDurationObject, cd, dur)
+      return
+    end
+    pcall(function()
+      cd:Clear()
+    end)
+    return
+  end
+  local start, duration, enable, modRate = GetActionCooldown(action)
+  if isSecret(start) or isSecret(duration) or isSecret(modRate) then
+    pcall(function()
+      cd:Clear()
+    end)
+    return
+  end
+  if enable and duration and duration > 0 then
+    pcall(cd.SetCooldown, cd, start or 0, duration, modRate or 1)
+  else
+    pcall(function()
+      cd:Clear()
+    end)
+  end
+end
+
+local function skinButton(btn)
+  if btn.NormalTexture then
+    btn.NormalTexture:SetAlpha(0.35)
+  end
+  if btn.NewActionTexture then
+    btn.NewActionTexture:Hide()
+  end
+  if btn.Name then
+    btn.Name:Hide()
+  end
+end
+
+function AB:UpdateButtonVisual(btn)
+  if not btn then
+    return
+  end
+  -- Preferir atributo (ID=0); si Blizzard expone CalculateAction, usarlo como fallback.
+  --- El paginado de una situación puede dejar el atributo con un valor secreto: no se puede leer
+  --- desde acá, así que se cae al último conocido en lugar de romper el refresco.
+  local raw = btn:GetAttribute("action")
+  local action = (not isSecret(raw) and tonumber(raw)) or 0
+  if action <= 0 and ActionButton_CalculateAction then
+    local ok, calc = pcall(ActionButton_CalculateAction, btn)
+    if ok and type(calc) == "number" then
+      action = calc
+    end
+  end
+  if action <= 0 then
+    action = btn._chukieAction or 0
+  end
+  if action <= 0 then
+    return
+  end
+  btn._chukieAction = action
+
+  local has = false
+  if HasAction then
+    local okH, h = pcall(HasAction, action)
+    if okH and not isSecret(h) then
+      has = h and true or false
+    end
+  end
+
+  if btn.icon then
+    local tex = GetActionTexture and GetActionTexture(action)
+    if isSecret(tex) then
+      -- skip
+    elseif tex then
+      btn.icon:SetTexture(tex)
+      btn.icon:Show()
+    else
+      btn.icon:SetTexture(nil)
+      if not has then
+        btn.icon:Hide()
+      end
+    end
+  end
+
+  if btn.cooldown then
+    applyActionCooldown(btn.cooldown, action)
+  end
+  if btn.chargeCooldown and C_ActionBar and C_ActionBar.GetActionChargeDuration and btn.chargeCooldown.SetCooldownFromDurationObject then
+    local ok, dur = pcall(C_ActionBar.GetActionChargeDuration, action)
+    if ok and dur then
+      pcall(btn.chargeCooldown.SetCooldownFromDurationObject, btn.chargeCooldown, dur)
+    else
+      pcall(function()
+        btn.chargeCooldown:Clear()
+      end)
+    end
+  end
+
+  if btn.Count then
+    local shown = false
+    if C_ActionBar and C_ActionBar.GetActionDisplayCount then
+      local ok, display = pcall(C_ActionBar.GetActionDisplayCount, action)
+      if ok then
+        if isSecret(display) then
+          -- skip
+        elseif type(display) == "string" and display ~= "" then
+          btn.Count:SetText(display)
+          btn.Count:Show()
+          shown = true
+        end
+      end
+    end
+    if not shown and ns.CdInfo then
+      -- En combate el conteo es secreto: deducir cargas de los estados no secretos.
+      local st = ns.CdInfo.GetActionState(action)
+      if st.hasCharges and st.count then
+        btn.Count:SetText(st.count)
+        btn.Count:Show()
+        shown = true
+      end
+    end
+    if not shown and GetActionCount then
+      local ok, c = pcall(GetActionCount, action)
+      if ok and not isSecret(c) then
+        local n = tonumber(c)
+        if n and n > 1 then
+          btn.Count:SetText(n)
+          btn.Count:Show()
+          shown = true
+        elseif n and IsConsumableAction and IsConsumableAction(action) then
+          btn.Count:SetText(n)
+          btn.Count:Show()
+          shown = true
+        end
+      end
+    end
+    if not shown then
+      btn.Count:SetText("")
+    end
+  end
+
+  if btn.icon and IsUsableAction then
+    local ok, isUsable, notEnoughMana = pcall(IsUsableAction, action)
+    if ok and not isSecret(isUsable) and not isSecret(notEnoughMana) then
+      if isUsable then
+        btn.icon:SetVertexColor(1, 1, 1)
+      elseif notEnoughMana then
+        btn.icon:SetVertexColor(0.5, 0.5, 1)
+      else
+        btn.icon:SetVertexColor(0.4, 0.4, 0.4)
+      end
+    else
+      btn.icon:SetVertexColor(1, 1, 1)
+    end
+  end
+end
+
+function AB:UpdateAllVisuals()
+  self:UpdateVehicleExitButton()
+  if not self._bars then
+    return
+  end
+  for _, bar in pairs(self._bars) do
+    if bar and bar.buttons then
+      for i = 1, #bar.buttons do
+        self:UpdateButtonVisual(bar.buttons[i])
+      end
+    end
+  end
+end
+
+--- Eventos que pueden cambiar la situación (qué barra de reemplazo hay). Los demás solo refrescan
+--- iconos y cooldowns, y llegan demasiado seguido para recalcular opacidades en cada uno.
+local SITUATION_EVENTS = {
+  ACTIONBAR_PAGE_CHANGED = true,
+  UPDATE_BONUS_ACTIONBAR = true,
+  UPDATE_SHAPESHIFT_FORM = true,
+  PLAYER_ENTERING_WORLD = true,
+  UNIT_ENTERED_VEHICLE = true,
+  UNIT_EXITED_VEHICLE = true,
+  UPDATE_VEHICLE_ACTIONBAR = true,
+  UPDATE_OVERRIDE_ACTIONBAR = true,
+  UPDATE_POSSESS_BAR = true,
+  VEHICLE_UPDATE = true,
+  PLAYER_DEAD = true,
+  PLAYER_ALIVE = true,
+  PLAYER_UNGHOST = true,
+}
+
+--- Opacidad de la barra 1 y quién muestra las acciones del evento: las dos dependen de la
+--- situación, no del contenido de los slots.
+function AB:UpdateSituation()
+  self:LearnSpecialPages()
+  self:ApplyLeftButtonAlphas()
+  self:UpdateOverrideArtBar()
+  --[[ Al entrar al mundo los eventos de barra llegan en ráfaga. Paginar en cada uno repetía el
+       `Execute` decenas de veces; con el primero y un repaso a los 0.2 s alcanza. ]]
+  if self._situationRecheck then
+    return
+  end
+  self:ReapplyPaging()
+  --[[ Las dos cosas se miden sobre lo que quedó en el botón 1, y el driver seguro pagina por su
+       cuenta: puede hacerlo después de este evento. Se vuelve a mirar un instante más tarde, que es
+       la única forma de no decidir sobre un estado a medio aplicar. Las dos llamadas no hacen nada
+       si la decisión no cambió. ]]
+  if C_Timer and C_Timer.After then
+    self._situationRecheck = true
+    C_Timer.After(0.2, function()
+      AB._situationRecheck = nil
+      if InCombatLockdown() then
+        AB._pendingPaging = true
+        return
+      end
+      AB:ReapplyPaging()
+      AB:ApplyLeftButtonAlphas()
+      AB:UpdateOverrideArtBar()
+    end)
+  end
+end
+
+function AB:EnsureVisualEvents()
+  if self._visEv then
+    return
+  end
+  local ev = CreateFrame("Frame")
+  self._visEv = ev
+  local events = {
+    "ACTIONBAR_UPDATE",
+    "ACTIONBAR_SLOT_CHANGED",
+    "ACTIONBAR_PAGE_CHANGED",
+    "UPDATE_BONUS_ACTIONBAR",
+    "UPDATE_SHAPESHIFT_FORM",
+    "SPELL_UPDATE_COOLDOWN",
+    "SPELL_UPDATE_CHARGES",
+    "SPELL_UPDATE_USABLE",
+    "BAG_UPDATE_COOLDOWN",
+    "PLAYER_ENTERING_WORLD",
+    "PLAYER_TARGET_CHANGED",
+    "UNIT_ENTERED_VEHICLE",
+    "UNIT_EXITED_VEHICLE",
+    --- Las acciones del vehículo/override llegan después de subirse.
+    "UPDATE_VEHICLE_ACTIONBAR",
+    "UPDATE_OVERRIDE_ACTIONBAR",
+    "UPDATE_POSSESS_BAR",
+    "VEHICLE_UPDATE",
+    --- Morir y volver cambia la situación: es cuando la barra del evento se pierde.
+    "PLAYER_DEAD",
+    "PLAYER_ALIVE",
+    "PLAYER_UNGHOST",
+    "UPDATE_BINDINGS",
+  }
+  for i = 1, #events do
+    pcall(ev.RegisterEvent, ev, events[i])
+  end
+  ev:SetScript("OnEvent", function(_, evName)
+    if evName == "UPDATE_BINDINGS" then
+      AB:UpdateAllBindings()
+      return
+    end
+    if SITUATION_EVENTS[evName] then
+      AB:UpdateSituation()
+    end
+    AB:UpdateAllVisuals()
+  end)
+end
+
+local function bindingCommand(barId, index)
+  return string.format("CLICK ChukieUi_AB%d_B%d:LeftButton", barId, index)
+end
+
+local function pressAndHoldEnabled()
+  return db().pressAndHoldRelease ~= false
+end
+
+--- Evoker empower / hold-cast: Blizzard usa typerelease=actionrelease en el UP.
+local function applyPressHoldMode(frame)
+  if not frame or InCombatLockdown() then
+    return
+  end
+  if pressAndHoldEnabled() then
+    frame:SetAttribute("pressAndHoldAction", true)
+    frame:SetAttribute("typerelease", "actionrelease")
+  else
+    frame:SetAttribute("pressAndHoldAction", nil)
+    frame:SetAttribute("typerelease", nil)
+  end
+end
+
+local function addCastOnKeyPress(btn)
+  if not btn._hotkeyBind then
+    local bind = CreateFrame("Button", btn:GetName() .. "Hotkey", btn, "SecureActionButtonTemplate")
+    bind:SetAttribute("type", "action")
+    bind:SetAttribute("useparent-action", true)
+    bind:SetAttribute("useparent-unit", true)
+    bind:SetAttribute("useparent-checkselfcast", true)
+    bind:SetAttribute("useparent-checkfocuscast", true)
+    bind:SetAttribute("useparent-checkmouseovercast", true)
+    bind:RegisterForClicks("AnyUp", "AnyDown")
+    bind:SetScript("PreClick", function(self, _, down)
+      local owner = self:GetParent()
+      if not owner then
+        return
+      end
+      if down then
+        if owner:GetButtonState() == "NORMAL" then
+          owner:SetButtonState("PUSHED")
+        end
+      else
+        if owner:GetButtonState() == "PUSHED" then
+          owner:SetButtonState("NORMAL")
+        end
+      end
+    end)
+    btn._hotkeyBind = bind
+  end
+  applyPressHoldMode(btn._hotkeyBind)
+end
+
+local function updateHotkeyText(btn)
+  if not btn or not btn.HotKey then
+    return
+  end
+  --- En Keyzen el rótulo es el número JOY, no el nombre PAD que usa el binding.
+  if btn._chukieJoyLabel then
+    btn.HotKey:SetText(btn._chukieJoyLabel)
+    btn.HotKey:Show()
+    btn.HotKey:SetAlpha(0.9)
+    return
+  end
+  local cmd = btn._commandName
+  local key = cmd and GetBindingKey and GetBindingKey(cmd)
+  if key and key ~= "" then
+    local text = GetBindingText and GetBindingText(key, 1) or key
+    btn.HotKey:SetText(text)
+    btn.HotKey:Show()
+    btn.HotKey:SetAlpha(0.9)
+  else
+    btn.HotKey:SetText("")
+  end
+end
+
+local function updateOverrideBindings(btn)
+  if not btn or InCombatLockdown() then
+    return
+  end
+  addCastOnKeyPress(btn)
+  local bind = btn._hotkeyBind
+  if not bind then
+    return
+  end
+  ClearOverrideBindings(bind)
+  local cmd = btn._commandName
+  if not cmd or not GetBindingKey then
+    updateHotkeyText(btn)
+    return
+  end
+  local keys = { GetBindingKey(cmd) }
+  local name = bind:GetName()
+  for i = 1, #keys do
+    if keys[i] then
+      SetOverrideBindingClick(bind, false, keys[i], name, "LeftButton")
+    end
+  end
+  --- JOY #N llega como botón de mando (PAD*), no como la tecla 1/Q/R. El override lo
+  --- escucha aunque el binding visible del botón siga siendo la tecla de Nostromo.
+  if btn._chukiePadKey then
+    SetOverrideBindingClick(bind, false, btn._chukiePadKey, name, "LeftButton")
+  end
+  updateHotkeyText(btn)
+end
+
+local function bindingAlready(cmd, key)
+  if not GetBindingKey or not key then
+    return false
+  end
+  local first, second = GetBindingKey(cmd)
+  return first == key or second == key
+end
+
+--- JOY #10 no es una tecla. WoW solo dispara el binding si ese botón crudo está mapeado a un
+--- nombre PAD*. El índice crudo es el número del software menos uno: JOY #1 → 0, JOY #10 → 9.
+local function keyzenMappings(mode)
+  local mappings = {}
+  local padByJoy = mode and mode.padByJoy
+  if not padByJoy then
+    return mappings
+  end
+  for joy, pad in pairs(padByJoy) do
+    mappings[#mappings + 1] = { rawIndex = joy - 1, button = pad, comment = "JOY #" .. joy }
+  end
+  return mappings
+end
+
+local function gamepadDevices()
+  if not C_GamePad or not C_GamePad.GetAllDeviceIDs or not C_GamePad.GetDeviceRawState then
+    return {}
+  end
+  local ok, ids = pcall(C_GamePad.GetAllDeviceIDs)
+  if not ok or type(ids) ~= "table" then
+    return {}
+  end
+  local devices = {}
+  for i = 1, #ids do
+    local okState, state = pcall(C_GamePad.GetDeviceRawState, ids[i])
+    if okState and type(state) == "table" then
+      state.deviceID = ids[i]
+      devices[#devices + 1] = state
+    end
+  end
+  return devices
+end
+
+local function applyKeyzenGamepad(mode)
+  local mappings = keyzenMappings(mode)
+  if #mappings == 0 or not C_GamePad or not C_GamePad.SetConfig or not C_GamePad.ApplyConfigs then
+    return false
+  end
+  if SetCVar then
+    pcall(SetCVar, "GamePadEnable", "1")
+    --- En 1, WoW se queda con la cara XInput y no lee los JOY del perfil DirectInput.
+    pcall(SetCVar, "GamePadForceXInput", "0")
+    --- Si no, el bumper y el gatillo que usamos como PAD se comen el botón (Ctrl, Shift, clic).
+    pcall(SetCVar, "GamePadEmulateCtrl", "NONE")
+    pcall(SetCVar, "GamePadEmulateShift", "NONE")
+    pcall(SetCVar, "GamePadCursorLeftClick", "NONE")
+    pcall(SetCVar, "GamePadCursorRightClick", "NONE")
+  end
+  local wrote = false
+  local devices = gamepadDevices()
+  for i = 1, #devices do
+    local state = devices[i]
+    local count = tonumber(state.rawButtonCount) or 0
+    --- El Keyzen entra a WoW como XInput de 21 botones, no de 24.
+    if count >= 16 then
+      local fitted = {}
+      for m = 1, #mappings do
+        if mappings[m].rawIndex < count then
+          fitted[#fitted + 1] = mappings[m]
+        end
+      end
+      local configID = { vendorID = state.vendorID, productID = state.productID }
+      local config = {
+        name = state.name,
+        configID = configID,
+        rawButtonMappings = fitted,
+        rawAxisMappings = {},
+        axisConfigs = {},
+        stickConfigs = {},
+      }
+      if C_GamePad.GetConfig then
+        local ok, current = pcall(C_GamePad.GetConfig, configID)
+        if ok and type(current) == "table" then
+          current.rawButtonMappings = fitted
+          current.configID = configID
+          config = current
+        end
+      end
+      local ok, result = pcall(C_GamePad.SetConfig, config)
+      if ok and result ~= false then
+        wrote = true
+      else
+        AB._joyConfigError = result
+      end
+    end
+  end
+  if wrote then
+    pcall(C_GamePad.ApplyConfigs)
+  end
+  return wrote
+end
+
+function AB:PrintJoyDiagnostics()
+  if self._joyListen then
+    self._joyListen:Cancel()
+    self._joyListen = nil
+  end
+  local enabled = GetCVar and GetCVar("GamePadEnable") or "?"
+  local forceX = GetCVar and GetCVar("GamePadForceXInput") or "?"
+  local devices = gamepadDevices()
+  print("|cff00ff00Chukie UI|r: mando " .. tostring(enabled) .. ", forzar XInput " .. tostring(forceX) .. ". Escucho 6 segundos: soltá teclado y mouse, y apretá el botón.")
+  if #devices == 0 then
+    print("  WoW no ve ningún mando. El perfil del Keyzen tiene que seguir en JOY, no en teclado.")
+    return
+  end
+  for i = 1, #devices do
+    local state = devices[i]
+    print(string.format(
+      "  %s | vendor %s | product %s | botones %s",
+      tostring(state.name or state.deviceID),
+      tostring(state.vendorID),
+      tostring(state.productID),
+      tostring(state.rawButtonCount)
+    ))
+  end
+  local seen = {}
+  local ticks = 0
+  local ticker
+  ticker = C_Timer.NewTicker(0.1, function()
+    ticks = ticks + 1
+    local now = gamepadDevices()
+    for i = 1, #now do
+      local buttons = now[i].rawButtons
+      if type(buttons) == "table" then
+        for index, down in pairs(buttons) do
+          if down and not seen[index] then
+            seen[index] = true
+            local rawIndex = tonumber(index)
+            rawIndex = rawIndex and (rawIndex - 1) or "?"
+            print("  llegó: posición " .. tostring(index) .. " (rawIndex " .. tostring(rawIndex) .. ")")
+          end
+        end
+      end
+    end
+    if ticks >= 60 then
+      ticker:Cancel()
+      AB._joyListen = nil
+      if not next(seen) then
+        print("|cffff9900Chukie UI|r: en 6 segundos ese mando no mandó ningún botón.")
+      end
+    end
+  end)
+  self._joyListen = ticker
+end
+
+function AB:EnsureDefaultKeybinds()
+  if InCombatLockdown() or not SetBinding then
+    return
+  end
+  local d = db()
+  if d.applyDefaultKeybinds == false then
+    return
+  end
+  local mode = padMode()
+  local token = mode.bindToken or mode.id
+  if mode.padByJoy and SetCVar then
+    pcall(SetCVar, "GamePadEnable", "1")
+    pcall(SetCVar, "GamePadForceXInput", "0")
+  end
+  if d._defaultKeybindsApplied == token then
+    return
+  end
+  local padOk = true
+  if mode.padByJoy then
+    padOk = applyKeyzenGamepad(mode)
+    if not padOk and not self._joyWarned then
+      self._joyWarned = true
+      print("|cffff9900Chukie UI|r: el Keyzen sigue en JOY, pero WoW no dejó registrar el mando. Corré /chukieui joy con un botón apretado.")
+    end
+  end
+  local changed = false
+  local keysByBar = mode.keys or {}
+  for barId = 1, 4 do
+    local keys = keysByBar[barId] or {}
+    for i = 1, #keys do
+      local key = keys[i]
+      local cmd = bindingCommand(barId, i)
+      if key and not bindingAlready(cmd, key) then
+        if SetBinding(key, cmd) then
+          changed = true
+        end
+      end
+    end
+  end
+  local cells = mode.cells
+  if cells then
+    for i = 1, #cells do
+      local cell = cells[i]
+      local cmd = bindingCommand(cell.bar, cell.index)
+      if cell.pad and not bindingAlready(cmd, cell.pad) then
+        if SetBinding(cell.pad, cmd) then
+          changed = true
+        end
+      end
+    end
+  end
+  if padOk then
+    d._defaultKeybindsApplied = token
+  end
+  if changed and SaveBindings and GetCurrentBindingSet then
+    pcall(SaveBindings, GetCurrentBindingSet())
+  end
+end
+
+function AB:UpdateAllBindings()
+  if InCombatLockdown() or not self._bars then
+    return
+  end
+  for barId = 1, 4 do
+    local bar = self._bars[tostring(barId)]
+    if bar and bar.buttons then
+      for i = 1, math.min(BINDABLE_BUTTONS_PER_BAR, #bar.buttons) do
+        updateOverrideBindings(bar.buttons[i])
+      end
+    end
+  end
+end
+
+local function ensureButton(bar, barId, index)
+  local name = string.format("ChukieUi_AB%d_B%d", barId, index)
+  local btn = _G[name]
+  if not btn then
+    btn = CreateFrame("CheckButton", name, bar, "ActionBarButtonTemplate")
+  end
+  disconnectBlizzardActionEvents(btn)
+  if not btn._chukieNativeW then
+    local w = btn:GetWidth() or 0
+    local h = btn:GetHeight() or 0
+    btn._chukieNativeW = w > 1 and w or 45
+    btn._chukieNativeH = h > 1 and h or btn._chukieNativeW
+  end
+  btn._commandName = bindingCommand(barId, index)
+  if not InCombatLockdown() then
+    -- ID>0 hace que Blizzard calcule action con GetActionBarPage() (barra 1) al hover/Update.
+    btn:SetID(0)
+    btn:SetAttribute("type", "action")
+    btn:SetAttribute("index", index)
+    btn:SetAttribute("action", actionFor(barId, index))
+    btn:SetAttribute("checkselfcast", true)
+    btn:SetAttribute("checkfocuscast", true)
+    btn:SetAttribute("checkmouseovercast", true)
+    btn:SetAttribute("statehidden", false)
+    btn:RegisterForClicks("AnyUp", "AnyDown")
+    btn:EnableMouseWheel(true)
+    applyPressHoldMode(btn)
+    setShowGridInsecure(btn, true, SHOWGRID_REASON)
+  end
+  btn._chukieBarId = barId
+  btn._chukieIndex = index
+  btn._chukieAction = actionFor(barId, index)
+  skinButton(btn)
+  if barId <= 4 and index <= BINDABLE_BUTTONS_PER_BAR then
+    addCastOnKeyPress(btn)
+  end
+  if not btn._chukieAttrHook then
+    btn._chukieAttrHook = true
+    btn:HookScript("OnAttributeChanged", function(self, attr)
+      if attr == "action" then
+        AB:UpdateButtonVisual(self)
+      end
+    end)
+    btn:HookScript("OnEnter", function(self)
+      AB:UpdateButtonVisual(self)
+    end)
+  end
+  AB:UpdateButtonVisual(btn)
+  if barId <= 4 and index <= BINDABLE_BUTTONS_PER_BAR and not InCombatLockdown() then
+    updateOverrideBindings(btn)
+  end
+  return btn
+end
+
+--- Vehículo / override / possess: el offset es directo, sin el salto de la página 12 de Dominos
+--- (esas páginas apuntan a slots reales, no a la numeración de barras del usuario).
+local function specialPageOffset(page)
+  page = tonumber(page)
+  if not page or page < 1 then
+    return nil
+  end
+  return (page - 1) * BUTTONS_PER_BAR
+end
+
+--[[ El índice de las páginas de vehículo / override / forma temporal solo existe mientras el juego
+     tiene esa barra activa: fuera de la situación las funciones devuelven nil. Además el número
+     cambió entre versiones (12/13/14 en su día, 16/17/18 en Midnight), así que no se puede fijar.
+     Se recuerda el último visto para tenerlo como respaldo del cálculo seguro. ]]
+local specialPageSeen = {}
+
+local function specialPage(key, fn)
+  if type(fn) == "function" then
+    local ok, value = pcall(fn)
+    if ok and not isSecret(value) then
+      local page = tonumber(value)
+      if page and page > 0 then
+        specialPageSeen[key] = page
+      end
+    end
+  end
+  return specialPageSeen[key]
+end
+
+--[[ Aplica el offset de página a los botones. `newstate` existe en `_onstate-page`; en `Execute` no.
+     La página de la situación se pregunta acá adentro, en el entorno seguro y en el momento en que
+     el juego la declara: preguntarla desde Lua al iniciar sesión devolvía nil —la barra todavía no
+     existía— y entonces la barra 1 se quedaba en la página normal justo cuando aparecía la barra de
+     misión o evento. Los `offset-<estado>` guardados quedan como respaldo.
+
+     La barra que el juego declara manda sobre el nombre del estado, igual que hace
+     `ActionBarController`. Hace falta porque las condiciones de macro no distinguen todos los
+     casos: en las misiones que sientan al jugador en un puesto de venta `[vehicleui]`,
+     `[possessbar]` y `[overridebar]` son falsas y el estado queda en `normal`, pero
+     `HasVehicleActionBar()` es verdadero y la página tiene las acciones del evento. ]]
+local APPLY_PAGE_OFFSET = [[
+  local state = newstate or self:GetAttribute("state-page") or "normal"
+  local perPage = self:GetAttribute("buttonsPerPage") or 12
+  local normal = self:GetAttribute("offset-normal") or 0
+  local offset
+  local page
+  --- Solo la barra 1 recibe las situaciones. Las cuatro tienen driver por skyriding, así que sin
+  --- este filtro las otras tres también paginaban a la página del vehículo.
+  local canAsk = self:GetAttribute("situationBar")
+    and HasVehicleActionBar
+    and HasOverrideActionBar
+    and HasTempShapeshiftActionBar
+  if canAsk then
+    if HasVehicleActionBar() and GetVehicleBarIndex then
+      page = GetVehicleBarIndex()
+    elseif HasOverrideActionBar() and GetOverrideBarIndex then
+      page = GetOverrideBarIndex()
+    elseif HasTempShapeshiftActionBar() and GetTempShapeshiftBarIndex then
+      page = GetTempShapeshiftBarIndex()
+    end
+  end
+  if not page and GetBonusBarIndex then
+    if state == "bonus1" or state == "bonus2" or state == "bonus3" or state == "bonus4" then
+      page = GetBonusBarIndex()
+    end
+  end
+  if page and page > 0 then
+    offset = (page - 1) * perPage
+  elseif canAsk and (state == "vehicle" or state == "override" or state == "shapeshift") then
+    --- Se pudo preguntar y el juego no declara barra: se queda con la página normal. `[canexitvehicle]`
+    --- también es cierto en vehículos que dejan al jugador con sus propias habilidades, y ahí usar el
+    --- `offset-<estado>` guardado daría una fila de botones vacíos.
+    offset = normal
+  end
+  if not offset then
+    offset = self:GetAttribute("offset-" .. state)
+  end
+  if not offset then
+    offset = normal
+  end
+  self:SetAttribute("actionOffset", offset)
+  local n = self:GetAttribute("numButtons") or 12
+  for i = 1, n do
+    local b = self:GetFrameRef("btn" .. i)
+    if b then
+      local idx = b:GetAttribute("index") or i
+      b:SetAttribute("action", idx + offset)
+    end
+  end
+]]
+
+--- Barras de bonus: el juego pagina a 6 + GetBonusBarOffset() (formas, sigilo y las habilidades
+--- temporales que dan algunas misiones o eventos). La 5 es skyriding y tiene su propio mapeo.
+local BONUS_PAGE = { [1] = 7, [2] = 8, [3] = 9, [4] = 10 }
+
+--- Situaciones que el juego impone y que la barra 1 muestra opaca. Skyriding queda afuera: es un
+--- modo que el jugador elige, con su propio paginado, no una barra circunstancial de misión.
+local OPAQUE_STATES = {
+  vehicle = true,
+  override = true,
+  shapeshift = true,
+  bonus1 = true,
+  bonus2 = true,
+  bonus3 = true,
+  bonus4 = true,
+}
+
+--- Consulta booleana tolerante: la API puede no existir en esta versión del cliente y, desde
+--- 12.0, devolver un valor secreto que no se puede testear.
+local function apiFlag(fn, ...)
+  if type(fn) ~= "function" then
+    return false
+  end
+  local ok, value = pcall(fn, ...)
+  if not ok or isSecret(value) then
+    return false
+  end
+  return value and true or false
+end
+
+local function bonusBarOffset()
+  if type(GetBonusBarOffset) ~= "function" then
+    return 0
+  end
+  local ok, value = pcall(GetBonusBarOffset)
+  if not ok or isSecret(value) then
+    return 0
+  end
+  return math.floor(tonumber(value) or 0)
+end
+
+--[[ Qué barra de reemplazo puso el juego, con el mismo orden de prioridad que su
+     ActionBarController, o nil si el jugador tiene su barra normal. Hace falta el dato en Lua,
+     y no solo dentro del entorno seguro, para decidir dos cosas que las condiciones de macro no
+     pueden: la opacidad de la fila y si conviene devolverle la barra con arte a Blizzard. ]]
+function AB:ReplacementBarState()
+  --- `CanExitVehicle` entra en la lista porque en las misiones que sientan al jugador en un puesto
+  --- (el vendedor que te deja a cargo) es la única de estas que responde con un valor legible.
+  if
+    apiFlag(UnitHasVehicleUI, "player")
+    or apiFlag(HasVehicleActionBar)
+    or apiFlag(IsPossessBarVisible)
+    or apiFlag(CanExitVehicle)
+  then
+    return "vehicle"
+  end
+  if apiFlag(HasOverrideActionBar) then
+    return "override"
+  end
+  if apiFlag(HasTempShapeshiftActionBar) then
+    return "shapeshift"
+  end
+  local bonus = bonusBarOffset()
+  if bonus == 5 then
+    return "sky"
+  end
+  if bonus >= 1 and bonus <= 4 then
+    return "bonus" .. bonus
+  end
+  return nil
+end
+
+--- Tri-estado: `nil` cuando la ranura no se puede leer (valor secreto o API ausente). Afirmar
+--- «no hay acción» sobre un dato ilegible dejaría al jugador sin barra.
+local function actionExists(slot)
+  if type(HasAction) ~= "function" or not slot then
+    return nil
+  end
+  local ok, value = pcall(HasAction, slot)
+  if not ok or isSecret(value) then
+    return nil
+  end
+  return value and true or false
+end
+
+--- La página que el juego usa para la situación actual, con su prioridad. Devuelve el offset de
+--- slots o nil si el cliente todavía no la expone.
+function AB:SituationOffset(state)
+  if state == "vehicle" or state == "override" or state == "shapeshift" then
+    if apiFlag(UnitHasVehicleUI, "player") or apiFlag(HasVehicleActionBar) then
+      return specialPageOffset(specialPage("vehicle", GetVehicleBarIndex))
+    end
+    if apiFlag(HasOverrideActionBar) then
+      return specialPageOffset(specialPage("override", GetOverrideBarIndex))
+    end
+    if apiFlag(HasTempShapeshiftActionBar) then
+      return specialPageOffset(specialPage("shapeshift", GetTempShapeshiftBarIndex))
+    end
+    return nil
+  end
+  local bonus = bonusBarOffset()
+  if bonus >= 1 and bonus <= 4 then
+    return pageOffset(BONUS_PAGE[bonus])
+  end
+  if state == "sky" then
+    return pageOffset(SKY_PAGE[VEHICLE_BAR_ID])
+  end
+  return nil
+end
+
+--[[ El estado activo y si la barra 1 lo tiene cubierto de verdad. La prueba es lo que el jugador
+     tiene en la mano: el primer botón apuntando a la primera ranura de la página de la situación.
+     Mirar el driver no alcanzaba —tener la condición registrada no significa que se haya activado—
+     y decirse «cubierto» de más es el peor caso: esconde la barra de Blizzard y deja al jugador sin
+     forma de avanzar la misión. Ante cualquier dato ilegible o ausente se declara sin cubrir. ]]
+function AB:ReplacementCoverage()
+  local state = self:ReplacementBarState()
+  if not state then
+    return nil, false
+  end
+  local offset = self:SituationOffset(state)
+  if not offset or actionExists(offset + 1) == false then
+    return state, false
+  end
+  local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
+  local first = bar and bar.buttons and bar.buttons[1]
+  local raw = first and first:GetAttribute("action")
+  local action = (not isSecret(raw)) and tonumber(raw) or nil
+  return state, action == offset + 1
+end
+
+--- Mientras la situación está activa el índice de página sí existe: se aprende para el respaldo del
+--- entorno seguro y para el diagnóstico. Los atributos de la barra se tocan solo fuera de combate.
+function AB:LearnSpecialPages()
+  local vehicle = specialPage("vehicle", GetVehicleBarIndex)
+  local override = specialPage("override", GetOverrideBarIndex)
+  local shapeshift = specialPage("shapeshift", GetTempShapeshiftBarIndex)
+  local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
+  if not bar or InCombatLockdown() then
+    return
+  end
+  bar:SetAttribute("offset-vehicle", specialPageOffset(vehicle))
+  bar:SetAttribute("offset-override", specialPageOffset(override))
+  bar:SetAttribute("offset-shapeshift", specialPageOffset(shapeshift))
+end
+
+--[[ Reaplica el paginado. El snippet pregunta por la barra que declara el juego, así que no depende
+     de que una condición de macro se haya activado. `Execute` termina en `SetAttribute`: en combate
+     o en el lockdown del reconectado esa llamada está prohibida y, si se deja escapar, cada evento
+     de barra la repite y BugGrabber traba la UI. Se difiere hasta salir de combate. ]]
+function AB:SchedulePagingRetry()
+  if self._pagingRetry or not C_Timer or not C_Timer.After then
+    return
+  end
+  if (self._pagingTries or 0) >= 5 then
+    return
+  end
+  self._pagingRetry = true
+  self._pagingTries = (self._pagingTries or 0) + 1
+  C_Timer.After(1, function()
+    AB._pagingRetry = nil
+    if AB._pendingPaging and not InCombatLockdown() then
+      AB._pendingPaging = nil
+      AB:ReapplyPaging()
+    end
+  end)
+end
+
+function AB:ReapplyPaging()
+  if not self._bars then
+    return
+  end
+  if InCombatLockdown() then
+    self._pendingPaging = true
+    return
+  end
+  --- Las cuatro, no solo la barra 1: las de skyriding también pueden quedar en una página vieja si
+  --- su estado no cambió, y entonces la fila se queda con los iconos de la situación anterior.
+  for barId = 1, 4 do
+    local bar = self._bars[tostring(barId)]
+    if bar and bar.Execute then
+      local ok = pcall(bar.Execute, bar, APPLY_PAGE_OFFSET)
+      if not ok then
+        self._pendingPaging = true
+        self:SchedulePagingRetry()
+        return
+      end
+    end
+  end
+  self._pagingTries = nil
+end
+
+--- Estados de página por barra, en orden de prioridad (vehículo gana sobre skyriding).
+local function buildPageStates(bar, barId)
+  local conditions = {}
+  bar:SetAttribute("situationBar", barId == VEHICLE_BAR_ID)
+  bar:SetAttribute("offset-normal", pageOffset(barId))
+  bar:SetAttribute("offset-vehicle", nil)
+  bar:SetAttribute("offset-override", nil)
+  bar:SetAttribute("offset-shapeshift", nil)
+  bar:SetAttribute("offset-sky", nil)
+  for bonus = 1, 4 do
+    bar:SetAttribute("offset-bonus" .. bonus, nil)
+  end
+
+  --[[ Mismo orden que ActionBarController de Blizzard: vehículo, override, shapeshift temporal.
+       Los tres estados se registran siempre, aunque el índice de página todavía no exista: sin la
+       condición en el driver la barra 1 nunca se enteraba de la situación. El offset lo resuelve
+       `APPLY_PAGE_OFFSET` cuando el juego declara la barra. ]]
+  if barId == VEHICLE_BAR_ID and db().vehiclePaging ~= false then
+    bar:SetAttribute("offset-vehicle", specialPageOffset(specialPage("vehicle", GetVehicleBarIndex)))
+    bar:SetAttribute("offset-override", specialPageOffset(specialPage("override", GetOverrideBarIndex)))
+    bar:SetAttribute(
+      "offset-shapeshift",
+      specialPageOffset(specialPage("shapeshift", GetTempShapeshiftBarIndex))
+    )
+    --[[ `[canexitvehicle]` entra en la lista aunque parezca de más: en las misiones que sientan al
+         jugador en un puesto —el vendedor que te deja a cargo— las otras tres condiciones son
+         falsas y el driver se quedaba en `normal`, así que el snippet no corría nunca y la barra 1
+         seguía con las habilidades del jugador. Es la misma condición que muestra la flecha de
+         salir, que en esas misiones sí aparece. Que la situación tenga barra propia lo decide el
+         snippet: si el juego no declara ninguna, trata el estado como normal. ]]
+    conditions[#conditions + 1] = "[vehicleui][possessbar][canexitvehicle] vehicle"
+    conditions[#conditions + 1] = "[overridebar] override"
+    conditions[#conditions + 1] = "[shapeshift] shapeshift"
+  end
+
+  --[[ Barras de bonus 1–4 (páginas 7–10). Sin estos estados la barra 1 se queda en la página
+       normal justo cuando el juego cambió de situación —una habilidad temporal de misión, una
+       forma, el sigilo—, y como el arte de Blizzard está oculto esas acciones no aparecen en
+       ninguna parte. Es el mismo cálculo que hace su ActionBarController. ]]
+  if barId == VEHICLE_BAR_ID and db().bonusPaging ~= false then
+    for bonus = 1, 4 do
+      bar:SetAttribute("offset-bonus" .. bonus, pageOffset(BONUS_PAGE[bonus]))
+      conditions[#conditions + 1] = "[bonusbar:" .. bonus .. "] bonus" .. bonus
+    end
+  end
+
+  local skyPage = SKY_PAGE[barId]
+  if skyPage and db().skyridingPaging ~= false then
+    bar:SetAttribute("offset-sky", pageOffset(skyPage))
+    conditions[#conditions + 1] = SKYRIDING_COND .. " sky"
+  end
+
+  if #conditions == 0 then
+    return nil
+  end
+  conditions[#conditions + 1] = "normal"
+  return table.concat(conditions, "; ")
+end
+
+local function applySecurePaging(bar, barId)
+  if InCombatLockdown() then
+    return
+  end
+  local driver = buildPageStates(bar, barId)
+  if not driver then
+    UnregisterStateDriver(bar, "page")
+    bar:SetAttribute("state-page", "normal")
+    bar:Execute(APPLY_PAGE_OFFSET)
+    return
+  end
+  bar:SetAttribute("_onstate-page", APPLY_PAGE_OFFSET)
+  RegisterStateDriver(bar, "page", driver)
+  --[[ `ensureButton` acaba de reescribir el `action` de cada botón con su ranura normal, y el driver
+       solo vuelve a correr el snippet cuando su estado *cambia*: si el refresco cae en medio de una
+       situación —el juego manda varios eventos seguidos— la barra 1 se quedaba con las habilidades
+       del jugador y un `actionOffset` de la situación que ya nadie aplicaba. Se reaplica a mano. ]]
+  bar:Execute(APPLY_PAGE_OFFSET)
+end
+
+-- ActionBarButtonTemplate fija cromado (Normal/borde) en tamaño nativo;
+-- SetSize solo no lo escala (IgnoreParentScale). Escalar el botón entero.
+local function applyButtonSize(btn, size)
+  local native = btn._chukieNativeW
+  if not native or native < 1 then
+    native = btn:GetWidth() or 0
+    if native < 1 then
+      native = 45
+    end
+    btn._chukieNativeW = native
+    btn._chukieNativeH = btn:GetHeight() > 0 and btn:GetHeight() or native
+  end
+  local nativeH = btn._chukieNativeH or native
+  btn:SetSize(native, nativeH)
+  btn:SetScale(size / native)
+  for _, r in ipairs({
+    btn.icon,
+    btn.Icon,
+    btn.NormalTexture,
+    btn.GetNormalTexture and btn:GetNormalTexture() or nil,
+    btn.PushedTexture,
+    btn.GetPushedTexture and btn:GetPushedTexture() or nil,
+    btn.HighlightTexture,
+    btn.GetHighlightTexture and btn:GetHighlightTexture() or nil,
+    btn.CheckedTexture,
+    btn.GetCheckedTexture and btn:GetCheckedTexture() or nil,
+    btn.Flash,
+    btn.Border,
+    btn.NewActionTexture,
+    btn.SlotBackground,
+    btn.IconMask,
+  }) do
+    if r and r.SetIgnoreParentScale then
+      r:SetIgnoreParentScale(false)
+    end
+  end
+end
+
+local function layoutBarButtons(bar, cols, buttonSize, spacing)
+  local buttons = bar.buttons
+  local n = #buttons
+  cols = math.max(1, cols or n)
+  local rows = math.ceil(n / cols)
+  local gap = spacing or 2
+  local size = buttonSize or 36
+  for i = 1, n do
+    local btn = buttons[i]
+    local col = (i - 1) % cols
+    local row = math.floor((i - 1) / cols)
+    btn:ClearAllPoints()
+    applyButtonSize(btn, size)
+    btn:SetPoint("TOPLEFT", bar, "TOPLEFT", col * (size + gap), -row * (size + gap))
+    if not InCombatLockdown() then
+      btn:SetAttribute("statehidden", false)
+    end
+    btn:Show()
+  end
+  local w = cols * size + math.max(0, cols - 1) * gap
+  local h = rows * size + math.max(0, rows - 1) * gap
+  bar:SetSize(math.max(1, w), math.max(1, h))
+end
+
+--- Botón de bajarse: vive sobre la barra 1 y un tercio más grande que sus botones.
+local VEHICLE_EXIT_SIZE_FACTOR = 4 / 3
+local VEHICLE_EXIT_ICON = [[Interface\Vehicles\UI-Vehicles-Button-Exit-Up]]
+--- Mismo estado que usa Dominos: sirve para vehículo, taxi y posesión.
+local VEHICLE_EXIT_VISIBILITY = "[canexitvehicle][possessbar] show; hide"
+
+local function vehicleExitIcon(btn)
+  return btn.icon or btn.Icon
+end
+
+local function vehicleExitOnClick(btn)
+  btn:SetChecked(false)
+  if UnitOnTaxi and UnitOnTaxi("player") then
+    if TaxiRequestEarlyLanding then
+      TaxiRequestEarlyLanding()
+      local icon = vehicleExitIcon(btn)
+      if icon then
+        icon:SetDesaturated(true)
+      end
+      btn:SetChecked(true)
+      btn:Disable()
+    end
+    return
+  end
+  if CanExitVehicle and CanExitVehicle() then
+    if VehicleExit then
+      VehicleExit()
+    end
+    return
+  end
+  if CancelPetPossess then
+    CancelPetPossess()
+  end
+end
+
+local function vehicleExitOnEnter(btn)
+  GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+  if UnitOnTaxi and UnitOnTaxi("player") then
+    GameTooltip:SetText(_G.TAXI_CANCEL or "Cancelar vuelo", 1, 1, 1)
+    if _G.TAXI_CANCEL_DESCRIPTION then
+      GameTooltip:AddLine(_G.TAXI_CANCEL_DESCRIPTION, nil, nil, nil, true)
+    end
+  elseif CanExitVehicle and CanExitVehicle() then
+    GameTooltip:SetText(_G.LEAVE_VEHICLE or "Bajarse", 1, 1, 1)
+  else
+    GameTooltip:SetText(_G.CANCEL or "Cancelar", 1, 1, 1)
+  end
+  GameTooltip:Show()
+end
+
+local function vehicleExitOnLeave(btn)
+  if GameTooltip:IsOwned(btn) then
+    GameTooltip:Hide()
+  end
+end
+
+function AB:EnsureVehicleExitButton()
+  if self._vehicleExit then
+    return self._vehicleExit
+  end
+  if InCombatLockdown() then
+    return nil
+  end
+  local template = _G.SmallActionButtonMixin and "SmallActionButtonTemplate" or "ActionButtonTemplate"
+  local id = _G.POSSESS_CANCEL_SLOT or 2
+  local ok, btn = pcall(CreateFrame, "CheckButton", "ChukieUi_VehicleExit", UIParent, template, id)
+  if not ok or not btn then
+    return nil
+  end
+  btn:SetScript("OnClick", vehicleExitOnClick)
+  btn:SetScript("OnEnter", vehicleExitOnEnter)
+  btn:SetScript("OnLeave", vehicleExitOnLeave)
+  if btn.cooldown and btn.cooldown.SetSwipeColor then
+    btn.cooldown:SetSwipeColor(0, 0, 0)
+  end
+  self._vehicleExit = btn
+  return btn
+end
+
+--- En posesión el icono es el de cancelar; en vehículo/taxi, la flecha de salida.
+function AB:UpdateVehicleExitButton()
+  local btn = self._vehicleExit
+  if not btn then
+    return
+  end
+  local icon = vehicleExitIcon(btn)
+  if not icon then
+    return
+  end
+  local texture = GetPossessInfo and GetPossessInfo(btn:GetID())
+  if isSecret(texture) then
+    texture = nil
+  end
+  local exiting = UnitControllingVehicle
+    and UnitControllingVehicle("player")
+    and CanExitVehicle
+    and CanExitVehicle()
+  if exiting or not texture then
+    icon:SetTexture(VEHICLE_EXIT_ICON)
+    icon:SetTexCoord(0.140625, 0.859375, 0.140625, 0.859375)
+  else
+    icon:SetTexture(texture)
+    icon:SetTexCoord(0, 1, 0, 1)
+  end
+  icon:SetVertexColor(1, 1, 1)
+  icon:SetDesaturated(false)
+  btn:SetChecked(false)
+  btn:Enable()
+end
+
+function AB:LayoutVehicleExitButton(bar, size, gap)
+  local d = db()
+  local wanted = bar and d.vehiclePaging ~= false and d.vehicleExitButton ~= false
+  if not wanted then
+    local btn = self._vehicleExit
+    if btn then
+      UnregisterStateDriver(btn, "visibility")
+      btn:Hide()
+    end
+    return
+  end
+  local btn = self:EnsureVehicleExitButton()
+  if not btn then
+    return
+  end
+  applyButtonSize(btn, size * VEHICLE_EXIT_SIZE_FACTOR)
+  if btn:GetParent() ~= bar then
+    btn:SetParent(bar)
+  end
+  btn:ClearAllPoints()
+  --- El offset va en la escala del propio botón: compensar para que el hueco sea el pedido.
+  local scale = btn:GetScale()
+  if not scale or scale <= 0 then
+    scale = 1
+  end
+  btn:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", 0, gap / scale)
+  self:UpdateVehicleExitButton()
+  RegisterStateDriver(btn, "visibility", VEHICLE_EXIT_VISIBILITY)
+end
+
+function AB:GetMasqueGroup()
+  if db().useMasque == false then
+    return nil
+  end
+  local stub = _G.LibStub
+  if not stub then
+    return nil
+  end
+  local msq = stub("Masque", true)
+  if not msq or type(msq.Group) ~= "function" then
+    return nil
+  end
+  if not self._masqueGroup then
+    self._masqueGroup = msq:Group("Chukie UI", "ActionBars")
+  end
+  return self._masqueGroup
+end
+
+function AB:MasqueStrip()
+  local grp = self._masqueGroup
+  if not grp or type(grp.RemoveButton) ~= "function" or not self._bars then
+    return
+  end
+  for _, bar in pairs(self._bars) do
+    if bar and bar.buttons then
+      for i = 1, #bar.buttons do
+        grp:RemoveButton(bar.buttons[i])
+      end
+    end
+  end
+end
+
+function AB:MasqueApply()
+  if db().useMasque == false then
+    self:MasqueStrip()
+    return
+  end
+  local grp = self:GetMasqueGroup()
+  if not grp or not self._bars then
+    self:MasqueStrip()
+    return
+  end
+  self:MasqueStrip()
+  for _, bar in pairs(self._bars) do
+    if bar and bar:IsShown() and bar.buttons then
+      for i = 1, #bar.buttons do
+        local btn = bar.buttons[i]
+        if btn and btn:IsShown() and grp.AddButton then
+          -- Tipo Action: Masque toma Icon/Normal/borde del ActionBarButtonTemplate.
+          grp:AddButton(btn, nil, "Action")
+        end
+      end
+    end
+  end
+  if grp.ReSkin then
+    grp:ReSkin()
+  end
+end
+
+function AB:EnsureBar(barId, numButtons)
+  self._bars = self._bars or {}
+  local key = tostring(barId)
+  local bar = self._bars[key]
+  if not bar then
+    bar = CreateFrame("Frame", "ChukieUi_ActionBar" .. barId, UIParent, "SecureHandlerStateTemplate")
+    bar:SetFrameStrata("MEDIUM")
+    bar:SetFrameLevel(50)
+    bar.barId = barId
+    bar.buttons = {}
+    self._bars[key] = bar
+  end
+  if InCombatLockdown() then
+    self._pendingRefresh = true
+    return bar
+  end
+
+  numButtons = math.max(1, math.min(BUTTONS_PER_BAR, tonumber(numButtons) or BUTTONS_PER_BAR))
+  bar:SetAttribute("numButtons", numButtons)
+  --- Los slots de una página siguen siendo 12 aunque la barra muestre 6 botones.
+  bar:SetAttribute("buttonsPerPage", BUTTONS_PER_BAR)
+
+  for i = 1, numButtons do
+    local btn = ensureButton(bar, barId, i)
+    if btn:GetParent() ~= bar then
+      btn:SetParent(bar)
+    end
+    bar:SetFrameRef("btn" .. i, btn)
+    bar.buttons[i] = btn
+  end
+  for i = numButtons + 1, #bar.buttons do
+    local btn = bar.buttons[i]
+    if btn then
+      btn:SetAttribute("statehidden", true)
+      btn:Hide()
+    end
+  end
+  -- trim extras from table length used by layout
+  for i = #bar.buttons, numButtons + 1, -1 do
+    bar.buttons[i] = nil
+  end
+
+  if SKY_PAGE[barId] then
+    applySecurePaging(bar, barId)
+  else
+    UnregisterStateDriver(bar, "page")
+    local offset = pageOffset(barId)
+    bar:SetAttribute("actionOffset", offset)
+    for i = 1, numButtons do
+      bar.buttons[i]:SetAttribute("action", actionFor(barId, i))
+    end
+  end
+
+  return bar
+end
+
+--- Slots (numeración Dominos) que muestran las barras 1–4, incluidas las páginas de skyriding y
+--- de bonus a las que pagina la barra 1. Una página puede repetirse entre mapeos, así que se
+--- filtra: un slot duplicado se guardaría y repondría dos veces.
+function AB:GetLeftActionSlots()
+  local slots, seen = {}, {}
+  local function addPage(page)
+    local offset = pageOffset(page)
+    for i = 1, BUTTONS_PER_BAR do
+      local slot = offset + i
+      if not seen[slot] then
+        seen[slot] = true
+        slots[#slots + 1] = slot
+      end
+    end
+  end
+  local skyriding = db().skyridingPaging ~= false
+  local bonus = db().bonusPaging ~= false
+  for i = 1, #LEFT_BAR_IDS do
+    local id = LEFT_BAR_IDS[i]
+    addPage(id)
+    local sky = SKY_PAGE[id]
+    if sky and skyriding then
+      addPage(sky)
+    end
+    if id == VEHICLE_BAR_ID and bonus then
+      for index = 1, 4 do
+        addPage(BONUS_PAGE[index])
+      end
+    end
+  end
+  return slots
+end
+
+function AB:HideStockBars()
+  if InCombatLockdown() then
+    return
+  end
+  if db().hideBlizzardArt == false then
+    return
+  end
+  for i = 1, #STOCK_BARS_TO_HIDE do
+    -- clearEvents en MultiBars; MainMenuBar/MainActionBar conservan algunos eventos.
+    local name = STOCK_BARS_TO_HIDE[i]
+    local clearEvents = name ~= "MainMenuBar" and name ~= "MainActionBar"
+    hideBarFrame(_G[name], clearEvents)
+  end
+  for p = 1, #STOCK_BUTTON_PREFIXES do
+    local prefix = STOCK_BUTTON_PREFIXES[p]
+    for i = 1, 12 do
+      hideBarButton(_G[prefix .. i])
+    end
+  end
+  -- El botón de bajarse de Blizzard duplicaría el nuestro.
+  if db().vehicleExitButton ~= false then
+    hideBarFrame(_G.MainMenuBarVehicleLeaveButton, true)
+  end
+  -- MainMenuBar: eventos que la vuelven a mostrar.
+  if MainMenuBar and MainMenuBar.UnregisterEvent then
+    pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "PLAYER_REGEN_ENABLED")
+    pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "PLAYER_REGEN_DISABLED")
+    pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "ACTIONBAR_SHOWGRID")
+    pcall(MainMenuBar.UnregisterEvent, MainMenuBar, "ACTIONBAR_HIDEGRID")
+  end
+end
+
+--[[ Barra de misión / vehículo con arte propio (OverrideActionBar): Blizzard la muestra flotando
+     cuando hay override o vehículo. Solo se manda al contenedor oculto —que resiste los Show() del
+     juego incluso en combate— cuando la barra 1 está mostrando esas mismas acciones y la de
+     Blizzard duplica.
+
+     Lo que importa es el sesgo de la duda: si el estado no se puede leer, si el cliente no expone
+     la página, si esa página está vacía o si la barra 1 se quedó en las habilidades del jugador,
+     ocultarla dejaría al jugador sin forma de usar la habilidad del evento y sin poder avanzar la
+     misión. En todos esos casos se devuelve a UIParent y manda Blizzard. Son llamadas protegidas:
+     en combate quedan pendientes hasta salir. ]]
+function AB:UpdateOverrideArtBar()
+  local bar = _G.OverrideActionBar
+  if not bar then
+    return
+  end
+  local state, covered = self:ReplacementCoverage()
+  local routed = self.IsEnabled() and db().leftEnabled ~= false and db().vehiclePaging ~= false
+  --[[ Se esconde solo con certeza: situación detectada y con la barra 1 mostrando sus acciones. Si
+       el estado no se puede leer —desde 12.0 estas API pueden devolver valores secretos— o la barra
+       1 se quedó en las habilidades del jugador, manda Blizzard: quedarse sin la barra del evento
+       traba la misión, que es el peor resultado posible. ]]
+  local hide = routed and state ~= nil and covered
+  if self._overrideArtHidden == hide then
+    return
+  end
+  if InCombatLockdown() then
+    self._pendingOverrideArt = true
+    return
+  end
+  self._pendingOverrideArt = nil
+  if hide then
+    hideBarFrame(bar, false)
+  else
+    --- La habíamos escondido con Hide(), así que el juego no la va a volver a mostrar solo:
+    --- se fuerza, pero únicamente en las situaciones que este marco atiende.
+    restoreBarFrame(bar, state == "vehicle" or state == "override")
+  end
+  self._overrideArtHidden = hide
+end
+
+function AB:HideAll()
+  self:LayoutVehicleExitButton(nil)
+  if self._leftBlock then
+    self._leftBlock:Hide()
+  end
+  if not self._bars then
+    return
+  end
+  for _, bar in pairs(self._bars) do
+    if bar then
+      bar:Hide()
+    end
+  end
+end
+
+--- Las barras 1–4 viven en un contenedor propio anclado al centro de la pantalla.
+--- Límite de los offsets: el triple del rango anterior y simétrico respecto al centro.
+local LEFT_OFFSET_LIMIT = 1800
+
+local function clampLeftOffset(value)
+  value = tonumber(value) or 0
+  return math.max(-LEFT_OFFSET_LIMIT, math.min(LEFT_OFFSET_LIMIT, value))
+end
+
+--- Capa de barras de acción: por debajo de menús, diálogos y alertas.
+local LEFT_BLOCK_STRATA = "MEDIUM"
+local LEFT_BLOCK_LEVEL = 20
+
+function AB:EnsureLeftBlock()
+  local block = self._leftBlock
+  if not block then
+    block = CreateFrame("Frame", "ChukieUi_LeftBarsBlock", UIParent)
+    block:EnableMouse(false)
+    block:SetMovable(true)
+    self._leftBlock = block
+  end
+  block:SetFrameStrata(LEFT_BLOCK_STRATA)
+  block:SetFixedFrameStrata(true)
+  block:SetFrameLevel(LEFT_BLOCK_LEVEL)
+  return block
+end
+
+local function getRightHost()
+  if ns.RightPanel and ns.RightPanel.EnsureRightPanel then
+    local h = ns.RightPanel:EnsureRightPanel()
+    if h then
+      return h
+    end
+  end
+  return _G.ChukieUi_RightPanel or UIParent
+end
+
+--- Opacidad individual de las 24 celdas fijas (4 barras × 6 botones).
+function AB:GetLeftButtonAlphaPercent(barId, buttonIndex)
+  local rows = db().leftButtonAlphaPercent
+  local row = type(rows) == "table" and rows[barId] or nil
+  local value = type(row) == "table" and tonumber(row[buttonIndex]) or 100
+  return math.max(10, math.min(100, math.floor((value or 100) + 0.5)))
+end
+
+function AB:ApplyLeftButtonAlphas()
+  --[[ Mientras el juego reemplaza la barra 1 (vehículo, misión, evento, forma) esa fila deja de
+       ser la del jugador: son acciones que aparecieron solas y que hay que poder leer, así que
+       se muestran opacas y recuperan la opacidad configurada al terminar la situación. Solo se
+       fuerza si nuestro paginado cubre el estado; si no, la barra sigue mostrando las
+       habilidades normales y no hay motivo para cambiarle nada. ]]
+  local state, covered = self:ReplacementCoverage()
+  local opaqueBar = (state and covered and OPAQUE_STATES[state]) and VEHICLE_BAR_ID or nil
+  for barId = 1, 4 do
+    local bar = self._bars and self._bars[tostring(barId)]
+    if bar and bar.buttons then
+      for buttonIndex = 1, LEFT_BUTTONS_PER_BAR do
+        local btn = bar.buttons[buttonIndex]
+        if btn then
+          local percent = 100
+          if barId ~= opaqueBar then
+            percent = self:GetLeftButtonAlphaPercent(barId, buttonIndex)
+          end
+          btn:SetAlpha(percent / 100)
+        end
+      end
+    end
+  end
+end
+
+function AB:SetLeftButtonAlphaPercent(barId, buttonIndex, value)
+  barId = math.floor(tonumber(barId) or 0)
+  buttonIndex = math.floor(tonumber(buttonIndex) or 0)
+  if barId < 1 or barId > 4 or buttonIndex < 1 or buttonIndex > LEFT_BUTTONS_PER_BAR then
+    return false
+  end
+  value = math.max(10, math.min(100, math.floor((tonumber(value) or 100) + 0.5)))
+  local d = db()
+  d.leftButtonAlphaPercent = type(d.leftButtonAlphaPercent) == "table" and d.leftButtonAlphaPercent or {}
+  d.leftButtonAlphaPercent[barId] =
+    type(d.leftButtonAlphaPercent[barId]) == "table" and d.leftButtonAlphaPercent[barId] or {}
+  d.leftButtonAlphaPercent[barId][buttonIndex] = value
+  if InCombatLockdown() then
+    self._pendingRefresh = true
+  else
+    self:ApplyLeftButtonAlphas()
+  end
+  return true
+end
+
+function AB:ResetLeftButtonAlphas()
+  db().leftButtonAlphaPercent = {}
+  if InCombatLockdown() then
+    self._pendingRefresh = true
+  else
+    self:ApplyLeftButtonAlphas()
+  end
+end
+
+--- El pliegue tiene que ser seguro: en combate un clic normal no puede ocultar estos botones.
+--- `skipclick` lo pone el arrastre, también en código seguro, para que mover no pliegue.
+local PAD_TOGGLE_CLICK = [[
+  if self:GetAttribute("skipclick") then
+    self:SetAttribute("skipclick", false)
+    return
+  end
+  local pad = self:GetFrameRef("pad")
+  if not pad then return end
+  if pad:IsShown() then
+    pad:Hide()
+  else
+    pad:Show()
+  end
+  self:SetAttribute("padshown", pad:IsShown() and true or false)
+]]
+
+local PAD_TOGGLE_DRAG = [[
+  self:SetAttribute("skipclick", true)
+]]
+
+local function padToggleLocked()
+  return db().keyzenPadLocked ~= false
+end
+
+local function applyPadToggleChrome(toggle, locked)
+  if toggle.Border then
+    if locked then
+      toggle.Border:SetColorTexture(0.72, 0.6, 0.22, 0.95)
+    else
+      toggle.Border:SetColorTexture(0.2, 0.75, 0.32, 0.95)
+    end
+  end
+  if locked or (InCombatLockdown and InCombatLockdown()) then
+    toggle:RegisterForDrag()
+  else
+    toggle:RegisterForDrag("LeftButton")
+  end
+  if toggle.EnableMouseWheel then
+    pcall(toggle.EnableMouseWheel, toggle, not locked)
+  end
+end
+
+local function showPadToggleTip(toggle)
+  GameTooltip:SetOwner(toggle, "ANCHOR_RIGHT")
+  local shown = toggle:GetAttribute("padshown")
+  local locked = padToggleLocked()
+  GameTooltip:SetText((shown == true or shown == 1) and "Ocultar botonera" or "Mostrar botonera")
+  GameTooltip:AddLine(locked and "Clic derecho: desbloquear" or "Clic derecho: bloquear", 1, 1, 1)
+  if not locked then
+    GameTooltip:AddLine("Arrastrá con el clic izquierdo para mover.", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Rueda: zoom, con este botón fijo.", 0.8, 0.8, 0.8)
+  end
+  GameTooltip:Show()
+end
+
+--- La rueda cambia el tamaño de toda la botonera y corrige el offset para que
+--- el botón de la esquina siga en el mismo punto de la pantalla.
+local function zoomKeyzenPad(toggle, delta)
+  if not toggle or padToggleLocked() or (InCombatLockdown and InCombatLockdown()) then
+    return
+  end
+  local d = db()
+  local old = math.max(18, math.min(64, tonumber(d.leftButtonSize) or 36))
+  local new = math.max(18, math.min(64, old + (delta > 0 and 2 or -2)))
+  if new == old then
+    return
+  end
+  local ax, ay = toggle:GetCenter()
+  local aScale = toggle:GetEffectiveScale() or 1
+  if ax and ay then
+    ax, ay = ax * aScale, ay * aScale
+  end
+  d.leftButtonSize = new
+  AB:Refresh()
+  if not ax or not ay then
+    return
+  end
+  local bx, by = toggle:GetCenter()
+  local bScale = toggle:GetEffectiveScale() or 1
+  local parentScale = UIParent:GetEffectiveScale() or 1
+  if not bx or not by or parentScale == 0 then
+    return
+  end
+  bx, by = bx * bScale, by * bScale
+  d.leftOffsetX = clampLeftOffset((tonumber(d.leftOffsetX) or 0) + (ax - bx) / parentScale)
+  d.leftOffsetY = clampLeftOffset((tonumber(d.leftOffsetY) or 0) + (ay - by) / parentScale)
+  AB:Refresh()
+end
+
+local function saveBlockCenter(block)
+  local cx, cy = block:GetCenter()
+  local ux, uy = UIParent:GetCenter()
+  if not cx or not cy or not ux or not uy then
+    return
+  end
+  local scale = block:GetEffectiveScale() or 1
+  local parentScale = UIParent:GetEffectiveScale() or 1
+  if parentScale == 0 then
+    return
+  end
+  local offX = clampLeftOffset(((cx * scale) - (ux * parentScale)) / parentScale)
+  local offY = clampLeftOffset(((cy * scale) - (uy * parentScale)) / parentScale)
+  local d = db()
+  d.leftOffsetX = offX
+  d.leftOffsetY = offY
+  block:ClearAllPoints()
+  block:SetPoint("CENTER", UIParent, "CENTER", offX, offY)
+end
+
+local function syncPadToggleLabel(toggle, shown)
+  if toggle.Label then
+    toggle.Label:SetText(shown and "–" or "+")
+  end
+end
+
+function AB:EnsureKeyzenPad(block)
+  local pad = self._keyzenPad
+  if not pad then
+    pad = CreateFrame("Frame", "ChukieUi_KeyzenPad", block, "SecureHandlerBaseTemplate")
+    pad:EnableMouse(false)
+    self._keyzenPad = pad
+  elseif pad:GetParent() ~= block then
+    pad:SetParent(block)
+  end
+  pad:ClearAllPoints()
+  pad:SetAllPoints(block)
+  pad:SetFrameStrata(LEFT_BLOCK_STRATA)
+  pad:SetFrameLevel(LEFT_BLOCK_LEVEL + 4)
+
+  local toggle = self._keyzenToggle
+  if not toggle then
+    toggle = CreateFrame("Button", "ChukieUi_KeyzenPadToggle", block, "SecureHandlerClickTemplate,SecureHandlerDragTemplate")
+    toggle:RegisterForClicks("LeftButtonUp")
+    toggle:SetFrameRef("pad", pad)
+    toggle:SetAttribute("_onclick", PAD_TOGGLE_CLICK)
+    toggle:SetAttribute("_ondragstart", PAD_TOGGLE_DRAG)
+    local border = toggle:CreateTexture(nil, "BORDER")
+    border:SetAllPoints()
+    border:SetColorTexture(0.72, 0.6, 0.22, 0.95)
+    toggle.Border = border
+    local bg = toggle:CreateTexture(nil, "BACKGROUND")
+    bg:SetPoint("TOPLEFT", 1, -1)
+    bg:SetPoint("BOTTOMRIGHT", -1, 1)
+    bg:SetColorTexture(0.06, 0.06, 0.06, 0.94)
+    toggle.Bg = bg
+    local label = toggle:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    label:SetPoint("CENTER", 0, 1)
+    toggle.Label = label
+    toggle:SetScript("OnAttributeChanged", function(self, key, value)
+      if key ~= "padshown" then
+        return
+      end
+      local shown = value == true or value == 1
+      db().keyzenPadHidden = not shown
+      syncPadToggleLabel(self, shown)
+    end)
+    toggle:SetScript("OnEnter", function(self)
+      self.Bg:SetColorTexture(0.16, 0.14, 0.08, 0.96)
+      showPadToggleTip(self)
+    end)
+    toggle:SetScript("OnLeave", function(self)
+      self.Bg:SetColorTexture(0.06, 0.06, 0.06, 0.94)
+      GameTooltip:Hide()
+    end)
+    toggle:SetScript("OnMouseDown", function(self)
+      self.Label:SetPoint("CENTER", 1, 0)
+    end)
+    toggle:SetScript("OnMouseUp", function(self, button)
+      self.Label:SetPoint("CENTER", 0, 1)
+      if button ~= "RightButton" then
+        return
+      end
+      local d = db()
+      d.keyzenPadLocked = d.keyzenPadLocked == false
+      applyPadToggleChrome(self, d.keyzenPadLocked ~= false)
+      if GameTooltip:IsOwned(self) then
+        showPadToggleTip(self)
+      end
+    end)
+    toggle:HookScript("OnDragStart", function(self)
+      local host = self._chukieBlock
+      if not host or padToggleLocked() or (InCombatLockdown and InCombatLockdown()) then
+        return
+      end
+      host:StartMoving()
+    end)
+    toggle:HookScript("OnDragStop", function(self)
+      local host = self._chukieBlock
+      if not host then
+        return
+      end
+      host:StopMovingOrSizing()
+      saveBlockCenter(host)
+    end)
+    toggle:SetScript("OnMouseWheel", function(self, wheelDelta)
+      zoomKeyzenPad(self, wheelDelta)
+    end)
+    self._keyzenToggle = toggle
+  elseif toggle:GetParent() ~= block then
+    toggle:SetParent(block)
+    toggle:SetFrameRef("pad", pad)
+  end
+  toggle._chukieBlock = block
+  toggle:SetFrameStrata(LEFT_BLOCK_STRATA)
+  toggle:SetFrameLevel(LEFT_BLOCK_LEVEL + 12)
+  applyPadToggleChrome(toggle, padToggleLocked())
+  return pad, toggle
+end
+
+function AB:LayoutLeftBars()
+  local d = db()
+  if not self.IsEnabled() or d.leftEnabled == false then
+    for _, id in ipairs(LEFT_BAR_IDS) do
+      local bar = self._bars and self._bars[tostring(id)]
+      if bar then
+        bar:Hide()
+      end
+    end
+    self:LayoutVehicleExitButton(nil)
+    if self._leftBlock then
+      self._leftBlock:Hide()
+    end
+    return
+  end
+
+  local block = self:EnsureLeftBlock()
+  local mode = padMode()
+  local placed = mode.flow == "placed" and type(mode.cells) == "table"
+  local numButtons = math.max(1, math.min(LEFT_BUTTONS_PER_BAR, tonumber(mode.buttonsPerBar) or LEFT_BUTTONS_PER_BAR))
+  local cols = math.max(1, math.min(numButtons, tonumber(mode.columns) or numButtons))
+  local columns = mode.flow == "column"
+  local size = math.max(18, math.min(64, tonumber(d.leftButtonSize) or 36))
+  local gap = math.max(0, math.min(16, tonumber(d.leftSpacing) or 2))
+  local barGap = math.max(0, math.min(24, tonumber(d.leftBarSpacing) or 4))
+  local offX = clampLeftOffset(d.leftOffsetX)
+  local offY = clampLeftOffset(d.leftOffsetY)
+
+  local totalW, totalH = 0, 0
+  local bars = {}
+  for i = 1, #LEFT_BAR_IDS do
+    local id = LEFT_BAR_IDS[i]
+    local bar = self:EnsureBar(id, numButtons)
+    layoutBarButtons(bar, cols, size, gap)
+    if bar:GetParent() ~= block then
+      bar:SetParent(block)
+    end
+    --- Reafirmar la capa: SetParent propaga la del padre y una sesión vieja pudo dejarla arriba.
+    bar:SetFrameStrata(LEFT_BLOCK_STRATA)
+    bar:SetFrameLevel(LEFT_BLOCK_LEVEL + 5)
+    bar:Show()
+    bars[i] = bar
+    if placed then
+      --- El tamaño lo marca la grilla de celdas, no cada fila.
+    elseif columns then
+      totalH = math.max(totalH, bar:GetHeight())
+      totalW = totalW + bar:GetWidth()
+      if i < #LEFT_BAR_IDS then
+        totalW = totalW + barGap
+      end
+    else
+      totalW = math.max(totalW, bar:GetWidth())
+      totalH = totalH + bar:GetHeight()
+      if i < #LEFT_BAR_IDS then
+        totalH = totalH + barGap
+      end
+    end
+  end
+
+  if placed then
+    local gridCols, gridRows = 1, 1
+    for i = 1, #mode.cells do
+      local cell = mode.cells[i]
+      gridCols = math.max(gridCols, (cell.col or 0) + 1)
+      gridRows = math.max(gridRows, (cell.row or 0) + 1)
+    end
+    totalW = gridCols * size + math.max(0, gridCols - 1) * gap
+    totalH = gridRows * size + math.max(0, gridRows - 1) * barGap
+  end
+
+  --- El centro del bloque queda en el centro de la pantalla más el offset elegido.
+  block:ClearAllPoints()
+  block:SetSize(math.max(1, totalW), math.max(1, totalH))
+  block:SetPoint("CENTER", UIParent, "CENTER", offX, offY)
+  block:Show()
+
+  self:LayoutVehicleExitButton(placed and block or bars[1], size, barGap)
+
+  if placed then
+    local pad, toggle = self:EnsureKeyzenPad(block)
+    for i = 1, #mode.cells do
+      local cell = mode.cells[i]
+      local bar = bars[cell.bar]
+      local btn = bar and bar.buttons and bar.buttons[cell.index]
+      if btn then
+        if btn:GetParent() ~= pad then
+          btn:SetParent(pad)
+        end
+        btn:ClearAllPoints()
+        applyButtonSize(btn, size)
+        btn:SetPoint(
+          "TOPLEFT",
+          block,
+          "TOPLEFT",
+          (cell.col or 0) * (size + gap),
+          -((cell.row or 0) * (size + barGap))
+        )
+        btn._chukieJoyLabel = cell.label
+        btn._chukiePadKey = cell.pad
+        if not InCombatLockdown() then
+          btn:SetAttribute("statehidden", false)
+        end
+        btn:Show()
+        updateHotkeyText(btn)
+      end
+    end
+    --- Esquina inferior izquierda: el hueco bajo JOY #23, a la izquierda de JOY #24.
+    toggle:ClearAllPoints()
+    toggle:SetSize(size, size)
+    local font, _, flags = toggle.Label:GetFont()
+    toggle.Label:SetFont(font, math.max(14, math.floor(size * 0.7)), flags or "OUTLINE")
+    --- Los botones del keypad están escalados y su offset se achica en esa proporción;
+    --- el pliegue no tiene escala, así que se le aplica la misma para quedar en la fila.
+    local rowScale = 1
+    local ref = bars[4] and bars[4].buttons and bars[4].buttons[1]
+    if ref and ref:GetScale() and ref:GetScale() > 0 then
+      rowScale = ref:GetScale()
+    end
+    toggle:SetPoint("TOPLEFT", block, "TOPLEFT", 0, -(4 * (size + barGap)) * rowScale)
+    local shown = d.keyzenPadHidden ~= true
+    if shown then
+      pad:Show()
+    else
+      pad:Hide()
+    end
+    toggle:SetAttribute("padshown", shown)
+    syncPadToggleLabel(toggle, shown)
+    toggle:Show()
+    for i = 1, #bars do
+      bars[i]:Hide()
+    end
+  elseif columns then
+    --- Torres de izquierda a derecha: la barra 1 es la primera columna.
+    local x = 0
+    for i = 1, #bars do
+      local bar = bars[i]
+      bar:ClearAllPoints()
+      bar:SetPoint("TOPLEFT", block, "TOPLEFT", x, 0)
+      x = x + bar:GetWidth() + barGap
+    end
+  else
+    --- Barra 1 arriba → 4 abajo.
+    local y = 0
+    for i = 1, #bars do
+      local bar = bars[i]
+      bar:ClearAllPoints()
+      bar:SetPoint("TOP", block, "TOP", 0, -y)
+      y = y + bar:GetHeight() + barGap
+    end
+  end
+  if not placed then
+    if self._keyzenToggle then
+      self._keyzenToggle:Hide()
+    end
+    if self._keyzenPad then
+      self._keyzenPad:Hide()
+    end
+    for i = 1, #bars do
+      local bar = bars[i]
+      local buttons = bar and bar.buttons
+      if buttons then
+        for b = 1, #buttons do
+          local btn = buttons[b]
+          if btn then
+            if btn:GetParent() ~= bar then
+              btn:SetParent(bar)
+            end
+            if btn._chukieJoyLabel or btn._chukiePadKey then
+              btn._chukieJoyLabel = nil
+              btn._chukiePadKey = nil
+              updateHotkeyText(btn)
+            end
+          end
+        end
+      end
+    end
+  end
+  self:ApplyLeftButtonAlphas()
+end
+
+function AB:LayoutRightBar6()
+  local d = db()
+  if not self.IsEnabled() or d.rightBar6Enabled == false then
+    local bar = self._bars and self._bars[tostring(RIGHT_BAR_ID)]
+    if bar then
+      bar:Hide()
+    end
+    return
+  end
+
+  local host = getRightHost()
+  local numButtons = math.max(1, math.min(12, tonumber(d.rightBar6NumButtons) or 8))
+  local cols = math.max(1, math.min(8, tonumber(d.rightBar6Cols) or 2))
+  local size = math.max(18, math.min(64, tonumber(d.rightBar6ButtonSize) or 36))
+  local gap = math.max(0, math.min(16, tonumber(d.rightBar6Spacing) or 2))
+  local ox = tonumber(d.rightBar6OffsetX) or 8
+  local oy = tonumber(d.rightBar6OffsetY) or 8
+
+  local bar = self:EnsureBar(RIGHT_BAR_ID, numButtons)
+  layoutBarButtons(bar, cols, size, gap)
+  if bar:GetParent() ~= host then
+    bar:SetParent(host)
+  end
+  bar:ClearAllPoints()
+  bar:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", ox, oy)
+  bar:Show()
+end
+
+function AB:Refresh()
+  if InCombatLockdown() then
+    self._pendingRefresh = true
+    return
+  end
+  self._pendingRefresh = nil
+
+  local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
+  if not p or not p.enabled or not self.IsEnabled() then
+    self:MasqueStrip()
+    self:HideAll()
+    --- Sin barras propias, la barra con arte de Blizzard vuelve a ser la única opción.
+    self:UpdateOverrideArtBar()
+    return
+  end
+
+  self:EnsureVisualEvents()
+  self:HideStockBars()
+  self:EnsureDefaultKeybinds()
+  self:LayoutLeftBars()
+  self:LayoutRightBar6()
+  self:UpdateAllBindings()
+  self:MasqueApply()
+  self:UpdateAllVisuals()
+  --- Después del layout: la cobertura se lee de los atributos que acaba de fijar el paginado.
+  self:UpdateSituation()
+end
+
+--- Diagnóstico de situación: sirve para saber, cuando una barra de evento no aparece, si el
+--- juego declaró un reemplazo, si nuestra barra 1 lo cubre y quién está mostrando las acciones.
+function AB:PrintDiagnostics()
+  local d = db()
+  local state, covered = self:ReplacementCoverage()
+  print("|cff00ff00Chukie UI|r barras de acción:")
+  print(
+    "  reemplazo del juego="
+      .. tostring(state or "ninguno")
+      .. " cubierto por la barra 1="
+      .. tostring(covered)
+      .. " bonusbar="
+      .. bonusBarOffset()
+  )
+  print(
+    "  paginado: vehículo="
+      .. tostring(d.vehiclePaging ~= false)
+      .. " bonus="
+      .. tostring(d.bonusPaging ~= false)
+      .. " skyriding="
+      .. tostring(d.skyridingPaging ~= false)
+  )
+  print(
+    "  páginas de situación vistas: vehículo="
+      .. tostring(specialPageSeen.vehicle or "todavía ninguna")
+      .. " override="
+      .. tostring(specialPageSeen.override or "todavía ninguna")
+      .. " forma="
+      .. tostring(specialPageSeen.shapeshift or "todavía ninguna")
+  )
+  local situationOffset = state and self:SituationOffset(state)
+  print(
+    "  situación: offset="
+      .. tostring(situationOffset or "el cliente no la expone")
+      .. " primera acción="
+      .. tostring(situationOffset and actionExists(situationOffset + 1))
+      .. " el botón 1 debería quedar en="
+      .. tostring(situationOffset and (situationOffset + 1) or "-")
+  )
+  local bar = self._bars and self._bars[tostring(VEHICLE_BAR_ID)]
+  if bar then
+    local first = bar.buttons and bar.buttons[1]
+    local rawAction = first and first:GetAttribute("action")
+    print(
+      "  barra 1: estado="
+        .. tostring(bar:GetAttribute("state-page") or "sin driver")
+        .. " offset="
+        .. tostring(bar:GetAttribute("actionOffset"))
+        .. " acción del botón 1="
+        .. (isSecret(rawAction) and "secreta" or tostring(rawAction))
+    )
+  else
+    print("  barra 1: todavía no creada.")
+  end
+  local art = _G.OverrideActionBar
+  if art then
+    local parent = art:GetParent()
+    print(
+      "  OverrideActionBar: padre="
+        .. tostring((parent and parent.GetName and parent:GetName()) or parent)
+        .. " visible="
+        .. tostring(apiFlag(art.IsShown, art))
+        .. " la ocultamos="
+        .. tostring(self._overrideArtHidden == true)
+        .. " pendiente="
+        .. tostring(self._pendingOverrideArt == true)
+    )
+  else
+    print("  OverrideActionBar: no existe en este cliente.")
+  end
+end
+
+function AB:OnRegenEnabled()
+  if self._pendingRefresh then
+    self._pendingPaging = nil
+    self:Refresh()
+    return
+  end
+  if self._pendingPaging then
+    self._pendingPaging = nil
+    self:ReapplyPaging()
+  end
+  if self._pendingOverrideArt then
+    self:UpdateOverrideArtBar()
+  end
+end
+
+local combatEv = CreateFrame("Frame")
+combatEv:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatEv:RegisterEvent("ADDON_LOADED")
+combatEv:SetScript("OnEvent", function(_, event, arg1)
+  if event == "ADDON_LOADED" and arg1 == "Masque" then
+    if AB.IsEnabled and AB.IsEnabled() then
+      AB:Refresh()
+    end
+    return
+  end
+  if event == "PLAYER_REGEN_ENABLED" then
+    AB:OnRegenEnabled()
+  end
+end)

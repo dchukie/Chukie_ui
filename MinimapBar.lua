@@ -1,4 +1,4 @@
---[[ Panel derecho (Retail 12.0.1, ## Interface: 120001 en el .toc).
+--[[ Panel derecho (Retail 12.0.7, ## Interface: 120007 en el .toc).
      - «Solo mapa»: STRIP_FRAMES + descendientes nombrados + marcos del cluster (TrackingFrame, ZoomIn/Out del mapa, InstanceDifficulty, IndicatorFrame…).
      - Addons: barra + política por botón (Defecto / Barra / Oculto) en minimapBar.buttonPolicy + discoveredOrder.
      - Barra de addons: el botón real (LibDBIcon, Zygor, etc.) permanece en el mapa pero oculto; la barra usa proxies
@@ -179,7 +179,26 @@ local MICRO_BUTTON_FALLBACK_NAMES = {
   "StoreMicroButton",
   "PromotionFrameMicroButton",
   "WhatsNewMicroButton",
+  -- Retail 12.0.5+: Housing Dashboard (puede variar el nombre según build).
+  "HousingMicroButton",
+  "HousingDashboardMicroButton",
+  "HousingDashboardButton",
   "MainMenuMicroButton",
+  -- Midnight 12.0.7+: Landing Page / Omnium Folio (vive en el minimapa, no en MICRO_BUTTONS).
+  "ExpansionLandingPageMinimapButton",
+}
+
+local EXTRA_MICROMENU_BUTTON_NAMES = {
+  HousingMicroButton = true,
+  HousingDashboardMicroButton = true,
+  HousingDashboardButton = true,
+  ExpansionLandingPageMinimapButton = true,
+}
+
+--- Iconos cuadrados (no comparten proporción con los micro botones): van al final de la fila
+--- y se escalan por su propio tamaño para no desalinear al resto.
+local TRAILING_MICROMENU_BUTTON_NAMES = {
+  ExpansionLandingPageMinimapButton = true,
 }
 
 --- Botones del micromenú de Blizzard (sufijo «MicroButton»). No deben tratarse como iconos LibDBIcon del minimapa.
@@ -189,6 +208,9 @@ local function isBlizzardMicroMenuButtonName(name)
   end
   if name:find("^LibDBIcon10_", 1, true) then
     return false
+  end
+  if EXTRA_MICROMENU_BUTTON_NAMES[name] then
+    return true
   end
   return name:match("MicroButton$") ~= nil
 end
@@ -226,40 +248,143 @@ function MB:GetMicroMenuButtonFrames()
       end
     end
   end
+  -- Descubrimiento adicional: algunos parches agregan botones fuera de MICRO_BUTTONS.
+  local visited = {}
+  local function scanMicroTree(root)
+    if not root or visited[root] then
+      return
+    end
+    visited[root] = true
+    local i = 1
+    while true do
+      local child = root.GetChildren and select(i, root:GetChildren()) or nil
+      if not child then
+        break
+      end
+      local n = child and child.GetName and child:GetName()
+      if n and isBlizzardMicroMenuButtonName(n) then
+        pushFrame(child)
+      end
+      scanMicroTree(child)
+      i = i + 1
+    end
+  end
+  scanMicroTree(_G.MicroMenu)
+  scanMicroTree(_G.MicroMenuContainer)
+  scanMicroTree(_G.MicroButtonAndBagsBar)
+  scanMicroTree(_G.MainMenuBar)
+  -- Extras fuera del árbol MicroMenu (p. ej. Omnium Folio en el cluster del minimapa).
+  for _, name in ipairs(MICRO_BUTTON_FALLBACK_NAMES) do
+    if EXTRA_MICROMENU_BUTTON_NAMES[name] then
+      pushFrame(_G[name])
+    end
+  end
   return out
 end
 
-function MB:RestoreMicroMenuButtonsFromChukieBar()
-  self:MasqueStripMicromenu()
-  local list = self.microMenuDetached
-  if not list then
+--- Holder oculto: evita que MicroMenuContainer:Layout → GetEdgeButton compare nils
+--- al tener los botones reparentados fuera del árbol Blizzard (mismo enfoque que Dominos).
+local function getMicroMenuHolder()
+  if not MB._microMenuHolder then
+    local h = CreateFrame("Frame", "ChukieUi_MicroMenuHolder", UIParent)
+    h:Hide()
+    h:SetSize(1, 1)
+    MB._microMenuHolder = h
+  end
+  return MB._microMenuHolder
+end
+
+local function chukieOwnsMicromenu()
+  return MB._chukieMicroEmbedded == true
+end
+
+function MB:BanishBlizzardMicroMenuShell()
+  if InCombatLockdown() then
     return
   end
-  for _, btn in ipairs(list) do
-    if btn and type(btn) == "table" then
-      local p = btn.chukieMicroSavedParent
-      if p and type(p) == "table" and p.SetFrameStrata then
-        btn:SetParent(p)
-      elseif MicroButtonAndBagsBar then
-        btn:SetParent(MicroButtonAndBagsBar)
-      elseif MainMenuBar then
-        btn:SetParent(MainMenuBar)
-      end
-      if btn.chukieMicroSavedScale then
-        btn:SetScale(btn.chukieMicroSavedScale)
-      else
-        btn:SetScale(1)
-      end
-      btn.chukieMicroChukieOwned = nil
-      btn.chukieMicroSavedParent = nil
-      btn.chukieMicroSavedScale = nil
-      if btn.Show then
-        btn:Show()
-      end
+  local holder = getMicroMenuHolder()
+  if MicroMenu and MicroMenu.SetParent then
+    if MicroMenu:GetParent() ~= holder then
+      self._savedMicroMenuParent = self._savedMicroMenuParent or MicroMenu:GetParent()
+      MicroMenu:SetParent(holder)
     end
   end
-  wipe(list)
+  if MicroMenuContainer and MicroMenuContainer.SetParent then
+    if MicroMenuContainer:GetParent() ~= holder then
+      self._savedMicroMenuContainerParent = self._savedMicroMenuContainerParent or MicroMenuContainer:GetParent()
+      MicroMenuContainer:SetParent(holder)
+    end
+  end
+end
+
+function MB:RestoreBlizzardMicroMenuShell()
+  if InCombatLockdown() then
+    return
+  end
+  self._chukieMicroEmbedded = false
+  if MicroMenu and MicroMenu.SetParent then
+    local p = self._savedMicroMenuParent
+    if p and p.SetFrameStrata and p ~= getMicroMenuHolder() then
+      MicroMenu:SetParent(p)
+    elseif MicroMenuContainer then
+      MicroMenu:SetParent(MicroMenuContainer)
+    elseif UIParent then
+      MicroMenu:SetParent(UIParent)
+    end
+  end
+  if MicroMenuContainer and MicroMenuContainer.SetParent then
+    local p = self._savedMicroMenuContainerParent
+    if p and p.SetFrameStrata and p ~= getMicroMenuHolder() then
+      MicroMenuContainer:SetParent(p)
+    elseif UIParent then
+      MicroMenuContainer:SetParent(UIParent)
+    end
+  end
+  self._savedMicroMenuParent = nil
+  self._savedMicroMenuContainerParent = nil
+  if MicroMenu and MicroMenu.ResetMicroMenuPosition then
+    pcall(MicroMenu.ResetMicroMenuPosition, MicroMenu)
+  elseif UpdateMicroButtons then
+    pcall(UpdateMicroButtons)
+  end
+end
+
+function MB:RestoreMicroMenuButtonsFromChukieBar()
+  self._chukieMicroEmbedded = false
+  self:MasqueStripMicromenu()
+  local list = self.microMenuDetached
+  if list then
+    local defaultParent = MicroMenu or MicroButtonAndBagsBar or MainMenuBar
+    for _, btn in ipairs(list) do
+      if btn and type(btn) == "table" then
+        local p = btn.chukieMicroSavedParent
+        -- No restaurar al shell banished; preferir MicroMenu Blizzard.
+        if p and type(p) == "table" and p.SetFrameStrata and p ~= getMicroMenuHolder() and p ~= self.miniMenuBar then
+          btn:SetParent(p)
+        elseif defaultParent then
+          btn:SetParent(defaultParent)
+        elseif MicroButtonAndBagsBar then
+          btn:SetParent(MicroButtonAndBagsBar)
+        elseif MainMenuBar then
+          btn:SetParent(MainMenuBar)
+        end
+        if btn.chukieMicroSavedScale then
+          btn:SetScale(btn.chukieMicroSavedScale)
+        else
+          btn:SetScale(1)
+        end
+        btn.chukieMicroChukieOwned = nil
+        btn.chukieMicroSavedParent = nil
+        btn.chukieMicroSavedScale = nil
+        if btn.Show then
+          btn:Show()
+        end
+      end
+    end
+    wipe(list)
+  end
   self.microMenuDetached = nil
+  self:RestoreBlizzardMicroMenuShell()
 end
 
 function MB:EnsureMicroMenuHooks()
@@ -268,10 +393,7 @@ function MB:EnsureMicroMenuHooks()
   end
   self.microMenuHooks = true
   hooksecurefunc("UpdateMicroButtons", function()
-    if not MB.miniMenuBar or not MB.miniMenuBar:IsShown() then
-      return
-    end
-    if barOpts().minimenuBarEnabled == false then
+    if not chukieOwnsMicromenu() then
       return
     end
     if InCombatLockdown() then
@@ -280,6 +402,32 @@ function MB:EnsureMicroMenuHooks()
     end
     MB:LayoutMicroMenuEmbedded()
   end)
+  self:EnsureExpansionLandingPageMicroHooks()
+  if MicroMenu and MicroMenu.SetParent then
+    -- Blizzard (Edit Mode / ResetMicroMenuPosition) intenta devolver MicroMenu al container.
+    hooksecurefunc(MicroMenu, "SetParent", function(menu, parent)
+      if not chukieOwnsMicromenu() or InCombatLockdown() then
+        return
+      end
+      local holder = getMicroMenuHolder()
+      if parent ~= holder and menu:GetParent() ~= holder then
+        menu:SetParent(holder)
+      end
+    end)
+  end
+  if MicroMenu and MicroMenu.UpdateHelpTicketButtonAnchor then
+    hooksecurefunc(MicroMenu, "UpdateHelpTicketButtonAnchor", function()
+      if not HelpOpenWebTicketButton or not chukieOwnsMicromenu() then
+        return
+      end
+      local anchor = CharacterMicroButton or MainMenuMicroButton
+      if not anchor then
+        return
+      end
+      HelpOpenWebTicketButton:ClearAllPoints()
+      HelpOpenWebTicketButton:SetPoint("CENTER", anchor, "CENTER", 0, 20)
+    end)
+  end
   if not MB.microMenuCombatEv then
     local ev = CreateFrame("Frame")
     MB.microMenuCombatEv = ev
@@ -295,6 +443,47 @@ function MB:EnsureMicroMenuHooks()
   end
 end
 
+function MB:EnsureExpansionLandingPageMicroHooks()
+  if self._elpMicroHooks then
+    return
+  end
+  local elp = _G.ExpansionLandingPageMinimapButton
+  if not elp then
+    return
+  end
+  self._elpMicroHooks = true
+  local function relayoutIfOwned()
+    if MB._layoutingMicroMenu or not chukieOwnsMicromenu() or InCombatLockdown() then
+      return
+    end
+    if not elp.chukieMicroChukieOwned then
+      return
+    end
+    if MB._elpRelayoutQueued then
+      return
+    end
+    MB._elpRelayoutQueued = true
+    C_Timer.After(0, function()
+      MB._elpRelayoutQueued = false
+      if MB._layoutingMicroMenu then
+        return
+      end
+      if chukieOwnsMicromenu() and elp.chukieMicroChukieOwned and MB.LayoutMicroMenuEmbedded then
+        MB:LayoutMicroMenuEmbedded()
+      end
+    end)
+  end
+  if elp.UpdateIcon then
+    hooksecurefunc(elp, "UpdateIcon", relayoutIfOwned)
+  end
+  if elp.SetPoint then
+    hooksecurefunc(elp, "SetPoint", relayoutIfOwned)
+  end
+  if elp.SetSize then
+    hooksecurefunc(elp, "SetSize", relayoutIfOwned)
+  end
+end
+
 function MB:LayoutMicroMenuEmbedded()
   if not self.miniMenuBar or barOpts().minimenuBarEnabled == false then
     return
@@ -303,16 +492,35 @@ function MB:LayoutMicroMenuEmbedded()
     self.microMenuRelayoutAfterCombat = true
     return
   end
+  if self._layoutingMicroMenu then
+    return
+  end
+  self:EnsureExpansionLandingPageMicroHooks()
+  self._layoutingMicroMenu = true
+  self._chukieMicroEmbedded = true
+  self:BanishBlizzardMicroMenuShell()
   local mm = self.miniMenuBar
   local rowH = self:GetMiniMenuBarHeight()
   mm:SetHeight(rowH)
   local innerH = math.max(14, rowH - 4)
   local gap = math.max(0, tonumber(self:GetMiniMenuSpacing()) or 0)
   local targetW = self:GetMiniMenuIconWidth()
-  local x = 0
+  local function fitScaleFor(btn)
+    local w0 = btn:GetWidth() or 28
+    local h0 = btn:GetHeight() or 58
+    local l, r = btn:GetHitRectInsets()
+    local insets = (tonumber(l) or 0) + (tonumber(r) or 0)
+    local base = btn.chukieMicroSavedScale or 1
+    local sW = targetW / math.max(w0 - insets, 1)
+    local sH = innerH / math.max(h0, 1)
+    local fit = math.max(0.18, math.min(sW, sH, 2.35))
+    return math.min(2.8, math.max(0.15, fit * base))
+  end
+
   self.microMenuDetached = self.microMenuDetached or {}
   local known = {}
   local visibleButtons = {}
+  local trailingButtons = {}
   for _, b in ipairs(self.microMenuDetached) do
     known[b] = true
   end
@@ -330,6 +538,9 @@ function MB:LayoutMicroMenuEmbedded()
     btn:SetParent(mm)
     btn.chukieMicroChukieOwned = true
     local n = btn:GetName() or ""
+    if n == "ExpansionLandingPageMinimapButton" then
+      btn.chukieStripChrome = nil
+    end
     if not self:IsMinimenuButtonVisible(n) then
       btn:SetScale(btn.chukieMicroSavedScale or 1)
       btn:ClearAllPoints()
@@ -338,35 +549,33 @@ function MB:LayoutMicroMenuEmbedded()
       btn:Show()
       btn:SetScale(1)
       btn:ClearAllPoints()
-      visibleButtons[#visibleButtons + 1] = btn
+      if TRAILING_MICROMENU_BUTTON_NAMES[n] then
+        trailingButtons[#trailingButtons + 1] = btn
+      else
+        visibleButtons[#visibleButtons + 1] = btn
+      end
     end
+  end
+  local normalCount = #visibleButtons
+  for _, btn in ipairs(trailingButtons) do
+    visibleButtons[#visibleButtons + 1] = btn
   end
   local visibleCount = #visibleButtons
   local commonScale = 1
-  local baseL, baseR = 0, 0
   if visibleCount > 0 then
-    local refBtn = visibleButtons[1]
-    local w0 = refBtn:GetWidth() or 28
-    local h0 = refBtn:GetHeight() or 58
-    local l, r = refBtn:GetHitRectInsets()
-    baseL = tonumber(l) or 0
-    baseR = tonumber(r) or 0
-    local base = refBtn.chukieMicroSavedScale or 1
-    local sW = targetW / math.max((w0 - (baseL + baseR)), 1)
-    local sH = innerH / math.max(h0, 1)
-    local fit = math.min(sW, sH, 2.35)
-    fit = math.max(0.18, fit)
-    commonScale = math.min(2.8, math.max(0.15, fit * base))
+    commonScale = fitScaleFor(visibleButtons[1])
   end
   local totalContentWidth = 0
   if visibleCount > 0 then
     totalContentWidth = (visibleCount * targetW) + ((visibleCount - 1) * gap)
   end
   for i, btn in ipairs(visibleButtons) do
-    btn:SetScale(commonScale)
+    local scale = i > normalCount and fitScaleFor(btn) or commonScale
+    btn:SetScale(scale)
     btn:ClearAllPoints()
     local cx = (-totalContentWidth / 2) + (targetW / 2) + ((i - 1) * (targetW + gap))
-    btn:SetPoint("CENTER", mm, "CENTER", cx, 0)
+    --- Los offsets van en la escala del propio botón: compensar para no desalinear la fila.
+    btn:SetPoint("CENTER", mm, "CENTER", cx * (commonScale / scale), 0)
   end
   local width = 48
   if visibleCount > 0 then
@@ -375,6 +584,7 @@ function MB:LayoutMicroMenuEmbedded()
   mm:SetWidth(math.max(width, 48))
   self:PositionMicromenuCentered()
   self:MasqueApplyMicromenu()
+  self._layoutingMicroMenu = false
 end
 
 --- Layout unificado: barras siempre centradas (sin offset manual separado).
@@ -967,6 +1177,17 @@ function MB:EnsureStripShowHook(f)
   end)
 end
 
+--- Landing Page / Omnium Folio: si está en la fila del micromenú y marcado visible, no stripar.
+local function isMicromenuOwnedVisible(f, frameName)
+  if not f or not f.chukieMicroChukieOwned then
+    return false
+  end
+  if barOpts().minimenuBarEnabled == false then
+    return false
+  end
+  return MB:IsMinimenuButtonVisible(frameName or (f.GetName and f:GetName()))
+end
+
 function MB:HideStrippableFrame(f, frameName)
   if not f or not frameName then
     return
@@ -979,6 +1200,10 @@ function MB:HideStrippableFrame(f, frameName)
     return
   end
   if (frameName == "MinimapNorthTag" or frameName == "MinimapCompassTexture") and self:ProfileRotateMinimap() then
+    return
+  end
+  if isMicromenuOwnedVisible(f, frameName) then
+    f.chukieStripChrome = nil
     return
   end
   f.chukieStripChrome = true
@@ -1189,39 +1414,33 @@ function MB:EnsureProxyIconHooks(orig)
   end)
 end
 
+--- Reenvía scripts de ratón del botón LibDBIcon original; en combate no reenvía clics
+--- (evita ADDON_ACTION_BLOCKED cuando el handler abre UI protegida, p. ej. BugSack).
+local function forwardProxyMouseScript(orig, scriptName, ...)
+  if not orig then
+    return
+  end
+  if InCombatLockdown() then
+    return
+  end
+  local h = orig:GetScript(scriptName)
+  if h then
+    h(orig, ...)
+  end
+end
+
 function MB:WireProxy(proxy, orig)
   proxy.chukieSource = orig
   orig.chukieActiveProxy = proxy
   proxy:RegisterForClicks("AnyUp", "AnyDown")
   proxy:SetScript("OnMouseDown", function(self, button)
-    local o = self.chukieSource
-    if not o then
-      return
-    end
-    local h = o:GetScript("OnMouseDown")
-    if h then
-      h(o, button)
-    end
+    forwardProxyMouseScript(self.chukieSource, "OnMouseDown", button)
   end)
   proxy:SetScript("OnMouseUp", function(self, button)
-    local o = self.chukieSource
-    if not o then
-      return
-    end
-    local h = o:GetScript("OnMouseUp")
-    if h then
-      h(o, button)
-    end
+    forwardProxyMouseScript(self.chukieSource, "OnMouseUp", button)
   end)
   proxy:SetScript("OnClick", function(self, button)
-    local o = self.chukieSource
-    if not o then
-      return
-    end
-    local h = o:GetScript("OnClick")
-    if h then
-      h(o, button)
-    end
+    forwardProxyMouseScript(self.chukieSource, "OnClick", button)
   end)
   proxy:SetScript("OnEnter", function(self)
     local o = self.chukieSource

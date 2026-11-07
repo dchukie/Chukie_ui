@@ -403,17 +403,26 @@ local SITUATION_EVENTS = {
 --- situación, no del contenido de los slots.
 function AB:UpdateSituation()
   self:LearnSpecialPages()
-  self:ReapplyPaging()
   self:ApplyLeftButtonAlphas()
   self:UpdateOverrideArtBar()
+  --[[ Al entrar al mundo los eventos de barra llegan en ráfaga. Paginar en cada uno repetía el
+       `Execute` decenas de veces; con el primero y un repaso a los 0.2 s alcanza. ]]
+  if self._situationRecheck then
+    return
+  end
+  self:ReapplyPaging()
   --[[ Las dos cosas se miden sobre lo que quedó en el botón 1, y el driver seguro pagina por su
        cuenta: puede hacerlo después de este evento. Se vuelve a mirar un instante más tarde, que es
        la única forma de no decidir sobre un estado a medio aplicar. Las dos llamadas no hacen nada
        si la decisión no cambió. ]]
-  if not self._situationRecheck and C_Timer and C_Timer.After then
+  if C_Timer and C_Timer.After then
     self._situationRecheck = true
     C_Timer.After(0.2, function()
       AB._situationRecheck = nil
+      if InCombatLockdown() then
+        AB._pendingPaging = true
+        return
+      end
       AB:ReapplyPaging()
       AB:ApplyLeftButtonAlphas()
       AB:UpdateOverrideArtBar()
@@ -1088,13 +1097,34 @@ function AB:LearnSpecialPages()
   bar:SetAttribute("offset-shapeshift", specialPageOffset(shapeshift))
 end
 
---[[ Reaplica el paginado de la barra 1 en cada cambio de situación. El snippet pregunta primero por
-     la barra que declara el juego, así que corregir el desfase no depende de que el driver haya
-     llegado a cambiar de estado —en las misiones de puesto de venta ninguna condición de macro se
-     activa— ni de que los eventos lleguen en orden. Va por `Execute` justamente para que también
-     funcione en combate: cambiar el `action` de un botón seguro desde Lua ahí está prohibido. ]]
+--[[ Reaplica el paginado. El snippet pregunta por la barra que declara el juego, así que no depende
+     de que una condición de macro se haya activado. `Execute` termina en `SetAttribute`: en combate
+     o en el lockdown del reconectado esa llamada está prohibida y, si se deja escapar, cada evento
+     de barra la repite y BugGrabber traba la UI. Se difiere hasta salir de combate. ]]
+function AB:SchedulePagingRetry()
+  if self._pagingRetry or not C_Timer or not C_Timer.After then
+    return
+  end
+  if (self._pagingTries or 0) >= 5 then
+    return
+  end
+  self._pagingRetry = true
+  self._pagingTries = (self._pagingTries or 0) + 1
+  C_Timer.After(1, function()
+    AB._pagingRetry = nil
+    if AB._pendingPaging and not InCombatLockdown() then
+      AB._pendingPaging = nil
+      AB:ReapplyPaging()
+    end
+  end)
+end
+
 function AB:ReapplyPaging()
   if not self._bars then
+    return
+  end
+  if InCombatLockdown() then
+    self._pendingPaging = true
     return
   end
   --- Las cuatro, no solo la barra 1: las de skyriding también pueden quedar en una página vieja si
@@ -1102,9 +1132,15 @@ function AB:ReapplyPaging()
   for barId = 1, 4 do
     local bar = self._bars[tostring(barId)]
     if bar and bar.Execute then
-      bar:Execute(APPLY_PAGE_OFFSET)
+      local ok = pcall(bar.Execute, bar, APPLY_PAGE_OFFSET)
+      if not ok then
+        self._pendingPaging = true
+        self:SchedulePagingRetry()
+        return
+      end
     end
   end
+  self._pagingTries = nil
 end
 
 --- Estados de página por barra, en orden de prioridad (vehículo gana sobre skyriding).
@@ -2242,8 +2278,15 @@ end
 
 function AB:OnRegenEnabled()
   if self._pendingRefresh then
+    self._pendingPaging = nil
     self:Refresh()
-  elseif self._pendingOverrideArt then
+    return
+  end
+  if self._pendingPaging then
+    self._pendingPaging = nil
+    self:ReapplyPaging()
+  end
+  if self._pendingOverrideArt then
     self:UpdateOverrideArtBar()
   end
 end

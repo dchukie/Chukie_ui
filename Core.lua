@@ -655,6 +655,14 @@ SlashCmdList["CHUKIEUI"] = function(msg)
   local raw = strtrim(msg or "")
   local msg = strlower(raw)
   local p = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
+  if msg == "forever" then
+    if ns.PrintForeverProbe then
+      ns.PrintForeverProbe()
+    else
+      print("|cffff9900Chukie UI|r: sonda Forever no disponible.")
+    end
+    return
+  end
   if msg == "" or msg == "config" or msg == "opciones" then
     if ns.OpenConfigPanel and ns.OpenConfigPanel() then
       return
@@ -938,7 +946,7 @@ SlashCmdList["CHUKIEUI"] = function(msg)
       return
     end
   end
-  print("|cff00ff00Chukie UI|r — /chukieui config | panel | minimapa | botones | acciones | backup | mmpos <x> <y> | mmarrow …")
+  print("|cff00ff00Chukie UI|r — /chukieui forever | config | panel | minimapa | botones | acciones | backup | mmpos <x> <y> | mmarrow …")
   print(
     "|cff00ff00Chukie UI|r — alertas: /chukie-aura | /chukieui alertas on | /chukieui auracheck <id> | /chukieui cdcheck <id> | /chukieui auracontainer"
   )

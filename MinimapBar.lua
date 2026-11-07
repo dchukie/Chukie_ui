@@ -2017,10 +2017,16 @@ function MB:Refresh()
   self:ApplyAddonButtonPolicies()
   if not prof().enabled then
     self:RestoreMicroMenuButtonsFromChukieBar()
+    if ns.RightPanel and ns.RightPanel.PlaceKeyRing then
+      ns.RightPanel:PlaceKeyRing()
+    end
     return
   end
   if not Minimap then
     self:RestoreMicroMenuButtonsFromChukieBar()
+    if ns.RightPanel and ns.RightPanel.PlaceKeyRing then
+      ns.RightPanel:PlaceKeyRing()
+    end
     return
   end
   self:EnsureLdbHooks()
@@ -2057,6 +2063,9 @@ function MB:Refresh()
   self:ApplyAddonButtonPolicies()
   if ns.RightPanel and ns.RightPanel.UpdateDebugRightPanelOutline then
     ns.RightPanel:UpdateDebugRightPanelOutline()
+  end
+  if ns.RightPanel and ns.RightPanel.PlaceKeyRing then
+    ns.RightPanel:PlaceKeyRing()
   end
 end
 

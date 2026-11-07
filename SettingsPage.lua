@@ -389,6 +389,46 @@ local function addRightPanel(category, layout)
   choices:Add(1, "Siempre máximo alejado")
   choices:Add(2, "Siempre máximo acercado")
   Settings.CreateDropdown(category, setting, choices:GetData(), "Usa los niveles de zoom que ya tiene el minimapa.")
+
+  local keySetting = Settings.RegisterProxySetting(
+    category,
+    "ChukieUi_MMPos_keyRing",
+    Settings.VarType.Number,
+    "Llavero de Classic",
+    0,
+    function()
+      local db = rightModel()
+      local v = db and tonumber(db.keyRingPlace) or 0
+      if v ~= 1 and v ~= 2 then
+        return 0
+      end
+      return v
+    end,
+    function(v)
+      local db = rightModel()
+      if not db then
+        return
+      end
+      v = tonumber(v)
+      if v ~= 1 and v ~= 2 then
+        v = 0
+      end
+      db.keyRingPlace = v
+      if ns.RightPanel and ns.RightPanel.PlaceKeyRing then
+        ns.RightPanel:PlaceKeyRing()
+      end
+    end
+  )
+  local keyChoices = Settings.CreateControlTextContainer()
+  keyChoices:Add(0, "Oculto")
+  keyChoices:Add(1, "Barra del minimapa")
+  keyChoices:Add(2, "Junto a los botones libres")
+  Settings.CreateDropdown(
+    category,
+    keySetting,
+    keyChoices:GetData(),
+    "Forever muestra el botón de llavero de Classic. Oculto lo apaga. Las otras dos lo dejan en el panel derecho, sin volver a la barra de bolsas."
+  )
   addMinimapCaptureList(category, layout)
 end
 

@@ -168,6 +168,67 @@ local function isLargeBorderLayer(texObj)
   return (tonumber(w) or 0) >= 64
 end
 
+--- Fondo cuadrado que el anillo tapaba. El mapa en sí lo dibuja el marco, no esta textura.
+local SQUARE_MINIMAP_CHROME = {
+  [136430] = true,
+  [136452] = true,
+  [136467] = true,
+  [136477] = true,
+}
+
+local function isSquareChromeTexture(texObj)
+  if not texObj or not texObj.GetObjectType or texObj:GetObjectType() ~= "Texture" then
+    return false
+  end
+  local name = texObj.GetName and texObj:GetName()
+  if type(name) == "string" and name:lower():find("mask", 1, true) then
+    return false
+  end
+  local tex = texObj.GetTexture and texObj:GetTexture()
+  if type(tex) == "number" and SQUARE_MINIMAP_CHROME[tex] then
+    return true
+  end
+  if type(tex) == "string" then
+    local low = tex:lower()
+    if low:find("mask", 1, true) then
+      return false
+    end
+    if low:find("minimap-background", 1, true) or low:find("minimap%-background", 1, true) then
+      return true
+    end
+    if low:find("tooltip-border", 1, true) or low:find("dialogbox", 1, true) or low:find("tutorialframebackground", 1, true) then
+      return true
+    end
+    if low:find("minimap-border", 1, true) and not low:find("bordertop", 1, true) then
+      return true
+    end
+  end
+  local atlas = texObj.GetAtlas and texObj:GetAtlas()
+  if type(atlas) == "string" then
+    local low = atlas:lower()
+    if low:find("bordertop", 1, true) or low:find("mask", 1, true) then
+      return false
+    end
+    if low:find("minimap-background", 1, true) or low:find("minimap-border", 1, true) then
+      return true
+    end
+    if low:find("tooltip-border", 1, true) or low:find("dialogbox", 1, true) then
+      return true
+    end
+  end
+  return false
+end
+
+local function clearTiledBackdrop(frame)
+  if not frame or not frame.SetBackdrop then
+    return
+  end
+  pcall(frame.SetBackdrop, frame, nil)
+  if frame.SetBackdropBorderColor then
+    pcall(frame.SetBackdropBorderColor, frame, 0, 0, 0, 0)
+  end
+end
+
 --- Anillo, borde circular y botones +/−. La rueda del mapa no pasa por esos botones.
 function MP:HideMinimapChrome()
   local named = {
@@ -203,14 +264,121 @@ function MP:HideMinimapChrome()
       end
     end
   end
-  for _, host in ipairs({ Minimap, MinimapCluster }) do
-    walk(host, 0)
-    for _, r in ipairs(listRegions(host)) do
-      if isCompassOrRingTexture(r) or isLargeBorderLayer(r) then
-        forceHideMinimapRingFrame(r)
+  local hosts = { Minimap, MinimapCluster, MinimapBackdrop }
+  for _, host in ipairs(hosts) do
+    if host then
+      clearTiledBackdrop(host)
+      local slice = host.NineSlice or host.nineSlice
+      if slice then
+        forceHideMinimapRingFrame(slice)
+      end
+      walk(host, 0)
+      for _, r in ipairs(listRegions(host)) do
+        if isCompassOrRingTexture(r) or isLargeBorderLayer(r) or isSquareChromeTexture(r) then
+          forceHideMinimapRingFrame(r)
+        end
       end
     end
   end
+end
+
+function MP:KeyRingPlace()
+  local db = self:DB()
+  local v = tonumber(db and db.keyRingPlace) or 0
+  if v ~= 1 and v ~= 2 then
+    return 0
+  end
+  return v
+end
+
+local function findKeyRingButton()
+  if _G.KeyRingButton and type(_G.KeyRingButton) == "table" then
+    return _G.KeyRingButton
+  end
+  local parents = {
+    _G.MainMenuBarBackpackButton,
+    _G.BagsBar,
+    _G.MicroButtonAndBagsBar,
+    _G.MainMenuBar,
+  }
+  for i = 1, #parents do
+    local parent = parents[i]
+    if parent and parent.GetNumChildren then
+      local n = parent:GetNumChildren() or 0
+      for c = 1, n do
+        local child = select(c, parent:GetChildren())
+        local name = child and child.GetName and child:GetName()
+        if type(name) == "string" and name:lower():find("keyring", 1, true) then
+          return child
+        end
+      end
+    end
+  end
+  return nil
+end
+
+function MP:PlaceKeyRing()
+  local btn = findKeyRingButton()
+  if not btn then
+    return
+  end
+  if InCombatLockdown and InCombatLockdown() then
+    self:RequestApplyAfterCombat()
+    return
+  end
+  local place = self:KeyRingPlace()
+  if not btn._chukieKeyRingHook and hooksecurefunc then
+    btn._chukieKeyRingHook = true
+    hooksecurefunc(btn, "Show", function(f)
+      if ns.RightPanel and ns.RightPanel:KeyRingPlace() == 0 then
+        f:Hide()
+      end
+    end)
+    hooksecurefunc(btn, "SetShown", function(f, shown)
+      if shown and ns.RightPanel and ns.RightPanel:KeyRingPlace() == 0 then
+        f:Hide()
+      end
+    end)
+  end
+  if place == 0 then
+    btn:SetAlpha(0)
+    btn:Hide()
+    if btn.EnableMouse then
+      btn:EnableMouse(false)
+    end
+    return
+  end
+  btn:SetAlpha(1)
+  if btn.EnableMouse then
+    btn:EnableMouse(true)
+  end
+  btn:SetFrameStrata("MEDIUM")
+  btn:SetFrameLevel(90)
+  if place == 1 and ns.MinimapBar and ns.MinimapBar.bar then
+    local bar = ns.MinimapBar.bar
+    local side = 34
+    if ns.MinimapBar.GetAddonBarIconHeight then
+      side = ns.MinimapBar:GetAddonBarIconHeight()
+    end
+    btn:SetParent(bar)
+    btn:SetSize(side, side)
+    btn:ClearAllPoints()
+    btn:SetPoint("RIGHT", bar, "LEFT", -4, 0)
+    btn:Show()
+    return
+  end
+  local buttons = ns.DragSlots and ns.DragSlots._buttons
+  local last = buttons and buttons[#buttons]
+  if place == 2 and last then
+    btn:SetParent(UIParent)
+    btn:SetSize(last:GetWidth() or 32, last:GetHeight() or 32)
+    btn:ClearAllPoints()
+    btn:SetPoint("TOP", last, "BOTTOM", 0, -2)
+    btn:Show()
+    return
+  end
+  btn:SetAlpha(0)
+  btn:Hide()
 end
 
 --- Un solo marco en UIParent; se estira entre las esquinas del panel o del cluster (coords correctas, sin mezclar absolutos con offsets).
@@ -1385,6 +1553,7 @@ function MP:Apply()
     if ns.DragSlots and ns.DragSlots.Layout then
       ns.DragSlots:Layout()
     end
+    self:PlaceKeyRing()
     if ns.RightStrip and ns.RightStrip.Layout then
       ns.RightStrip:Layout()
     end

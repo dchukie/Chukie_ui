@@ -495,6 +495,8 @@ local function applySunBorder(show)
     end
   end
   paint(_G.GameTimeTexture)
+  paint(_G.MiniMapWorldBorder)
+  paint(_G.MiniMapWorldMapButton)
   local buttons = { GameTimeFrame }
   if MinimapCluster and MinimapCluster.Tracking then
     paint(MinimapCluster.Tracking.Background)

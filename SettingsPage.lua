@@ -374,8 +374,8 @@ local function addRightPanel(category, layout)
     category,
     "ChukieUi_MMPos_showSunBorder",
     "showMinimapSunBorder",
-    "Mostrar borde del sol",
-    "El anillo de GameTimeFrame. El sol era GameTimeTexture, la hora del servidor.",
+    "Mostrar círculo dorado",
+    "MiniMapWorldMapButton, el anillo dorado arriba a la derecha. El borde es MiniMapWorldBorder.",
     false
   )
   rightCheckbox(

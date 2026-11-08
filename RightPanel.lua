@@ -494,43 +494,77 @@ local function applySunBorder(show)
       setOptionalChrome(region, show)
     end
   end
-  paint(_G.GameTimeTexture)
-  paint(_G.MiniMapWorldBorder)
-  paint(_G.MiniMapWorldMapButton)
-  local buttons = { GameTimeFrame }
-  if MinimapCluster and MinimapCluster.Tracking then
-    paint(MinimapCluster.Tracking.Background)
-    paint(MinimapCluster.Tracking.Border)
+  local protectedHost = {}
+  if Minimap then
+    protectedHost[Minimap] = true
   end
-  for i = 1, #buttons do
-    local button = buttons[i]
-    if button then
-      if button.GetNormalTexture then
-        paint(button:GetNormalTexture())
-      end
-      if button.GetPushedTexture then
-        paint(button:GetPushedTexture())
-      end
-      if button.GetHighlightTexture then
-        paint(button:GetHighlightTexture())
-      end
-      paint(button.Border)
-      paint(button.Background)
+  if MinimapCluster then
+    protectedHost[MinimapCluster] = true
+  end
+  if MinimapBackdrop then
+    protectedHost[MinimapBackdrop] = true
+  end
+  if UIParent then
+    protectedHost[UIParent] = true
+  end
+  local seen = {}
+  local function walk(frame, depth)
+    if not frame or seen[frame] or depth > 7 then
+      return
     end
-  end
-  local hosts = { GameTimeFrame, Minimap, MinimapCluster }
-  for i = 1, #hosts do
-    local host = hosts[i]
-    if host and host.GetNumRegions then
-      local n = host:GetNumRegions() or 0
+    seen[frame] = true
+    if frame.GetNumRegions then
+      local n = frame:GetNumRegions() or 0
       for r = 1, n do
-        local region = select(r, host:GetRegions())
+        local region = select(r, frame:GetRegions())
         if regionLooksLikeSunBorder(region) then
           paint(region)
+          local parent = region.GetParent and region:GetParent()
+          if parent and not protectedHost[parent] then
+            paint(parent)
+          end
         end
       end
     end
+    if frame.GetNormalTexture then
+      local normal = frame:GetNormalTexture()
+      if regionLooksLikeSunBorder(normal) then
+        paint(normal)
+        if not protectedHost[frame] then
+          paint(frame)
+        end
+      end
+    end
+    if frame.GetNumChildren then
+      local n = frame:GetNumChildren() or 0
+      for c = 1, n do
+        walk(select(c, frame:GetChildren()), depth + 1)
+      end
+    end
   end
+  local roots = {
+    Minimap,
+    MinimapCluster,
+    MinimapBackdrop,
+    GameTimeFrame,
+    MiniMapMailFrame,
+    MiniMapTracking,
+    MiniMapTrackingButton,
+    MiniMapBattlefieldFrame,
+    MiniMapWorldMapButton,
+    MinimapCluster and MinimapCluster.Tracking,
+    MinimapCluster and MinimapCluster.IndicatorFrame,
+    MinimapCluster and MinimapCluster.MailFrame,
+  }
+  for i = 1, #roots do
+    walk(roots[i], 0)
+  end
+  paint(_G.GameTimeTexture)
+  paint(_G.MiniMapMailBorder)
+  paint(_G.MiniMapMailFrame)
+  paint(_G.MiniMapWorldBorder)
+  paint(_G.MiniMapWorldMapButton)
+  paint(_G.MiniMapBattlefieldBorder)
 end
 
 function MP:ApplyMinimapCornerButtons()

@@ -375,7 +375,7 @@ local function addRightPanel(category, layout)
     "ChukieUi_MMPos_showSunBorder",
     "showMinimapSunBorder",
     "Mostrar círculo dorado",
-    "MiniMapWorldMapButton, el anillo dorado arriba a la derecha. El borde es MiniMapWorldBorder.",
+    "MiniMapMailFrame, el anillo dorado fuera del disco. La textura es MiniMapMailBorder.",
     false
   )
   rightCheckbox(

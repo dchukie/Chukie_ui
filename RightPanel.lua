@@ -393,47 +393,6 @@ local function keepClockOutOf(frame)
   clock:SetParent(MinimapCluster or Minimap or UIParent)
 end
 
-local function regionLooksLikeSunBorder(region)
-  if not region or not region.GetObjectType or region:GetObjectType() ~= "Texture" then
-    return false
-  end
-  local w, h = 0, 0
-  if region.GetWidth then
-    w = tonumber(region:GetWidth()) or 0
-  end
-  if region.GetHeight then
-    h = tonumber(region:GetHeight()) or 0
-  end
-  if w >= 96 or h >= 96 then
-    return false
-  end
-  local name = region.GetName and region:GetName()
-  if type(name) == "string" then
-    local low = name:lower()
-    if low:find("gametime", 1, true) or low:find("trackingborder", 1, true) then
-      return true
-    end
-  end
-  local tex = region.GetTexture and region:GetTexture()
-  if tex == 136430 then
-    return true
-  end
-  if type(tex) == "string" then
-    local low = tex:lower()
-    if low:find("gametime", 1, true) or low:find("trackingborder", 1, true) then
-      return true
-    end
-  end
-  local atlas = region.GetAtlas and region:GetAtlas()
-  if type(atlas) == "string" then
-    local low = atlas:lower()
-    if low:find("gametime", 1, true) or low:find("tracking-border", 1, true) or low:find("trackingborder", 1, true) or low:find("tracking-background", 1, true) or low:find("minimap-button", 1, true) then
-      return true
-    end
-  end
-  return false
-end
-
 local function setOptionalChrome(frame, show)
   if not frame then
     return
@@ -488,83 +447,90 @@ local function setOptionalChrome(frame, show)
   end
 end
 
+local DIEL_FIELDS = {
+  "DielFrame",
+  "Diel",
+  "DayNightFrame",
+  "DayNight",
+  "TimeOfDayFrame",
+  "TimeOfDay",
+  "ZoneTimeFrame",
+  "ZoneTime",
+  "WeatherFrame",
+  "Weather",
+  "ClimateFrame",
+  "Climate",
+  "SunFrame",
+  "ForeverDiel",
+  "EnvironmentFrame",
+}
+
+local function isDielChrome(frame)
+  if not frame or not frame.GetObjectType then
+    return false
+  end
+  if frame == Minimap or frame == MinimapCluster or frame == MinimapBackdrop or frame == UIParent then
+    return false
+  end
+  local kind = frame:GetObjectType()
+  if kind ~= "Frame" and kind ~= "Button" and kind ~= "CheckButton" then
+    return false
+  end
+  local w = frame.GetWidth and (tonumber(frame:GetWidth()) or 0) or 0
+  local h = frame.GetHeight and (tonumber(frame:GetHeight()) or 0) or 0
+  if w >= 128 or h >= 128 then
+    return false
+  end
+  return true
+end
+
+local function nameIsDiel(frame)
+  local name = frame.GetName and frame:GetName()
+  if type(name) ~= "string" then
+    return false
+  end
+  local low = name:lower()
+  return low:find("diel", 1, true)
+    or low:find("daynight", 1, true)
+    or low:find("timeofday", 1, true)
+    or low:find("zonetime", 1, true)
+    or low:find("weather", 1, true)
+    or low:find("climate", 1, true)
+    or low:find("frame-cycle", 1, true)
+    or low:find("daycycle", 1, true)
+end
+
 local function applySunBorder(show)
-  local function paint(region)
-    if region then
-      setOptionalChrome(region, show)
-    end
-  end
-  local protectedHost = {}
-  if Minimap then
-    protectedHost[Minimap] = true
-  end
-  if MinimapCluster then
-    protectedHost[MinimapCluster] = true
-  end
-  if MinimapBackdrop then
-    protectedHost[MinimapBackdrop] = true
-  end
-  if UIParent then
-    protectedHost[UIParent] = true
-  end
   local seen = {}
-  local function walk(frame, depth)
-    if not frame or seen[frame] or depth > 7 then
-      return
+  local targets = {}
+  local function add(frame)
+    if frame and not seen[frame] and isDielChrome(frame) then
+      seen[frame] = true
+      targets[#targets + 1] = frame
     end
-    seen[frame] = true
-    if frame.GetNumRegions then
-      local n = frame:GetNumRegions() or 0
-      for r = 1, n do
-        local region = select(r, frame:GetRegions())
-        if regionLooksLikeSunBorder(region) then
-          paint(region)
-          local parent = region.GetParent and region:GetParent()
-          if parent and not protectedHost[parent] then
-            paint(parent)
+  end
+  local hosts = { MinimapCluster, Minimap, MinimapBackdrop }
+  for i = 1, #hosts do
+    local host = hosts[i]
+    if host then
+      for k = 1, #DIEL_FIELDS do
+        add(host[DIEL_FIELDS[k]])
+      end
+      if host.GetNumChildren then
+        local n = host:GetNumChildren() or 0
+        for c = 1, n do
+          local child = select(c, host:GetChildren())
+          if child and nameIsDiel(child) then
+            add(child)
           end
         end
       end
     end
-    if frame.GetNormalTexture then
-      local normal = frame:GetNormalTexture()
-      if regionLooksLikeSunBorder(normal) then
-        paint(normal)
-        if not protectedHost[frame] then
-          paint(frame)
-        end
-      end
-    end
-    if frame.GetNumChildren then
-      local n = frame:GetNumChildren() or 0
-      for c = 1, n do
-        walk(select(c, frame:GetChildren()), depth + 1)
-      end
-    end
   end
-  local roots = {
-    Minimap,
-    MinimapCluster,
-    MinimapBackdrop,
-    GameTimeFrame,
-    MiniMapMailFrame,
-    MiniMapTracking,
-    MiniMapTrackingButton,
-    MiniMapBattlefieldFrame,
-    MiniMapWorldMapButton,
-    MinimapCluster and MinimapCluster.Tracking,
-    MinimapCluster and MinimapCluster.IndicatorFrame,
-    MinimapCluster and MinimapCluster.MailFrame,
-  }
-  for i = 1, #roots do
-    walk(roots[i], 0)
+  add(_G.DielFrame)
+  for i = 1, #targets do
+    setOptionalChrome(targets[i], show)
   end
-  paint(_G.GameTimeTexture)
-  paint(_G.MiniMapMailBorder)
-  paint(_G.MiniMapMailFrame)
-  paint(_G.MiniMapWorldBorder)
-  paint(_G.MiniMapWorldMapButton)
-  paint(_G.MiniMapBattlefieldBorder)
 end
 
 function MP:ApplyMinimapCornerButtons()

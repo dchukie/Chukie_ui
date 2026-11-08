@@ -348,10 +348,10 @@ local function addRightPanel(category, layout)
   )
   rightCheckbox(
     category,
-    "ChukieUi_MMPos_debugBounds",
-    "debugRightPanelBounds",
-    "Recuadro verde del panel derecho",
-    "Dibuja el borde del panel para ver hasta dónde llega. No captura el ratón.",
+    "ChukieUi_MMPos_showRing",
+    "showMinimapRing",
+    "Mostrar anillo del mapa",
+    "El borde circular alrededor del disco. Apagado, queda solo el mapa. Los botones + y − siguen ocultos; la rueda no cambia.",
     false
   )
   rightCheckbox(
@@ -485,7 +485,6 @@ local function addRightPanel(category, layout)
     keyChoices:GetData(),
     "Forever muestra el botón de llavero de Classic. Oculto lo apaga. Las otras dos lo dejan en el panel derecho, sin volver a la barra de bolsas."
   )
-  addMinimapCaptureList(category, layout)
 end
 
 local POLICY_ON_MAP, POLICY_BAR, POLICY_HIDDEN = 0, 1, 2
@@ -569,15 +568,49 @@ local function addCaptureDropdown(category, frameName)
     category,
     setting,
     policyChoices,
-    "Dejar en el mapa lo deja en el círculo. Capturar a la barra lo mueve a la fila de botones del minimapa. Oculto lo esconde."
+    "Dejar en el mapa lo deja en el círculo. Capturar a la barra lo mueve a la fila de iconos. Oculto lo esconde."
   )
+end
+
+local function moveDiscovered(frameName, dir)
+  local db = minimapBarModel()
+  if not db then
+    return
+  end
+  local order = db.discoveredOrder
+  local idx
+  for i = 1, #order do
+    if order[i] == frameName then
+      idx = i
+    end
+  end
+  if not idx then
+    return
+  end
+  local j = idx + dir
+  if j < 1 or j > #order then
+    return
+  end
+  order[idx], order[j] = order[j], order[idx]
+  if ns.MinimapBar and ns.MinimapBar.Refresh then
+    ns.MinimapBar:Refresh()
+  end
+end
+
+local function addOrderButtons(layout, frameName)
+  addButton(layout, "Subir " .. frameName, "Lo mueve un lugar a la izquierda en la barra.", function()
+    moveDiscovered(frameName, -1)
+  end)
+  addButton(layout, "Bajar " .. frameName, "Lo mueve un lugar a la derecha en la barra.", function()
+    moveDiscovered(frameName, 1)
+  end)
 end
 
 function addMinimapCaptureList(category, layout)
   if not (Settings.CreateDropdown and Settings.CreateControlTextContainer and category) then
     return
   end
-  addHeader(layout, "Botones a capturar")
+  addHeader(layout, "Captura, ocultar y orden")
   if ns.MinimapBar and ns.MinimapBar.UpdateDiscoveredOrder then
     ns.MinimapBar:UpdateDiscoveredOrder()
   end
@@ -590,7 +623,11 @@ function addMinimapCaptureList(category, layout)
     if not ns._mmAddonPolicyRegistered[name] then
       ns._mmAddonPolicyRegistered[name] = true
       addCaptureDropdown(category, name)
+      addOrderButtons(layout, name)
     end
+  end
+  if #order == 0 then
+    addHeader(layout, "Todavía no hay botones detectados. Entrá al mundo y volvé a abrir esta página.")
   end
   function ns.AppendMinimapDiscoveryPolicyRows()
     if not ns.configPanelRegistered or not ns._minimapAddonPolicyCategory then
@@ -604,9 +641,367 @@ function addMinimapCaptureList(category, layout)
       if not ns._mmAddonPolicyRegistered[name] then
         ns._mmAddonPolicyRegistered[name] = true
         addCaptureDropdown(cat, name)
+        local lay = cat
+        if SettingsPanel and SettingsPanel.GetLayout then
+          lay = SettingsPanel:GetLayout(cat) or lay
+        end
+        addOrderButtons(lay, name)
       end
     end
   end
+end
+
+local function refreshMinimapBar()
+  if ns.MinimapBar and ns.MinimapBar.Refresh then
+    ns.MinimapBar:Refresh()
+  end
+end
+
+local function refreshStrip()
+  if ns.RightStrip and ns.RightStrip.Refresh then
+    ns.RightStrip:Refresh()
+  elseif ns.RightPanel and ns.RightPanel.Apply then
+    ns.RightPanel:Apply()
+  end
+end
+
+local function mmCheckbox(category, id, key, label, tooltip, defaultOn)
+  addCheckbox(category, id, label, tooltip, defaultOn, function()
+    return readBool(minimapBarModel(), key, defaultOn)
+  end, function(v)
+    writeBool(minimapBarModel(), key, v)
+    refreshMinimapBar()
+  end)
+end
+
+local function mmSlider(category, id, key, label, tooltip, minV, maxV, step, defaultNum)
+  addSlider(category, id, label, tooltip, minV, maxV, step, defaultNum, function()
+    return readInt(minimapBarModel(), key, minV, maxV, defaultNum)
+  end, function(v)
+    local db = minimapBarModel()
+    if not db then
+      return
+    end
+    db[key] = math.floor((tonumber(v) or defaultNum) + 0.5)
+    refreshMinimapBar()
+  end)
+end
+
+local function addAddonBarPage(category, layout)
+  addHeader(layout, "Barra de iconos")
+  mmCheckbox(
+    category,
+    "ChukieUi_MMBar_enabled",
+    "enabled",
+    "Mostrar barra de addons",
+    "Fila de iconos capturados, debajo del mapa. Si está apagada, los botones vuelven al círculo.",
+    true
+  )
+  mmCheckbox(
+    category,
+    "ChukieUi_MMBar_lockLdb",
+    "lockLdb",
+    "Bloquear arrastre",
+    "Evita que LibDBIcon vuelva a pegar el icono en el borde del mapa.",
+    true
+  )
+  mmCheckbox(
+    category,
+    "ChukieUi_MMBar_useMasque",
+    "useMasque",
+    "Masque en la barra",
+    "Grupo «Chukie UI» → «MinimapBar», si Masque está instalado.",
+    true
+  )
+  addHeader(layout, "Tamaño")
+  mmSlider(category, "ChukieUi_MMBar_addonIconWidth", "addonBarIconWidth", "Ancho del icono", "Ancho de cada icono de la barra, en píxeles.", 16, 72, 1, 34)
+  mmSlider(category, "ChukieUi_MMBar_addonIconHeight", "addonBarIconHeight", "Alto del icono", "Alto de cada icono. La barra crece con este valor.", 16, 72, 1, 34)
+  mmSlider(category, "ChukieUi_MMBar_addonSpacing", "addonBarSpacing", "Separación", "Espacio horizontal entre iconos.", 0, 24, 1, 4)
+  addMinimapCaptureList(category, layout)
+end
+
+local MICRO_LABELS = {
+  CharacterMicroButton = "Personaje",
+  PlayerSpellsMicroButton = "Hechizos",
+  SpellbookMicroButton = "Libro de hechizos",
+  ProfessionMicroButton = "Profesiones",
+  TalentMicroButton = "Talentos",
+  AchievementMicroButton = "Logros",
+  QuestLogMicroButton = "Misiones",
+  GuildMicroButton = "Hermandad",
+  LFDMicroButton = "Buscador",
+  CollectionsMicroButton = "Colecciones",
+  EJMicroButton = "Guía",
+  StoreMicroButton = "Tienda",
+  ExpansionLandingPageMinimapButton = "Página de expansión",
+}
+
+local function microLabel(frameName)
+  if MICRO_LABELS[frameName] then
+    return MICRO_LABELS[frameName]
+  end
+  local s = tostring(frameName or ""):gsub("MicroButton$", "")
+  if s == "" then
+    return tostring(frameName)
+  end
+  return s
+end
+
+local function microId(frameName)
+  local s = tostring(frameName or "x"):gsub("[^%w]", "_")
+  if #s > 40 then
+    s = strsub(s, 1, 40)
+  end
+  return "ChukieUi_MM_minimenu_vis_" .. s
+end
+
+local function addMicroVisible(category, frameName)
+  local label = microLabel(frameName)
+  addCheckbox(category, microId(frameName), label, "Mostrar «" .. label .. "» en la fila del micromenú.", true, function()
+    local db = minimapBarModel()
+    local t = db and db.minimenuVisibility
+    if not t then
+      return true
+    end
+    return t[frameName] ~= false
+  end, function(v)
+    local db = minimapBarModel()
+    if not db then
+      return
+    end
+    db.minimenuVisibility = db.minimenuVisibility or {}
+    if v == true or v == 1 then
+      db.minimenuVisibility[frameName] = nil
+    else
+      db.minimenuVisibility[frameName] = false
+    end
+    refreshMinimapBar()
+  end)
+end
+
+local function addMicroMenuPage(category, layout)
+  addHeader(layout, "Fila del micromenú")
+  mmCheckbox(
+    category,
+    "ChukieUi_MMBar_minimenuBar",
+    "minimenuBarEnabled",
+    "Mostrar micromenú",
+    "Segunda fila, debajo de la barra de addons. Apagada, los botones vuelven a la barra de Blizzard.",
+    true
+  )
+  mmCheckbox(
+    category,
+    "ChukieUi_MMBar_useMasqueMicro",
+    "useMasqueMicromenu",
+    "Masque en el micromenú",
+    "Grupo «Chukie UI» → «MinimapBarMicroMenu». Algunos botones de Blizzard no tienen icono y pueden verse raros.",
+    false
+  )
+  addHeader(layout, "Tamaño y separación")
+  mmSlider(category, "ChukieUi_MMBar_microRow", "minimenuRowHeight", "Alto de la fila", "Alto de la fila del micromenú, en píxeles.", 20, 80, 1, 42)
+  mmSlider(category, "ChukieUi_MMBar_microIconWidth", "minimenuIconWidth", "Ancho del icono", "Ancho de cada botón del micromenú.", 12, 56, 1, 28)
+  mmSlider(category, "ChukieUi_MMBar_microSpacing", "minimenuSpacing", "Separación", "Espacio horizontal entre botones. Puede quedar en cero.", 0, 24, 1, 2)
+  mmSlider(
+    category,
+    "ChukieUi_MMBar_microGap",
+    "minimenuGapBelowAddonBar",
+    "Distancia a la barra de addons",
+    "Píxeles entre la barra de addons y el micromenú.",
+    0,
+    48,
+    1,
+    8
+  )
+  addHeader(layout, "Botones")
+  ns._mmMinimenuRegistered = ns._mmMinimenuRegistered or {}
+  ns._minimenuVisibilityCategory = category
+  if ns.MinimapBar and ns.MinimapBar.GetMinimenuButtonNameList then
+    local names = ns.MinimapBar:GetMinimenuButtonNameList()
+    for i = 1, #names do
+      local name = names[i]
+      if not ns._mmMinimenuRegistered[name] then
+        ns._mmMinimenuRegistered[name] = true
+        addMicroVisible(category, name)
+      end
+    end
+    if #names == 0 then
+      addHeader(layout, "Los botones aparecen al entrar al mundo. Volvé a abrir esta página.")
+    end
+  end
+  function ns.AppendMinimenuVisibilityRows()
+    if not ns.configPanelRegistered or not ns._minimenuVisibilityCategory then
+      return
+    end
+    if not ns.MinimapBar or not ns.MinimapBar.GetMinimenuButtonNameList then
+      return
+    end
+    local cat = ns._minimenuVisibilityCategory
+    local names = ns.MinimapBar:GetMinimenuButtonNameList()
+    for i = 1, #names do
+      local name = names[i]
+      if not ns._mmMinimenuRegistered[name] then
+        ns._mmMinimenuRegistered[name] = true
+        addMicroVisible(cat, name)
+      end
+    end
+  end
+end
+
+local function addFreeBarsPage(category, layout)
+  addHeader(layout, "Los 4 botones libres")
+  addHeader(
+    layout,
+    "Columna a la izquierda del mapa. De arriba a abajo: teletransporte, acción extra, habilidad de zona y objeto de misión. Cada uno acepta lo que le sueltes."
+  )
+  rightCheckbox(
+    category,
+    "ChukieUi_Free_show",
+    "showFreeButtons",
+    "Mostrar los 4 botones",
+    "La columna junto al mapa. Apagada, no se ve ninguno.",
+    true
+  )
+  rightCheckbox(category, "ChukieUi_Free_teleport", "showFreeTeleport", "Teletransporte", "El de arriba. Ranura 133.", true)
+  rightCheckbox(category, "ChukieUi_Free_extra", "showFreeExtra", "Acción extra", "Ranura 134.", true)
+  rightCheckbox(category, "ChukieUi_Free_zone", "showFreeZone", "Habilidad de zona", "Ranura 135.", true)
+  rightCheckbox(category, "ChukieUi_Free_quest", "showFreeQuest", "Objeto de misión", "Ranura 136.", true)
+  rightSlider(category, "ChukieUi_Free_size", "freeButtonSize", "Tamaño", "Lado de cada botón, en píxeles. Se achica si la columna no entra.", 18, 64, 1, 36)
+  rightSlider(category, "ChukieUi_Free_gap", "freeButtonGap", "Separación", "Espacio vertical entre los cuatro.", 0, 16, 1, 2)
+
+  addHeader(layout, "Barra 6")
+  barCheckbox(
+    category,
+    "ChukieUi_AB_right6",
+    "rightBar6Enabled",
+    "Mostrar barra 6",
+    "Ocho botones en el panel derecho (ranuras 61–68). No es la botonera Keyzen.",
+    false
+  )
+  barSlider(category, "ChukieUi_AB_right6Count", "rightBar6NumButtons", "Cantidad de botones", "Entre 1 y 12.", 1, 12, 1, 8)
+  barSlider(category, "ChukieUi_AB_right6Cols", "rightBar6Cols", "Columnas", "Cuántos botones por fila.", 1, 8, 1, 2)
+  barSlider(category, "ChukieUi_AB_right6Size", "rightBar6ButtonSize", "Tamaño", "Lado de cada botón de la barra 6.", 18, 64, 1, 36)
+  barSlider(category, "ChukieUi_AB_right6Gap", "rightBar6Spacing", "Separación", "Espacio entre botones de la barra 6.", 0, 16, 1, 2)
+  barSlider(category, "ChukieUi_AB_right6OffX", "rightBar6OffsetX", "Desplazamiento X", "Desde la esquina inferior izquierda del panel.", -400, 800, 1, 8)
+  barSlider(category, "ChukieUi_AB_right6OffY", "rightBar6OffsetY", "Desplazamiento Y", "Desde la esquina inferior izquierda del panel.", -200, 400, 1, 8)
+end
+
+local function addBagsPage(category, layout)
+  addHeader(layout, "Oro y bolsas")
+  rightCheckbox(
+    category,
+    "ChukieUi_RS_money",
+    "showRightStripMoney",
+    "Mostrar oro",
+    "El dinero que lleva el personaje, en la franja del panel.",
+    true
+  )
+  rightCheckbox(
+    category,
+    "ChukieUi_RS_bags",
+    "showRightStripBags",
+    "Mostrar espacio de bolsas",
+    "Huecos libres sobre el total. El clic de la franja abre las bolsas.",
+    true
+  )
+  if Settings.CreateDropdown and Settings.CreateControlTextContainer then
+    local setting = Settings.RegisterProxySetting(
+      category,
+      "ChukieUi_RS_orientation",
+      Settings.VarType.String,
+      "Orientación",
+      "vertical",
+      function()
+        local db = rightModel()
+        if db and db.rightStripOrientation == "horizontal" then
+          return "horizontal"
+        end
+        return "vertical"
+      end,
+      function(v)
+        local db = rightModel()
+        if not db then
+          return
+        end
+        if v == "horizontal" then
+          db.rightStripOrientation = "horizontal"
+        else
+          db.rightStripOrientation = "vertical"
+        end
+        refreshStrip()
+      end
+    )
+    local choices = Settings.CreateControlTextContainer()
+    choices:Add("vertical", "Vertical (oro arriba)")
+    choices:Add("horizontal", "Horizontal (en una fila)")
+    Settings.CreateDropdown(category, setting, choices:GetData(), "Cómo se acomodan el oro y el espacio de bolsas.")
+  end
+  addHeader(layout, "Texto")
+  rightSlider(
+    category,
+    "ChukieUi_RS_scale",
+    "rightStripGridScalePercent",
+    "Tamaño (%)",
+    "Escala del icono y del texto.",
+    60,
+    180,
+    1,
+    100
+  )
+  rightSlider(
+    category,
+    "ChukieUi_RS_fontSize",
+    "rightStripFontSize",
+    "Tamaño de fuente",
+    "0 usa un tamaño automático según el ancho de la franja.",
+    0,
+    32,
+    1,
+    0
+  )
+  if Settings.CreateDropdown and Settings.CreateControlTextContainer then
+    local setting = Settings.RegisterProxySetting(
+      category,
+      "ChukieUi_RS_fontFace",
+      Settings.VarType.Number,
+      "Fuente",
+      0,
+      function()
+        local db = rightModel()
+        local v = db and tonumber(db.rightStripFontFace) or 0
+        if v < 0 or v > 4 then
+          return 0
+        end
+        return v
+      end,
+      function(v)
+        local db = rightModel()
+        if not db then
+          return
+        end
+        v = tonumber(v) or 0
+        if v < 0 or v > 4 then
+          v = 0
+        end
+        db.rightStripFontFace = v
+        refreshStrip()
+      end
+    )
+    local faces = Settings.CreateControlTextContainer()
+    faces:Add(0, "La del juego")
+    faces:Add(1, "Friz Quadrata")
+    faces:Add(2, "Arial Narrow")
+    faces:Add(3, "Morpheus")
+    faces:Add(4, "Skurri")
+    Settings.CreateDropdown(category, setting, faces:GetData(), "Fuente del oro y del espacio de bolsas.")
+  end
+  rightCheckbox(
+    category,
+    "ChukieUi_RS_masque",
+    "rightStripUseMasque",
+    "Masque en la franja",
+    "Aplica Masque al botón de la franja, si está instalado.",
+    false
+  )
 end
 
 local function padModes()
@@ -791,14 +1186,32 @@ function ns.RegisterConfigPanel()
   addBackup(rootLayout)
 
   local rightCategory, rightLayout = subcategory(root, rootLayout, "Panel derecho")
-  addRightPanel(rightCategory, rightLayout)
+  addHeader(rightLayout, "Panel derecho")
+  rightCheckbox(
+    rightCategory,
+    "ChukieUi_MMPos_debugBounds",
+    "debugRightPanelBounds",
+    "Recuadro verde del panel derecho",
+    "Dibuja el borde del panel para ver hasta dónde llega. No captura el ratón.",
+    false
+  )
+  local addonCategory, addonLayout = subcategory(rightCategory, rightLayout, "Botones addons")
+  addAddonBarPage(addonCategory, addonLayout)
+  local microCategory, microLayout = subcategory(rightCategory, rightLayout, "Botones micromenú")
+  addMicroMenuPage(microCategory, microLayout)
+  local freeCategory, freeLayout = subcategory(rightCategory, rightLayout, "Barras de botones")
+  addFreeBarsPage(freeCategory, freeLayout)
+  local mapCategory, mapLayout = subcategory(rightCategory, rightLayout, "Minimapa")
+  addRightPanel(mapCategory, mapLayout)
+  local bagsCategory, bagsLayout = subcategory(rightCategory, rightLayout, "Bolsas")
+  addBagsPage(bagsCategory, bagsLayout)
 
   local barsCategory, barsLayout = subcategory(root, rootLayout, "Botonera")
   addButtonPad(barsCategory, barsLayout)
 
   Settings.RegisterAddOnCategory(root)
   ns.settingsCategoryID = categoryId(root)
-  ns.minimapCategoryID = categoryId(rightCategory)
+  ns.minimapCategoryID = categoryId(mapCategory)
   ns.actionBarsCategoryID = categoryId(barsCategory)
 end
 

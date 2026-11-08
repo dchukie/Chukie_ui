@@ -125,28 +125,59 @@ local function setupValueFS(fs)
   fs:SetShadowColor(0, 0, 0, 0.9)
 end
 
-local function layoutTwoByTwo(section, rowH, iconSize, gapY)
-  section.grid:SetHeight((rowH * 2) + gapY)
+local function showPair(icon, text, on)
+  if on then
+    icon:Show()
+    text:Show()
+  else
+    icon:Hide()
+    text:Hide()
+  end
+end
 
-  section.icon1:SetSize(iconSize, iconSize)
-  section.icon1:ClearAllPoints()
-  section.icon1:SetPoint("TOPLEFT", section.grid, "TOPLEFT", 0, 0)
+local function placePair(section, icon, text, rowH, iconSize, anchor, x, y)
+  icon:SetSize(iconSize, iconSize)
+  icon:ClearAllPoints()
+  icon:SetPoint("TOPLEFT", section.grid, anchor or "TOPLEFT", x or 0, y or 0)
+  text:ClearAllPoints()
+  text:SetPoint("LEFT", icon, "RIGHT", 4, 0)
+  text:SetHeight(rowH)
+end
 
-  section.val1:ClearAllPoints()
-  section.val1:SetPoint("LEFT", section.icon1, "RIGHT", 4, 0)
-  section.val1:SetPoint("RIGHT", section.grid, "RIGHT", 0, 0)
-  section.val1:SetPoint("TOP", section.grid, "TOP", 0, 0)
-  section.val1:SetHeight(rowH)
-
-  section.icon2:SetSize(iconSize, iconSize)
-  section.icon2:ClearAllPoints()
-  section.icon2:SetPoint("TOPLEFT", section.grid, "TOPLEFT", 0, -rowH - gapY)
-
-  section.val2:ClearAllPoints()
-  section.val2:SetPoint("LEFT", section.icon2, "RIGHT", 4, 0)
-  section.val2:SetPoint("RIGHT", section.grid, "RIGHT", 0, 0)
-  section.val2:SetPoint("TOP", section.val1, "BOTTOM", 0, -gapY)
-  section.val2:SetHeight(rowH)
+--- orientation "horizontal" pone oro y bolsas en la misma fila. Si no, el oro queda arriba.
+local function layoutStrip(section, rowH, iconSize, gapY, orientation, showMoney, showBags)
+  showPair(section.icon1, section.val1, showMoney)
+  showPair(section.icon2, section.val2, showBags)
+  local rows = {}
+  if showMoney then
+    rows[#rows + 1] = { section.icon1, section.val1 }
+  end
+  if showBags then
+    rows[#rows + 1] = { section.icon2, section.val2 }
+  end
+  if orientation == "horizontal" and #rows == 2 then
+    section.grid:SetHeight(rowH)
+    placePair(section, rows[1][1], rows[1][2], rowH, iconSize, "TOPLEFT", 0, 0)
+    rows[1][2]:SetPoint("RIGHT", section.grid, "CENTER", -4, 0)
+    rows[1][2]:SetPoint("TOP", section.grid, "TOP", 0, 0)
+    placePair(section, rows[2][1], rows[2][2], rowH, iconSize, "TOP", 4, 0)
+    rows[2][1]:ClearAllPoints()
+    rows[2][1]:SetPoint("LEFT", section.grid, "CENTER", 4, 0)
+    rows[2][1]:SetPoint("TOP", section.grid, "TOP", 0, 0)
+    rows[2][2]:ClearAllPoints()
+    rows[2][2]:SetPoint("LEFT", rows[2][1], "RIGHT", 4, 0)
+    rows[2][2]:SetPoint("RIGHT", section.grid, "RIGHT", 0, 0)
+    rows[2][2]:SetPoint("TOP", section.grid, "TOP", 0, 0)
+    rows[2][2]:SetHeight(rowH)
+    return
+  end
+  section.grid:SetHeight(math.max(rowH, (#rows * rowH) + math.max(0, #rows - 1) * gapY))
+  for i = 1, #rows do
+    local y = -((i - 1) * (rowH + gapY))
+    placePair(section, rows[i][1], rows[i][2], rowH, iconSize, "TOPLEFT", 0, y)
+    rows[i][2]:SetPoint("RIGHT", section.grid, "RIGHT", 0, 0)
+    rows[i][2]:SetPoint("TOP", section.grid, "TOP", 0, y)
+  end
 end
 
 local function hideFrameHard(frame)
@@ -443,6 +474,15 @@ function RS:Layout()
   botH = math.min(botH, h)
 
   local d = db()
+  local showMoney = d.showRightStripMoney ~= false
+  local showBags = d.showRightStripBags ~= false
+  local orientation = (d.rightStripOrientation == "horizontal") and "horizontal" or "vertical"
+  if not showMoney and not showBags then
+    self._bottom.frame:Hide()
+    self:HideBlizzardBagBar()
+    return
+  end
+  self._bottom.frame:Show()
   local scalePct = tonumber(d.rightStripGridScalePercent) or 100
   scalePct = math.max(60, math.min(180, math.floor(scalePct + 0.5)))
   d.rightStripGridScalePercent = scalePct
@@ -458,11 +498,10 @@ function RS:Layout()
   local maxGridH = math.max(20, botH - 4)
   if gridH > maxGridH then
     rowH = math.max(9, math.floor((maxGridH - gapY) / 2))
-    gridH = (rowH * 2) + gapY
   end
 
   self._bottom.frame:SetHeight(botH)
-  layoutTwoByTwo(self._bottom, rowH, iconSize, gapY)
+  layoutStrip(self._bottom, rowH, iconSize, gapY, orientation, showMoney, showBags)
 
   local fontPath = FONT_FACES[tonumber(d.rightStripFontFace) or 0] or STANDARD_TEXT_FONT
   local ok1 = self._bottom.val1:SetFont(fontPath, textPx, "")

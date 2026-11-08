@@ -206,12 +206,47 @@ local function buttonColumn()
   return slot
 end
 
+local FREE_SHOW_KEY = {
+  teleport = "showFreeTeleport",
+  extra = "showFreeExtra",
+  zone = "showFreeZone",
+  questitem = "showFreeQuest",
+}
+
+local function freeShown(db, id)
+  if not db then
+    return true
+  end
+  local key = FREE_SHOW_KEY[id]
+  if not key or db[key] == nil then
+    return true
+  end
+  return db[key] == true or db[key] == 1
+end
+
 function DS:Layout(block, size, gap)
   if inCombat() then
     if ns.RightPanel and ns.RightPanel.RequestApplyAfterCombat then
       ns.RightPanel:RequestApplyAfterCombat()
     end
     return
+  end
+  local db = ns.Profile and ns.Profile.GetRightPanelModel and ns.Profile:GetRightPanelModel()
+  if db and db.showFreeButtons == false then
+    if self._buttons then
+      for i = 1, #self._buttons do
+        self._buttons[i]:Hide()
+      end
+    end
+    return
+  end
+  if db then
+    if tonumber(db.freeButtonSize) then
+      size = db.freeButtonSize
+    end
+    if tonumber(db.freeButtonGap) then
+      gap = db.freeButtonGap
+    end
   end
   local column = buttonColumn()
   local parent = column or block
@@ -229,26 +264,32 @@ function DS:Layout(block, size, gap)
     size = math.max(18, math.min(size, fitted))
   end
   local x = (not column) and (block:GetWidth() + gap) or 0
+  local shown = 0
   for i = 1, #self._buttons do
     local btn = self._buttons[i]
-    btn:SetFrameStrata("MEDIUM")
-    btn:SetFrameLevel(80)
-    if column then
-      if btn:GetParent() ~= UIParent then
-        btn:SetParent(UIParent)
-      end
-      btn:SetSize(size, size)
-      btn:ClearAllPoints()
-      btn:SetPoint("TOP", column, "TOP", 0, -(pad + (i - 1) * (size + gap)))
+    if not freeShown(db, btn._dragId) then
+      btn:Hide()
     else
-      if btn:GetParent() ~= block then
-        btn:SetParent(block)
+      shown = shown + 1
+      btn:SetFrameStrata("HIGH")
+      btn:SetFrameLevel(80)
+      if column then
+        if btn:GetParent() ~= UIParent then
+          btn:SetParent(UIParent)
+        end
+        btn:SetSize(size, size)
+        btn:ClearAllPoints()
+        btn:SetPoint("TOP", column, "TOP", 0, -(pad + (shown - 1) * (size + gap)))
+      else
+        if btn:GetParent() ~= block then
+          btn:SetParent(block)
+        end
+        btn:SetSize(size, size)
+        btn:ClearAllPoints()
+        btn:SetPoint("TOPLEFT", block, "TOPLEFT", x, -((shown - 1) * (size + gap)))
       end
-      btn:SetSize(size, size)
-      btn:ClearAllPoints()
-      btn:SetPoint("TOPLEFT", block, "TOPLEFT", x, -((i - 1) * (size + gap)))
+      btn:Show()
+      refresh(btn)
     end
-    btn:Show()
-    refresh(btn)
   end
 end

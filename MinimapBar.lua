@@ -145,6 +145,28 @@ local function getRightPanelBaseFrame()
   return UIParent
 end
 
+--- El cluster rellena el panel y tapa lo que queda en un slot de fondo. La barra vive en UIParent, encima.
+local function raiseOverMinimap(frame)
+  if not frame or not UIParent then
+    return
+  end
+  if frame.SetFixedFrameStrata then
+    frame:SetFixedFrameStrata(false)
+  end
+  if frame:GetParent() ~= UIParent then
+    frame:SetParent(UIParent)
+  end
+  frame:SetFrameStrata("HIGH")
+  if frame.SetFixedFrameStrata then
+    frame:SetFixedFrameStrata(true)
+  end
+  local level = 80
+  if MinimapCluster and MinimapCluster.GetFrameLevel then
+    level = math.max(level, (MinimapCluster:GetFrameLevel() or 0) + 30)
+  end
+  frame:SetFrameLevel(level)
+end
+
 local function getPanelScalePct()
   if ns.RightPanel and ns.RightPanel.DB then
     local db = ns.RightPanel:DB()
@@ -599,6 +621,7 @@ function MB:PositionAddonBarCentered()
   if not self.bar or barOpts().enabled == false then
     return
   end
+  raiseOverMinimap(self.bar)
   self.bar:ClearAllPoints()
   local ref = getRightPanelBaseFrame()
   if Minimap and Minimap:IsShown() and ref then
@@ -625,6 +648,7 @@ function MB:PositionMicromenuCentered()
     return
   end
   local mm = self.miniMenuBar
+  raiseOverMinimap(mm)
   mm:ClearAllPoints()
   if self.bar and self.bar:IsShown() and barOpts().enabled ~= false then
     local ref = getRightPanelBaseFrame()
@@ -1045,7 +1069,6 @@ function MB:UpdateDiscoveredOrder()
       seen[n] = true
     end
   end)
-  table.sort(order)
 end
 
 function MB:EnsureAddonPolicyHook(f, frameName)
@@ -1274,11 +1297,32 @@ function MB:EnumerateManagedCandidates()
 end
 
 function MB:CollectFrames()
-  local out = {}
+  local byName = {}
   for _, f in ipairs(self:EnumerateManagedCandidates()) do
     if self:ShouldPlaceOnBar(f) then
-      out[#out + 1] = f
+      local n = f:GetName()
+      if n and n ~= "" then
+        byName[n] = f
+      end
     end
+  end
+  local out, seen = {}, {}
+  for _, name in ipairs(barOpts().discoveredOrder or {}) do
+    local f = byName[name]
+    if f then
+      out[#out + 1] = f
+      seen[name] = true
+    end
+  end
+  local rest = {}
+  for name in pairs(byName) do
+    if not seen[name] then
+      rest[#rest + 1] = name
+    end
+  end
+  table.sort(rest)
+  for i = 1, #rest do
+    out[#out + 1] = byName[rest[i]]
   end
   return out
 end
@@ -1889,51 +1933,61 @@ function MB:Layout()
     return
   end
   local iw, ih, sp = self:GetAddonBarIconWidth(), self:GetAddonBarIconHeight(), self:GetAddonBarSpacing()
+  local wanted = {}
   local x = sp
-  local kids = listFrameChildren(self.bar)
-  for _, f in ipairs(kids) do
-    f:ClearAllPoints()
-    f:SetPoint("LEFT", self.bar, "LEFT", x, 0)
-    f:SetSize(iw, ih)
-    x = x + iw + sp
+  for _, orig in ipairs(self:CollectFrames()) do
+    local n = orig:GetName()
+    local proxy = n and _G["ChukieUi_mmproxy_" .. self:ProxySanitizeName(n)]
+    if proxy then
+      wanted[proxy] = true
+      if proxy:GetParent() ~= self.bar then
+        proxy:SetParent(self.bar)
+      end
+      proxy:ClearAllPoints()
+      proxy:SetPoint("LEFT", self.bar, "LEFT", x, 0)
+      proxy:SetSize(iw, ih)
+      proxy:Show()
+      x = x + iw + sp
+    end
   end
-  self.bar:SetWidth(math.max(x, 48))
+  for _, f in ipairs(listFrameChildren(self.bar)) do
+    if f.chukieIsMinimapProxy and not wanted[f] then
+      f:Hide()
+    end
+  end
+  self.bar:SetWidth(math.max(x, iw + sp * 2))
   self.bar:SetHeight(ih + 4)
   self:PositionAddonBarCentered()
 end
 
 function MB:EnsureBar()
-  local parent = getRightPanelBaseFrame()
   if self.bar then
-    if parent and self.bar:GetParent() ~= parent then
-      self.bar:SetParent(parent)
-    end
+    raiseOverMinimap(self.bar)
     return
   end
   self.capturedLDB = {}
-  local bar = CreateFrame("Frame", "ChukieUi_MinimapButtonBar", parent)
-  bar:SetFrameStrata("MEDIUM")
-  bar:SetFixedFrameStrata(true)
-  bar:SetFrameLevel(((parent and parent.GetFrameLevel and parent:GetFrameLevel()) or 3) + 3)
+  local bar = CreateFrame("Frame", "ChukieUi_MinimapButtonBar", UIParent)
   bar:SetHeight(self:GetAddonBarIconHeight() + 4)
+  if not bar._chukieBg then
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0, 0, 0, 0.55)
+    bar._chukieBg = bg
+  end
   self.bar = bar
+  raiseOverMinimap(bar)
   self:PositionAddonBarCentered()
 end
 
 function MB:EnsureMiniMenuBar()
-  local parent = getRightPanelBaseFrame()
   if self.miniMenuBar then
-    if parent and self.miniMenuBar:GetParent() ~= parent then
-      self.miniMenuBar:SetParent(parent)
-    end
+    raiseOverMinimap(self.miniMenuBar)
     return
   end
-  local mm = CreateFrame("Frame", "ChukieUi_MiniMenuButtonBar", parent)
-  mm:SetFrameStrata("MEDIUM")
-  mm:SetFixedFrameStrata(true)
-  mm:SetFrameLevel(((parent and parent.GetFrameLevel and parent:GetFrameLevel()) or 3) + 2)
+  local mm = CreateFrame("Frame", "ChukieUi_MiniMenuButtonBar", UIParent)
   mm:SetHeight(self:GetMiniMenuBarHeight())
   self.miniMenuBar = mm
+  raiseOverMinimap(mm)
 end
 
 function MB:EnsureLdbHooks()

@@ -62,6 +62,19 @@ local function isLeftDebugBoundsEnabled(db)
   return v == true or v == 1
 end
 
+local function ringShouldStayHidden()
+  local rp = ns.RightPanel
+  local db = rp and rp.DB and rp:DB()
+  return not (db and (db.showMinimapRing == true or db.showMinimapRing == 1))
+end
+
+local function chromeShouldStayHidden(frame)
+  if frame and frame._chukieZoomChrome then
+    return true
+  end
+  return ringShouldStayHidden()
+end
+
 local function forceHideMinimapRingFrame(frame)
   if not frame then
     return
@@ -79,7 +92,7 @@ local function forceHideMinimapRingFrame(frame)
   end
   frame._chukieForceHideHooked = true
   hooksecurefunc(frame, "Show", function(f)
-    if f._chukieForcing then
+    if f._chukieForcing or not chromeShouldStayHidden(f) then
       return
     end
     f._chukieForcing = true
@@ -92,7 +105,7 @@ local function forceHideMinimapRingFrame(frame)
     f._chukieForcing = false
   end)
   hooksecurefunc(frame, "SetShown", function(f, show)
-    if not show or f._chukieForcing then
+    if not show or f._chukieForcing or not chromeShouldStayHidden(f) then
       return
     end
     f._chukieForcing = true
@@ -105,13 +118,27 @@ local function forceHideMinimapRingFrame(frame)
     f._chukieForcing = false
   end)
   hooksecurefunc(frame, "SetAlpha", function(f, alpha)
-    if f._chukieForcing or (tonumber(alpha) or 0) <= 0 then
+    if f._chukieForcing or (tonumber(alpha) or 0) <= 0 or not chromeShouldStayHidden(f) then
       return
     end
     f._chukieForcing = true
     f:SetAlpha(0)
     f._chukieForcing = false
   end)
+end
+
+local function releaseMinimapRingFrame(frame)
+  if not frame or frame._chukieZoomChrome then
+    return
+  end
+  frame._chukieForcing = true
+  if frame.SetAlpha then
+    frame:SetAlpha(1)
+  end
+  frame._chukieForcing = false
+  if frame.Show then
+    frame:Show()
+  end
 end
 
 local function listRegions(frame)
@@ -249,22 +276,67 @@ end
 
 --- Anillo, borde circular y botones +/−. La rueda del mapa no pasa por esos botones.
 function MP:HideMinimapChrome()
+  local zoom = {
+    MinimapZoomIn,
+    MinimapZoomOut,
+    Minimap and Minimap.ZoomIn,
+    Minimap and Minimap.ZoomOut,
+  }
+  for _, f in ipairs(zoom) do
+    if f then
+      f._chukieZoomChrome = true
+      forceHideMinimapRingFrame(f)
+    end
+  end
   local named = {
     MinimapBorder,
     MinimapBackdrop,
     MinimapCompassTexture,
     MinimapNorthTag,
-    MinimapZoomIn,
-    MinimapZoomOut,
-    Minimap and Minimap.ZoomIn,
-    Minimap and Minimap.ZoomOut,
     Minimap and Minimap.Border,
     Minimap and Minimap.Backdrop,
     MinimapCluster and MinimapCluster.Border,
     MinimapCluster and MinimapCluster.Backdrop,
   }
+  local hideRing = ringShouldStayHidden()
   for _, f in ipairs(named) do
-    forceHideMinimapRingFrame(f)
+    if hideRing then
+      forceHideMinimapRingFrame(f)
+    else
+      releaseMinimapRingFrame(f)
+    end
+  end
+  if Minimap and Minimap.SetMaskTexture then
+    pcall(Minimap.SetMaskTexture, Minimap, "Interface\\CharacterFrame\\TempPortraitAlphaMask")
+  end
+  if not hideRing then
+    local released = {}
+    local function releaseOn(host, depth)
+      if not host or released[host] or depth > 6 then
+        return
+      end
+      released[host] = true
+      if host._chukieForceHideHooked then
+        releaseMinimapRingFrame(host)
+      end
+      if host.GetNumRegions then
+        local n = host:GetNumRegions() or 0
+        for i = 1, n do
+          releaseOn(select(i, host:GetRegions()), depth + 1)
+        end
+      end
+      if host.GetNumChildren then
+        local n = host:GetNumChildren() or 0
+        for i = 1, n do
+          releaseOn(select(i, host:GetChildren()), depth + 1)
+        end
+      end
+    end
+    for _, host in ipairs({ Minimap, MinimapCluster, MinimapBackdrop, MinimapBorder }) do
+      releaseOn(host, 0)
+    end
+    self:ApplyMinimapCornerButtons()
+    return
   end
   --- El anillo blanco no era el NineSlice. Es una textura grande (fondo, máscara
   --- dibujada, overlay o exploración) hija del minimapa, a menudo sin nombre.
@@ -350,9 +422,6 @@ function MP:HideMinimapChrome()
         end
       end
     end
-  end
-  if Minimap and Minimap.SetMaskTexture then
-    pcall(Minimap.SetMaskTexture, Minimap, "Interface\\CharacterFrame\\TempPortraitAlphaMask")
   end
   for _, host in ipairs({ Minimap, MinimapCluster, MinimapBackdrop, MinimapBorder }) do
     hideOn(host, 0)
@@ -1866,6 +1935,9 @@ function MP:Apply()
     self:PlaceKeyRing()
     if ns.RightStrip and ns.RightStrip.Layout then
       ns.RightStrip:Layout()
+    end
+    if ns.MinimapBar and ns.MinimapBar.Refresh then
+      ns.MinimapBar:Refresh()
     end
     if ns.HorizontalCompass and ns.HorizontalCompass.Refresh then
       ns.HorizontalCompass:Refresh()

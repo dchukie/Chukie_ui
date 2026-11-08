@@ -357,6 +357,116 @@ function MP:HideMinimapChrome()
   for _, host in ipairs({ Minimap, MinimapCluster, MinimapBackdrop, MinimapBorder }) do
     hideOn(host, 0)
   end
+  self:ApplyMinimapCornerButtons()
+end
+
+local function wantsShown(db, key)
+  return db and (db[key] == true or db[key] == 1)
+end
+
+local function clockInside(frame)
+  local clock = TimeManagerClockButton
+  if not clock or not frame or not clock.GetParent then
+    return false
+  end
+  local parent = clock:GetParent()
+  while parent do
+    if parent == frame then
+      return true
+    end
+    if not parent.GetParent then
+      return false
+    end
+    parent = parent:GetParent()
+  end
+  return false
+end
+
+local function keepClockOutOf(frame)
+  local clock = TimeManagerClockButton
+  if not clock or not clockInside(frame) or clock:GetParent() == MinimapCluster then
+    return
+  end
+  if InCombatLockdown and InCombatLockdown() and clock.IsProtected and clock:IsProtected() then
+    return
+  end
+  clock:SetParent(MinimapCluster or Minimap or UIParent)
+end
+
+local function setOptionalChrome(frame, show)
+  if not frame or frame == TimeManagerClockButton then
+    return
+  end
+  frame._chukieWantHidden = not show
+  if not frame._chukieOptHook and hooksecurefunc and frame.Show then
+    frame._chukieOptHook = true
+    pcall(hooksecurefunc, frame, "Show", function(f)
+      if f._chukieWantHidden and f.Hide then
+        f:Hide()
+      end
+    end)
+    pcall(hooksecurefunc, frame, "SetShown", function(f, shown)
+      if shown and f._chukieWantHidden and f.Hide then
+        f:Hide()
+      end
+    end)
+  end
+  if show then
+    if frame.SetAlpha then
+      frame:SetAlpha(1)
+    end
+    if frame.Show then
+      frame:Show()
+    end
+    if frame.EnableMouse then
+      frame:EnableMouse(true)
+    end
+    return
+  end
+  if frame.EnableMouse then
+    frame:EnableMouse(false)
+  end
+  if frame.SetAlpha then
+    frame:SetAlpha(0)
+  end
+  if frame.Hide then
+    frame:Hide()
+  end
+end
+
+function MP:ApplyMinimapCornerButtons()
+  local db = self:DB()
+  local showZone = wantsShown(db, "showMinimapZone")
+  local showCalendar = wantsShown(db, "showMinimapCalendar")
+  local showTracking = wantsShown(db, "showMinimapTracking")
+  local zoneFrames = {
+    MinimapZoneText,
+    MinimapZoneTextButton,
+    MinimapCluster and MinimapCluster.ZoneTextButton,
+    MinimapCluster and MinimapCluster.ZoneTextFrame,
+  }
+  for i = 1, #zoneFrames do
+    local frame = zoneFrames[i]
+    if frame and frame ~= ZoneTextFrame and frame ~= ZoneTextString then
+      keepClockOutOf(frame)
+      if not clockInside(frame) then
+        setOptionalChrome(frame, showZone)
+      end
+    end
+  end
+  setOptionalChrome(GameTimeFrame, showCalendar)
+  local tracking = {
+    MiniMapTracking,
+    MiniMapTrackingButton,
+    MinimapCluster and (MinimapCluster.TrackingFrame or MinimapCluster.Tracking),
+  }
+  local trackFrame = MinimapCluster and (MinimapCluster.TrackingFrame or MinimapCluster.Tracking)
+  if trackFrame and trackFrame.Button then
+    tracking[#tracking + 1] = trackFrame.Button
+  end
+  for i = 1, #tracking do
+    setOptionalChrome(tracking[i], showTracking)
+  end
 end
 
 function MP:KeyRingPlace()

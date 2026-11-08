@@ -354,6 +354,30 @@ local function addRightPanel(category, layout)
     "Dibuja el borde del panel para ver hasta dónde llega. No captura el ratón.",
     false
   )
+  rightCheckbox(
+    category,
+    "ChukieUi_MMPos_showZone",
+    "showMinimapZone",
+    "Mostrar nombre de zona",
+    "MinimapCluster.ZoneTextButton, el nombre arriba del mapa. El reloj no se toca.",
+    false
+  )
+  rightCheckbox(
+    category,
+    "ChukieUi_MMPos_showCalendar",
+    "showMinimapCalendar",
+    "Mostrar calendario",
+    "GameTimeFrame, el botón de calendario al lado del reloj.",
+    false
+  )
+  rightCheckbox(
+    category,
+    "ChukieUi_MMPos_showTracking",
+    "showMinimapTracking",
+    "Mostrar círculo de rastreo",
+    "MinimapCluster.TrackingFrame, el círculo del minimapa.",
+    false
+  )
   if not (Settings.CreateDropdown and Settings.CreateControlTextContainer) then
     return
   end

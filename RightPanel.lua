@@ -393,6 +393,47 @@ local function keepClockOutOf(frame)
   clock:SetParent(MinimapCluster or Minimap or UIParent)
 end
 
+local function regionLooksLikeSunBorder(region)
+  if not region or not region.GetObjectType or region:GetObjectType() ~= "Texture" then
+    return false
+  end
+  local w, h = 0, 0
+  if region.GetWidth then
+    w = tonumber(region:GetWidth()) or 0
+  end
+  if region.GetHeight then
+    h = tonumber(region:GetHeight()) or 0
+  end
+  if w >= 96 or h >= 96 then
+    return false
+  end
+  local name = region.GetName and region:GetName()
+  if type(name) == "string" then
+    local low = name:lower()
+    if low:find("gametime", 1, true) or low:find("trackingborder", 1, true) then
+      return true
+    end
+  end
+  local tex = region.GetTexture and region:GetTexture()
+  if tex == 136430 then
+    return true
+  end
+  if type(tex) == "string" then
+    local low = tex:lower()
+    if low:find("gametime", 1, true) or low:find("trackingborder", 1, true) then
+      return true
+    end
+  end
+  local atlas = region.GetAtlas and region:GetAtlas()
+  if type(atlas) == "string" then
+    local low = atlas:lower()
+    if low:find("gametime", 1, true) or low:find("tracking-border", 1, true) or low:find("trackingborder", 1, true) or low:find("tracking-background", 1, true) or low:find("minimap-button", 1, true) then
+      return true
+    end
+  end
+  return false
+end
+
 local function setOptionalChrome(frame, show)
   if not frame then
     return
@@ -447,27 +488,82 @@ local function setOptionalChrome(frame, show)
   end
 end
 
+local function applySunBorder(show)
+  local function paint(region)
+    if region then
+      setOptionalChrome(region, show)
+    end
+  end
+  paint(_G.GameTimeTexture)
+  local buttons = { GameTimeFrame }
+  if MinimapCluster and MinimapCluster.Tracking then
+    paint(MinimapCluster.Tracking.Background)
+    paint(MinimapCluster.Tracking.Border)
+  end
+  for i = 1, #buttons do
+    local button = buttons[i]
+    if button then
+      if button.GetNormalTexture then
+        paint(button:GetNormalTexture())
+      end
+      if button.GetPushedTexture then
+        paint(button:GetPushedTexture())
+      end
+      if button.GetHighlightTexture then
+        paint(button:GetHighlightTexture())
+      end
+      paint(button.Border)
+      paint(button.Background)
+    end
+  end
+  local hosts = { GameTimeFrame, Minimap, MinimapCluster }
+  for i = 1, #hosts do
+    local host = hosts[i]
+    if host and host.GetNumRegions then
+      local n = host:GetNumRegions() or 0
+      for r = 1, n do
+        local region = select(r, host:GetRegions())
+        if regionLooksLikeSunBorder(region) then
+          paint(region)
+        end
+      end
+    end
+  end
+end
+
 function MP:ApplyMinimapCornerButtons()
   local db = self:DB()
   local showZone = wantsShown(db, "showMinimapZone")
+  local showZoneBar = wantsShown(db, "showMinimapZoneBar")
   local showCalendar = wantsShown(db, "showMinimapCalendar")
+  local showSunBorder = wantsShown(db, "showMinimapSunBorder")
   local showTracking = wantsShown(db, "showMinimapTracking")
   local zoneFrames = {
     MinimapZoneText,
-    MinimapZoneTextButton,
-    MinimapCluster and MinimapCluster.ZoneTextButton,
     MinimapCluster and MinimapCluster.ZoneTextFrame,
   }
   for i = 1, #zoneFrames do
     local frame = zoneFrames[i]
     if frame and frame ~= ZoneTextFrame and frame ~= ZoneTextString then
+      setOptionalChrome(frame, showZone)
+    end
+  end
+  local zoneBar = {
+    MinimapBorderTop,
+    MinimapZoneTextButton,
+    MinimapCluster and MinimapCluster.BorderTop,
+    MinimapCluster and MinimapCluster.TitleContainer,
+    MinimapCluster and MinimapCluster.ZoneTextButton,
+  }
+  for i = 1, #zoneBar do
+    local frame = zoneBar[i]
+    if frame and frame ~= ZoneTextFrame and frame ~= ZoneTextString then
       keepClockOutOf(frame)
-      if not clockInside(frame) then
-        setOptionalChrome(frame, showZone)
-      end
+      setOptionalChrome(frame, showZoneBar)
     end
   end
   setOptionalChrome(GameTimeFrame, showCalendar)
+  applySunBorder(showSunBorder)
   local showClock = wantsShown(db, "showMinimapClock")
   local showAddonBox = wantsShown(db, "showMinimapAddonBox")
   local tracking = {

@@ -359,7 +359,23 @@ local function addRightPanel(category, layout)
     "ChukieUi_MMPos_showZone",
     "showMinimapZone",
     "Mostrar nombre de zona",
-    "MinimapCluster.ZoneTextButton, el nombre arriba del mapa.",
+    "MinimapZoneText, el texto del nombre. La barra va aparte.",
+    false
+  )
+  rightCheckbox(
+    category,
+    "ChukieUi_MMPos_showZoneBar",
+    "showMinimapZoneBar",
+    "Mostrar barra de zona",
+    "MinimapCluster.BorderTop, la barra vacía. El clic de esa barra ya no abre el mapa.",
+    false
+  )
+  rightCheckbox(
+    category,
+    "ChukieUi_MMPos_showSunBorder",
+    "showMinimapSunBorder",
+    "Mostrar borde del sol",
+    "El anillo de GameTimeFrame. El sol era GameTimeTexture, la hora del servidor.",
     false
   )
   rightCheckbox(

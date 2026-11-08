@@ -67,7 +67,9 @@ local function forceHideMinimapRingFrame(frame)
     return
   end
   if frame.SetAlpha then
+    frame._chukieForcing = true
     frame:SetAlpha(0)
+    frame._chukieForcing = false
   end
   if frame.Hide then
     frame:Hide()
@@ -77,22 +79,38 @@ local function forceHideMinimapRingFrame(frame)
   end
   frame._chukieForceHideHooked = true
   hooksecurefunc(frame, "Show", function(f)
+    if f._chukieForcing then
+      return
+    end
+    f._chukieForcing = true
     if f.SetAlpha then
       f:SetAlpha(0)
     end
     if f.Hide then
       f:Hide()
     end
+    f._chukieForcing = false
   end)
   hooksecurefunc(frame, "SetShown", function(f, show)
-    if show then
-      if f.SetAlpha then
-        f:SetAlpha(0)
-      end
-      if f.Hide then
-        f:Hide()
-      end
+    if not show or f._chukieForcing then
+      return
     end
+    f._chukieForcing = true
+    if f.SetAlpha then
+      f:SetAlpha(0)
+    end
+    if f.Hide then
+      f:Hide()
+    end
+    f._chukieForcing = false
+  end)
+  hooksecurefunc(frame, "SetAlpha", function(f, alpha)
+    if f._chukieForcing or (tonumber(alpha) or 0) <= 0 then
+      return
+    end
+    f._chukieForcing = true
+    f:SetAlpha(0)
+    f._chukieForcing = false
   end)
 end
 
@@ -248,37 +266,96 @@ function MP:HideMinimapChrome()
   for _, f in ipairs(named) do
     forceHideMinimapRingFrame(f)
   end
-  local function walk(host, depth)
-    if not host or depth > 2 or not host.GetNumChildren then
+  --- El anillo blanco no era el NineSlice. Es una textura grande (fondo, máscara
+  --- dibujada, overlay o exploración) hija del minimapa, a menudo sin nombre.
+  local decorativeKeys = {
+    "Background",
+    "Border",
+    "BorderFrame",
+    "Compass",
+    "CompassTexture",
+    "Overlay",
+    "Exploration",
+    "ExplorationOverlay",
+    "TrackingBorder",
+    "NineSlice",
+    "nineSlice",
+  }
+  local seen = {}
+  local function regionLooksLikeRing(region)
+    if not region or seen[region] or not region.GetObjectType then
+      return false
+    end
+    local kind = region:GetObjectType()
+    if kind ~= "Texture" and kind ~= "MaskTexture" then
+      return false
+    end
+    --- La máscara circular recorta el mapa. Ocultarla lo deja cuadrado; no es el anillo.
+    if kind == "MaskTexture" then
+      return false
+    end
+    local name = region.GetName and region:GetName()
+    if isCompassOrRingTexture(region) or isLargeBorderLayer(region) or isSquareChromeTexture(region) or chromeNameShouldHide(name) then
+      return true
+    end
+    local w, h = 0, 0
+    if region.GetWidth then
+      local okW, gotW = pcall(region.GetWidth, region)
+      if okW then
+        w = tonumber(gotW) or 0
+      end
+    end
+    if region.GetHeight then
+      local okH, gotH = pcall(region.GetHeight, region)
+      if okH then
+        h = tonumber(gotH) or 0
+      end
+    end
+    return w >= 100 and h >= 100
+  end
+  local function hideOn(host, depth)
+    if not host or seen[host] or depth > 6 then
       return
     end
-    local n = host:GetNumChildren() or 0
-    for i = 1, n do
-      local child = select(i, host:GetChildren())
-      if child then
-        local name = child.GetName and child:GetName()
-        if chromeNameShouldHide(name) then
-          forceHideMinimapRingFrame(child)
+    seen[host] = true
+    clearTiledBackdrop(host)
+    for i = 1, #decorativeKeys do
+      local piece = host[decorativeKeys[i]]
+      if piece and piece ~= host then
+        if piece.GetObjectType then
+          local kind = piece:GetObjectType()
+          if kind ~= "MaskTexture" then
+            forceHideMinimapRingFrame(piece)
+          end
+        else
+          forceHideMinimapRingFrame(piece)
         end
-        walk(child, depth + 1)
+      end
+    end
+    for _, region in ipairs(listRegions(host)) do
+      if regionLooksLikeRing(region) then
+        forceHideMinimapRingFrame(region)
+      end
+    end
+    if host.GetNumChildren then
+      local n = host:GetNumChildren() or 0
+      for i = 1, n do
+        local child = select(i, host:GetChildren())
+        if child then
+          local name = child.GetName and child:GetName()
+          if chromeNameShouldHide(name) then
+            forceHideMinimapRingFrame(child)
+          end
+          hideOn(child, depth + 1)
+        end
       end
     end
   end
-  local hosts = { Minimap, MinimapCluster, MinimapBackdrop }
-  for _, host in ipairs(hosts) do
-    if host then
-      clearTiledBackdrop(host)
-      local slice = host.NineSlice or host.nineSlice
-      if slice then
-        forceHideMinimapRingFrame(slice)
-      end
-      walk(host, 0)
-      for _, r in ipairs(listRegions(host)) do
-        if isCompassOrRingTexture(r) or isLargeBorderLayer(r) or isSquareChromeTexture(r) then
-          forceHideMinimapRingFrame(r)
-        end
-      end
-    end
+  if Minimap and Minimap.SetMaskTexture then
+    pcall(Minimap.SetMaskTexture, Minimap, "Interface\\CharacterFrame\\TempPortraitAlphaMask")
+  end
+  for _, host in ipairs({ Minimap, MinimapCluster, MinimapBackdrop, MinimapBorder }) do
+    hideOn(host, 0)
   end
 end
 

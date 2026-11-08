@@ -13,7 +13,10 @@ local ICON_GOLD_PATH = "Interface\\MoneyFrame\\UI-GoldIcon"
 local ICON_SILVER_PATH = "Interface\\MoneyFrame\\UI-SilverIcon"
 local ICON_COPPER_PATH = "Interface\\MoneyFrame\\UI-CopperIcon"
 local ICON_BAG_PATH = "Interface\\Icons\\INV_Misc_Bag_08"
+--- "Bags" en el modo edición es el contenedor, no el botón del llavero.
 local BLIZZARD_BAG_BAR_FRAMES = {
+  "BagsBar",
+  "MainMenuBarBagButtons",
   "MainMenuBarBackpackButton",
   "CharacterBag0Slot",
   "CharacterBag1Slot",
@@ -185,6 +188,27 @@ function RS:EnsureBlizzardBagHideHook(frame)
     end
     hideFrameHard(self)
   end)
+  hooksecurefunc(frame, "SetAlpha", function(self, alpha)
+    if self._chukieBagAlpha or (tonumber(alpha) or 0) <= 0 then
+      return
+    end
+    self._chukieBagAlpha = true
+    self:SetAlpha(0)
+    self._chukieBagAlpha = false
+  end)
+end
+
+local function bagsEditModeFrame()
+  if _G.BagsBar then
+    return _G.BagsBar
+  end
+  local systems = Enum and Enum.EditModeSystem
+  local registered = EditModeManagerFrame and EditModeManagerFrame.registeredSystemFrames
+  local frame = systems and registered and systems.Bags and registered[systems.Bags]
+  if frame == MainMenuBar or frame == UIParent or frame == Minimap or frame == MinimapCluster then
+    return nil
+  end
+  return frame
 end
 
 function RS:HideBlizzardBagBar()
@@ -193,12 +217,22 @@ function RS:HideBlizzardBagBar()
     return
   end
   self._bagBarHidePending = nil
-  for i = 1, #BLIZZARD_BAG_BAR_FRAMES do
-    local frame = _G[BLIZZARD_BAG_BAR_FRAMES[i]]
-    if frame and type(frame) == "table" and frame.GetObjectType then
-      self:EnsureBlizzardBagHideHook(frame)
-      hideFrameHard(frame)
+  local seen = {}
+  local function hideOne(frame)
+    if not frame or seen[frame] or type(frame) ~= "table" or not frame.GetObjectType then
+      return
     end
+    seen[frame] = true
+    self:EnsureBlizzardBagHideHook(frame)
+    hideFrameHard(frame)
+  end
+  hideOne(bagsEditModeFrame())
+  for i = 1, #BLIZZARD_BAG_BAR_FRAMES do
+    hideOne(_G[BLIZZARD_BAG_BAR_FRAMES[i]])
+  end
+  local bar = _G.BagsBar or bagsEditModeFrame()
+  if bar and bar.ExpandToggleButton then
+    hideOne(bar.ExpandToggleButton)
   end
 end
 

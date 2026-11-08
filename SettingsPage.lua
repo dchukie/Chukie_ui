@@ -359,7 +359,7 @@ local function addRightPanel(category, layout)
     "ChukieUi_MMPos_showZone",
     "showMinimapZone",
     "Mostrar nombre de zona",
-    "MinimapCluster.ZoneTextButton, el nombre arriba del mapa. El reloj no se toca.",
+    "MinimapCluster.ZoneTextButton, el nombre arriba del mapa.",
     false
   )
   rightCheckbox(
@@ -374,8 +374,24 @@ local function addRightPanel(category, layout)
     category,
     "ChukieUi_MMPos_showTracking",
     "showMinimapTracking",
-    "Mostrar círculo de rastreo",
-    "MinimapCluster.TrackingFrame, el círculo del minimapa.",
+    "Mostrar círculo junto al reloj",
+    "MinimapCluster.Tracking.Button, el círculo a la derecha de la hora. Si es el ojo de cola, también QueueStatusButton.",
+    false
+  )
+  rightCheckbox(
+    category,
+    "ChukieUi_MMPos_showClock",
+    "showMinimapClock",
+    "Mostrar reloj",
+    "TimeManagerClockButton, el recuadro con la hora.",
+    false
+  )
+  rightCheckbox(
+    category,
+    "ChukieUi_MMPos_showAddonBox",
+    "showMinimapAddonBox",
+    "Mostrar recuadro de addons",
+    "AddonCompartmentFrame, el recuadro con el número de addons.",
     false
   )
   if not (Settings.CreateDropdown and Settings.CreateControlTextContainer) then

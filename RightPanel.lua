@@ -394,7 +394,7 @@ local function keepClockOutOf(frame)
 end
 
 local function setOptionalChrome(frame, show)
-  if not frame or frame == TimeManagerClockButton then
+  if not frame then
     return
   end
   frame._chukieWantHidden = not show
@@ -410,11 +410,22 @@ local function setOptionalChrome(frame, show)
         f:Hide()
       end
     end)
+    if frame.SetAlpha then
+      pcall(hooksecurefunc, frame, "SetAlpha", function(f, alpha)
+        if f._chukieWantHidden and not f._chukieForcing and (tonumber(alpha) or 0) > 0 and f.SetAlpha then
+          f._chukieForcing = true
+          f:SetAlpha(0)
+          f._chukieForcing = false
+        end
+      end)
+    end
   end
   if show then
+    frame._chukieForcing = true
     if frame.SetAlpha then
       frame:SetAlpha(1)
     end
+    frame._chukieForcing = false
     if frame.Show then
       frame:Show()
     end
@@ -426,9 +437,11 @@ local function setOptionalChrome(frame, show)
   if frame.EnableMouse then
     frame:EnableMouse(false)
   end
+  frame._chukieForcing = true
   if frame.SetAlpha then
     frame:SetAlpha(0)
   end
+  frame._chukieForcing = false
   if frame.Hide then
     frame:Hide()
   end
@@ -455,18 +468,30 @@ function MP:ApplyMinimapCornerButtons()
     end
   end
   setOptionalChrome(GameTimeFrame, showCalendar)
+  local showClock = wantsShown(db, "showMinimapClock")
+  local showAddonBox = wantsShown(db, "showMinimapAddonBox")
   local tracking = {
     MiniMapTracking,
     MiniMapTrackingButton,
-    MinimapCluster and (MinimapCluster.TrackingFrame or MinimapCluster.Tracking),
   }
-  local trackFrame = MinimapCluster and (MinimapCluster.TrackingFrame or MinimapCluster.Tracking)
-  if trackFrame and trackFrame.Button then
-    tracking[#tracking + 1] = trackFrame.Button
+  if MinimapCluster then
+    tracking[#tracking + 1] = MinimapCluster.TrackingFrame
+    tracking[#tracking + 1] = MinimapCluster.Tracking
+    if MinimapCluster.TrackingFrame and MinimapCluster.TrackingFrame.Button then
+      tracking[#tracking + 1] = MinimapCluster.TrackingFrame.Button
+    end
+    if MinimapCluster.Tracking and MinimapCluster.Tracking.Button then
+      tracking[#tracking + 1] = MinimapCluster.Tracking.Button
+    end
   end
+  tracking[#tracking + 1] = QueueStatusButton
+  tracking[#tracking + 1] = QueueStatusMinimapButton
   for i = 1, #tracking do
     setOptionalChrome(tracking[i], showTracking)
   end
+  setOptionalChrome(TimeManagerClockButton, showClock)
+  setOptionalChrome(_G.TimeManagerClockTicker, showClock)
+  setOptionalChrome(AddonCompartmentFrame, showAddonBox)
 end
 
 function MP:KeyRingPlace()

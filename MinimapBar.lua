@@ -3,6 +3,8 @@
      - Addons: barra + política por botón (Defecto / Barra / Oculto) en minimapBar.buttonPolicy + discoveredOrder.
      - Barra de addons: el botón real (LibDBIcon, Zygor, etc.) permanece en el mapa pero oculto; la barra usa proxies
        (icono copiado + clic/tooltip reenviados) para que Masque funcione sin tocar el marco LibDBIcon.
+     - Los pines de mapa (QuestieFrameN) y un botón que su addon deja oculto no entran.
+     - Un Show o SetParent repetido no vuelve a capturar el mismo botón.
      - Segunda fila: miniMenuBar — botones del micromenú Blizzard (`MICRO_BUTTONS` o fallback), reparent bajo el mapa. ]]
 
 local _, ns = ...
@@ -746,9 +748,57 @@ function MB:ApplyNorthCompassAfterStrip()
   self._isApplyingNorthCompassAfterStrip = false
 end
 
+local function isSecret(v)
+  return issecretvalue and issecretvalue(v) or false
+end
+
+local function readFrameName(f)
+  if not f or not f.GetName then
+    return nil
+  end
+  local n = f:GetName()
+  if isSecret(n) or type(n) ~= "string" or n == "" then
+    return nil
+  end
+  return n
+end
+
+local function readFrameWidth(f)
+  if not f or not f.GetWidth then
+    return nil
+  end
+  local w = f:GetWidth()
+  if isSecret(w) then
+    return nil
+  end
+  return tonumber(w)
+end
+
+local function readFrameHeight(f)
+  if not f or not f.GetHeight then
+    return nil
+  end
+  local h = f:GetHeight()
+  if isSecret(h) then
+    return nil
+  end
+  return tonumber(h)
+end
+
+--- Pines de Questie (QuestieFrame1, QuestieFrame2, …). No son el botón del minimapa.
+local function isQuestiePinName(n)
+  if isSecret(n) or type(n) ~= "string" then
+    return false
+  end
+  if n == "QuestieFrameGroup" then
+    return true
+  end
+  return n:match("^QuestieFrame%d+$") ~= nil
+end
+
 function MB:GetFramePolicy(frameName)
-  if not frameName or frameName == "" then
-    return "bar"
+  if isSecret(frameName) or type(frameName) ~= "string" or frameName == "" then
+    return "hidden"
   end
   local pol = barOpts().buttonPolicy
   local v = pol[frameName]
@@ -765,7 +815,13 @@ function MB:GetFramePolicy(frameName)
 end
 
 function MB:IsAddonPolicyName(n)
-  if not n or n == "" or STRIP_FRAMES[n] or NAME_BLACKLIST[n] or n:find("^ChukieUi_", 1, true) then
+  if isSecret(n) or type(n) ~= "string" or n == "" then
+    return false
+  end
+  if isQuestiePinName(n) or (self._unstableNames and self._unstableNames[n]) then
+    return false
+  end
+  if STRIP_FRAMES[n] or NAME_BLACKLIST[n] or n:find("^ChukieUi_", 1, true) then
     return false
   end
   if isBlizzardMicroMenuButtonName(n) then
@@ -966,11 +1022,58 @@ local function isUnderMinimapClusterOrMap(f)
   return false
 end
 
-function MB:ShouldNeverCapture(f)
-  if not f or f == self.bar or f == self.miniMenuBar then
+function MB:IsMapPinFrame(f)
+  if not f then
+    return false
+  end
+  local n = readFrameName(f)
+  if isQuestiePinName(n) or (n and self._unstableNames and self._unstableNames[n]) then
     return true
   end
-  local n = f:GetName() or ""
+  if f.miniMapIcon ~= nil and not f.dataObject then
+    return true
+  end
+  if f.frameId and f.glowTexture and f.texture and not f.dataObject then
+    return true
+  end
+  local parent = f.GetParent and f:GetParent()
+  if isQuestiePinName(readFrameName(parent)) then
+    return true
+  end
+  if n and type(MBB_Ignore) == "table" then
+    for i = 1, #MBB_Ignore do
+      if MBB_Ignore[i] == n or MBB_Ignore[i] == f then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+--- LibDBIcon guarda el hide del addon en button.db.hide (Questie: minimap.hide).
+function MB:IsOwnerHidden(f)
+  if not f then
+    return false
+  end
+  local db = f.db
+  if type(db) ~= "table" then
+    return false
+  end
+  local hide = db.hide
+  if isSecret(hide) then
+    return true
+  end
+  return hide == true or hide == 1
+end
+
+function MB:ShouldNeverCapture(f)
+  if not f or f == self.bar or f == self.miniMenuBar or f == self.proxyBin then
+    return true
+  end
+  if self:IsMapPinFrame(f) then
+    return true
+  end
+  local n = readFrameName(f) or ""
   if isBlizzardMicroMenuButtonName(n) then
     return true
   end
@@ -986,7 +1089,7 @@ function MB:ShouldNeverCapture(f)
   if STRIP_FRAMES[n] then
     return true
   end
-  local w = f:GetWidth()
+  local w = readFrameWidth(f)
   if w and w > 140 then
     return true
   end
@@ -998,7 +1101,7 @@ function MB:IsManagedCandidate(f)
   if self:ShouldNeverCapture(f) then
     return false
   end
-  local n = f:GetName() or ""
+  local n = readFrameName(f) or ""
   if n:find("^ChukieUi_mmproxy_", 1, true) then
     return false
   end
@@ -1015,7 +1118,8 @@ function MB:IsManagedCandidate(f)
   if ot ~= "Button" and ot ~= "CheckButton" then
     return false
   end
-  local w, h = f:GetSize()
+  local w = readFrameWidth(f)
+  local h = readFrameHeight(f)
   if not w or not h or w < 12 or h < 12 or w > 76 or h > 76 then
     return false
   end
@@ -1026,24 +1130,30 @@ function MB:IsManagedCandidate(f)
 end
 
 function MB:ShouldPlaceOnBar(f)
-  if not self:IsManagedCandidate(f) then
+  if not self:IsManagedCandidate(f) or self:IsOwnerHidden(f) then
     return false
   end
-  return self:GetFramePolicy(f:GetName()) == "bar"
+  local n = readFrameName(f)
+  if not n then
+    return false
+  end
+  return self:GetFramePolicy(n) == "bar"
 end
 
 function MB:UpdateDiscoveredOrder()
   local order = barOpts().discoveredOrder
   local pol = barOpts().buttonPolicy
   for i = #order, 1, -1 do
-    if isBlizzardMicroMenuButtonName(order[i]) then
-      pol[order[i]] = nil
+    local id = order[i]
+    if isBlizzardMicroMenuButtonName(id) or isQuestiePinName(id)
+      or (self._unstableNames and self._unstableNames[id]) then
+      pol[id] = nil
       table.remove(order, i)
     end
   end
   local polStrip = {}
   for k in pairs(pol) do
-    if isBlizzardMicroMenuButtonName(k) then
+    if isBlizzardMicroMenuButtonName(k) or isQuestiePinName(k) or (self._unstableNames and self._unstableNames[k]) then
       polStrip[#polStrip + 1] = k
     end
   end
@@ -1064,6 +1174,7 @@ function MB:UpdateDiscoveredOrder()
     if not self:IsManagedCandidate(f) then
       return
     end
+    self:EnsureCaptureStableHook(f, n)
     if not seen[n] then
       order[#order + 1] = n
       seen[n] = true
@@ -1071,20 +1182,40 @@ function MB:UpdateDiscoveredOrder()
   end)
 end
 
+function MB:SuppressLauncher(f)
+  if not f or f._chukieSuppressing then
+    return
+  end
+  f._chukieSuppressing = true
+  f:Hide()
+  local shown = f.IsShown and f:IsShown()
+  if not isSecret(shown) and shown then
+    f:Hide()
+  end
+  f._chukieSuppressing = false
+end
+
 function MB:EnsureAddonPolicyHook(f, frameName)
-  if not f or f.chukieAddonPolicyHook then
+  if not f or f.chukieAddonPolicyHook or self:IsMapPinFrame(f) or isQuestiePinName(frameName) then
     return
   end
   f.chukieAddonPolicyHook = true
-  hooksecurefunc(f, "Show", function()
-    if MB:GetFramePolicy(frameName) == "hidden" then
-      f:Hide()
+  local function suppress(frame, show)
+    if show == false or isSecret(show) then
+      return
     end
+    if MB._inRefresh or frame._chukieSuppressing then
+      return
+    end
+    if MB:GetFramePolicy(frameName) == "hidden" or MB:IsOwnerHidden(frame) then
+      MB:SuppressLauncher(frame)
+    end
+  end
+  hooksecurefunc(f, "Show", function(frame)
+    suppress(frame, true)
   end)
   hooksecurefunc(f, "SetShown", function(frame, show)
-    if show and MB:GetFramePolicy(frameName) == "hidden" then
-      frame:Hide()
-    end
+    suppress(frame, show)
   end)
 end
 
@@ -1104,54 +1235,153 @@ function MB:EnsureBarOriginalHiddenHook(f, frameName)
     return
   end
   f.chukieBarOriginalHiddenHook = true
-  hooksecurefunc(f, "Show", function()
+  hooksecurefunc(f, "Show", function(frame)
+    if frame._chukieSuppressing or MB:IsMapPinFrame(frame) then
+      return
+    end
     if MB:ShouldKeepOriginalHiddenForBar(frameName) then
-      f:Hide()
+      MB:SuppressLauncher(frame)
     end
   end)
   hooksecurefunc(f, "SetShown", function(frame, showVal)
-    if showVal and MB:ShouldKeepOriginalHiddenForBar(frameName) then
-      frame:Hide()
+    if isSecret(showVal) or not showVal or frame._chukieSuppressing or MB:IsMapPinFrame(frame) then
+      return
+    end
+    if MB:ShouldKeepOriginalHiddenForBar(frameName) then
+      MB:SuppressLauncher(frame)
     end
   end)
 end
 
-function MB:ApplyAddonButtonPolicies()
-  self:ForEachMinimapDescendant(function(f, n)
-    if not self:IsAddonPolicyName(n) then
-      return
+--- Show/SetParent en ráfaga: el botón se reancla solo. Se deja fuera de la barra.
+function MB:NoteUnstableLauncher(frameName)
+  if isSecret(frameName) or type(frameName) ~= "string" or frameName == "" then
+    return false
+  end
+  if frameName:match("^LibDBIcon10_") or frameName == "ZygorGuidesViewerMapIcon" then
+    return false
+  end
+  self._unstableNames = self._unstableNames or {}
+  if self._unstableNames[frameName] then
+    return true
+  end
+  local now = GetTime and GetTime() or 0
+  if isSecret(now) then
+    return false
+  end
+  now = tonumber(now) or 0
+  self._unstableHits = self._unstableHits or {}
+  local st = self._unstableHits[frameName]
+  if not st or (now - st.t) > 1 then
+    st = { t = now, n = 0 }
+    self._unstableHits[frameName] = st
+  end
+  st.n = st.n + 1
+  if st.n < 8 then
+    return false
+  end
+  self._unstableNames[frameName] = true
+  return true
+end
+
+function MB:ProxyIsPlaced(frameName)
+  if isSecret(frameName) or type(frameName) ~= "string" or frameName == "" or not self.bar then
+    return false
+  end
+  local pname = "ChukieUi_mmproxy_" .. self:ProxySanitizeName(frameName)
+  local proxy = (self._proxies and self._proxies[pname]) or _G[pname]
+  if not proxy or not proxy.GetParent or proxy:GetParent() ~= self.bar then
+    return false
+  end
+  local shown = proxy.IsShown and proxy:IsShown()
+  if isSecret(shown) then
+    return false
+  end
+  return shown and true or false
+end
+
+function MB:OnCapturedButtonResurfaced(frame, frameName)
+  if self._inRefresh or self._inLayout or not frame or frame._chukieSuppressing then
+    return
+  end
+  local n = frameName
+  if isSecret(n) or type(n) ~= "string" or n == "" then
+    n = readFrameName(frame)
+  end
+  if not n or self:IsMapPinFrame(frame) or isQuestiePinName(n) then
+    return
+  end
+  if self:NoteUnstableLauncher(n) then
+    if self:ProxyIsPlaced(n) then
+      self:ScheduleRefresh()
     end
-    local pol = self:GetFramePolicy(n)
-    if pol == "hidden" then
-      f:Hide()
-      self:EnsureAddonPolicyHook(f, n)
-    elseif pol == "default" then
-      f:Show()
-    else
-      if barOpts().enabled ~= false and prof().enabled then
-        f:Hide()
-        self:EnsureBarOriginalHiddenHook(f, n)
-      else
-        f:Show()
-      end
+    return
+  end
+  if self:GetFramePolicy(n) == "hidden" or self:IsOwnerHidden(frame) then
+    self:SuppressLauncher(frame)
+    if self:ProxyIsPlaced(n) then
+      self:ScheduleRefresh()
+    end
+    return
+  end
+  if not self:ShouldPlaceOnBar(frame) then
+    return
+  end
+  if self:ProxyIsPlaced(n) then
+    self:SuppressLauncher(frame)
+    return
+  end
+  self:ScheduleRefresh()
+end
+
+function MB:EnsureCaptureStableHook(f, frameName)
+  if not f or f.chukieCaptureStableHook or self:IsMapPinFrame(f) or isQuestiePinName(frameName) then
+    return
+  end
+  f.chukieCaptureStableHook = true
+  local function resurface(frame)
+    MB:OnCapturedButtonResurfaced(frame, frameName)
+  end
+  pcall(hooksecurefunc, f, "Show", resurface)
+  pcall(hooksecurefunc, f, "SetParent", resurface)
+  pcall(hooksecurefunc, f, "SetShown", function(frame, show)
+    if show and not isSecret(show) then
+      resurface(frame)
     end
   end)
+end
+
+function MB:ApplyOneAddonButtonPolicy(f, n)
+  if not f or isSecret(n) or type(n) ~= "string" or n == "" then
+    return
+  end
+  if self:IsMapPinFrame(f) or isQuestiePinName(n) or not self:IsAddonPolicyName(n) then
+    return
+  end
+  self:EnsureCaptureStableHook(f, n)
+  local pol = self:GetFramePolicy(n)
+  if pol == "hidden" or self:IsOwnerHidden(f) then
+    self:SuppressLauncher(f)
+    self:EnsureAddonPolicyHook(f, n)
+    return
+  end
+  if pol == "default" or barOpts().enabled == false or not prof().enabled then
+    self:RestoreLauncherFrame(f)
+    return
+  end
+  self:SuppressLauncher(f)
+  self:EnsureBarOriginalHiddenHook(f, n)
+end
+
+function MB:ApplyAddonButtonPolicies()
+  self:ForEachMinimapDescendant(function(f, n)
+    self:ApplyOneAddonButtonPolicy(f, n)
+  end)
   for _, name in ipairs(barOpts().discoveredOrder or {}) do
-    local g = _G[name]
-    if g and type(g) == "table" and g.GetObjectType and g:GetName() == name and self:IsAddonPolicyName(name) then
-      local pol = self:GetFramePolicy(name)
-      if pol == "hidden" then
-        g:Hide()
-        self:EnsureAddonPolicyHook(g, name)
-      elseif pol == "default" then
-        g:Show()
-      else
-        if barOpts().enabled ~= false and prof().enabled then
-          g:Hide()
-          self:EnsureBarOriginalHiddenHook(g, name)
-        else
-          g:Show()
-        end
+    if not isSecret(name) and type(name) == "string" then
+      local g = _G[name]
+      if g and type(g) == "table" and g.GetObjectType and readFrameName(g) == name then
+        self:ApplyOneAddonButtonPolicy(g, name)
       end
     end
   end
@@ -1164,8 +1394,8 @@ function MB:ForEachMinimapDescendant(callback)
       return
     end
     seen[f] = true
-    local n = f:GetName()
-    if n and n ~= "" then
+    local n = readFrameName(f)
+    if n then
       callback(f, n)
     end
     for _, c in ipairs(listFrameChildren(f)) do
@@ -1291,7 +1521,7 @@ function MB:EnumerateManagedCandidates()
     out[#out + 1] = f
   end)
   table.sort(out, function(a, b)
-    return (a:GetName() or "") < (b:GetName() or "")
+    return (readFrameName(a) or "") < (readFrameName(b) or "")
   end)
   return out
 end
@@ -1300,18 +1530,20 @@ function MB:CollectFrames()
   local byName = {}
   for _, f in ipairs(self:EnumerateManagedCandidates()) do
     if self:ShouldPlaceOnBar(f) then
-      local n = f:GetName()
-      if n and n ~= "" then
+      local n = readFrameName(f)
+      if n then
         byName[n] = f
       end
     end
   end
   local out, seen = {}, {}
   for _, name in ipairs(barOpts().discoveredOrder or {}) do
-    local f = byName[name]
-    if f then
-      out[#out + 1] = f
-      seen[name] = true
+    if not isSecret(name) and type(name) == "string" then
+      local f = byName[name]
+      if f then
+        out[#out + 1] = f
+        seen[name] = true
+      end
     end
   end
   local rest = {}
@@ -1328,7 +1560,7 @@ function MB:CollectFrames()
 end
 
 function MB:LdbNameFromButton(f)
-  local n = f:GetName()
+  local n = readFrameName(f)
   if n and n:match("^LibDBIcon10_") then
     return n:match("^LibDBIcon10_(.+)$")
   end
@@ -1408,7 +1640,7 @@ function MB:SyncProxyFromOrigin(proxy, orig)
   end
   if oIcon.GetTexture then
     local tex = oIcon:GetTexture()
-    if tex then
+    if not isSecret(tex) and tex then
       proxy.icon:SetTexture(tex)
     end
   end
@@ -1416,7 +1648,7 @@ function MB:SyncProxyFromOrigin(proxy, orig)
     local ok, mask = pcall(function()
       return oIcon:GetMaskTexture()
     end)
-    if ok and mask then
+    if ok and not isSecret(mask) and mask then
       pcall(function()
         proxy.icon:SetMaskTexture(mask)
       end)
@@ -1424,15 +1656,19 @@ function MB:SyncProxyFromOrigin(proxy, orig)
   end
   if oIcon.GetTexCoord then
     local a, b, c, d, e, fcoord, g, h = oIcon:GetTexCoord()
-    if h then
+    local secretCoord = isSecret(a) or isSecret(b) or isSecret(c) or isSecret(d)
+      or isSecret(e) or isSecret(fcoord) or isSecret(g) or isSecret(h)
+    if not secretCoord and h then
       proxy.icon:SetTexCoord(a, b, c, d, e, fcoord, g, h)
-    elseif d then
+    elseif not secretCoord and d then
       proxy.icon:SetTexCoord(a, b, c, d)
     end
   end
   if oIcon.GetVertexColor then
     local r, g, b, a = oIcon:GetVertexColor()
-    proxy.icon:SetVertexColor(r, g, b, a)
+    if not isSecret(r) and not isSecret(g) and not isSecret(b) and not isSecret(a) then
+      proxy.icon:SetVertexColor(r, g, b, a)
+    end
   end
 end
 
@@ -1514,10 +1750,33 @@ function MB:ProxySanitizeName(n)
   return (n:gsub("[^%w_]", "_"):sub(1, 50))
 end
 
-function MB:GetOrCreateProxy(sourceFrameName, orig)
+function MB:EnsureProxyBin()
+  if self.proxyBin then
+    return self.proxyBin
+  end
+  local bin = CreateFrame("Frame", "ChukieUi_MinimapProxyBin", UIParent)
+  bin:Hide()
+  self.proxyBin = bin
+  return bin
+end
+
+function MB:ParkProxy(f)
+  if not f then
+    return
+  end
+  local bin = self:EnsureProxyBin()
+  f:ClearAllPoints()
+  f:Hide()
+  if f:GetParent() ~= bin then
+    f:SetParent(bin)
+  end
+end
+
+function MB:GetOrCreateProxy(sourceFrameName, _)
   local safe = self:ProxySanitizeName(sourceFrameName)
   local pname = "ChukieUi_mmproxy_" .. safe
-  local p = _G[pname]
+  self._proxies = self._proxies or {}
+  local p = self._proxies[pname] or _G[pname]
   if not p then
     p = CreateFrame("Button", pname, self.bar)
     p:SetFrameStrata("MEDIUM")
@@ -1534,6 +1793,7 @@ function MB:GetOrCreateProxy(sourceFrameName, orig)
     end
     p.chukieIsMinimapProxy = true
   end
+  self._proxies[pname] = p
   p:SetSize(self:GetAddonBarIconWidth(), self:GetAddonBarIconHeight())
   p:Show()
   return p
@@ -1546,12 +1806,13 @@ function MB:InstallBarProxies(list)
   end
   for _, orig in ipairs(list) do
     if orig and orig ~= self.bar then
-      local n = orig:GetName()
-      if n and n ~= "" then
+      local n = readFrameName(orig)
+      if n and self:ShouldPlaceOnBar(orig) then
         self:FixLdbButton(orig)
         self:EnsureBarOriginalHiddenHook(orig, n)
+        self:EnsureCaptureStableHook(orig, n)
         orig.chukieBarHiddenActive = true
-        orig:Hide()
+        self:SuppressLauncher(orig)
         if orig.EnableMouse then
           orig:EnableMouse(false)
         end
@@ -1850,7 +2111,43 @@ function MB:MasqueApplyBar()
   end
 end
 
-function MB:ReleaseAll()
+--- Devuelve el botón al mapa sin forzar Show: LibDBIcon:Show ignora db.hide y reabre el bucle.
+function MB:RestoreLauncherFrame(f, LDBI)
+  if not f then
+    return
+  end
+  LDBI = LDBI or LibStub("LibDBIcon-1.0", true)
+  local n = readFrameName(f)
+  if (n and self:GetFramePolicy(n) == "hidden") or self:IsOwnerHidden(f) or self:IsMapPinFrame(f) then
+    self:SuppressLauncher(f)
+    if n then
+      self:EnsureAddonPolicyHook(f, n)
+    end
+    return
+  end
+  if f.EnableMouse then
+    f:EnableMouse(true)
+  end
+  local ldbName = self:LdbNameFromButton(f)
+  if LDBI and ldbName then
+    if LDBI.ShowOnEnter then
+      LDBI:ShowOnEnter(ldbName, true)
+    end
+    if LDBI.Unlock then
+      LDBI:Unlock(ldbName)
+    end
+    if f.RegisterForDrag then
+      f:RegisterForDrag("LeftButton")
+    end
+    if LDBI.Refresh then
+      LDBI:Refresh(ldbName, f.db)
+    end
+    return
+  end
+  f:Show()
+end
+
+function MB:ReleaseAll(restoreLaunchers)
   self.capturedLDB = self.capturedLDB or {}
   if not self.bar then
     wipe(self.capturedLDB)
@@ -1866,23 +2163,8 @@ function MB:ReleaseAll()
       if orig then
         orig.chukieActiveProxy = nil
         orig.chukieBarHiddenActive = nil
-        if orig.EnableMouse then
-          orig:EnableMouse(true)
-        end
-        local ldbName = self:LdbNameFromButton(orig)
-        if LDBI and ldbName then
-          if LDBI.ShowOnEnter then
-            LDBI:ShowOnEnter(ldbName, true)
-          end
-          if LDBI.Unlock then
-            LDBI:Unlock(ldbName)
-          end
-          if orig.RegisterForDrag then
-            orig:RegisterForDrag("LeftButton")
-          end
-          if LDBI.Show then
-            LDBI:Show(ldbName)
-          end
+        if restoreLaunchers then
+          self:RestoreLauncherFrame(orig, LDBI)
         end
       end
       f:SetScript("OnMouseDown", nil)
@@ -1890,28 +2172,22 @@ function MB:ReleaseAll()
       f:SetScript("OnClick", nil)
       f:SetScript("OnEnter", nil)
       f:SetScript("OnLeave", nil)
-      f:SetParent(nil)
-      f:Hide()
-    else
-      local orig = f.chukieOrigParent or Minimap
-      f:SetParent(orig)
+      self:ParkProxy(f)
+    elseif f.chukieOrigParent then
+      local origParent = f.chukieOrigParent
+      f:SetParent(origParent)
       restorePoints(f, f.chukieSavedPoints)
       f.chukieSavedPoints = nil
       f.chukieOrigParent = nil
-      local ldbName = self:LdbNameFromButton(f)
-      if LDBI and ldbName then
-        if LDBI.ShowOnEnter then
-          LDBI:ShowOnEnter(ldbName, true)
-        end
-        if LDBI.Unlock then
-          LDBI:Unlock(ldbName)
-        end
-        if f.RegisterForDrag then
-          f:RegisterForDrag("LeftButton")
-        end
-        if LDBI.Show then
-          LDBI:Show(ldbName)
-        end
+      if restoreLaunchers then
+        self:RestoreLauncherFrame(f, LDBI)
+      end
+    end
+  end
+  if self._proxies then
+    for _, f in pairs(self._proxies) do
+      if f and f.chukieIsMinimapProxy and f:GetParent() == self.bar then
+        self:ParkProxy(f)
       end
     end
   end
@@ -1929,35 +2205,49 @@ function MB:LayoutMiniMenuBar()
 end
 
 function MB:Layout()
-  if not self.bar then
+  if not self.bar or self._inLayout then
     return
   end
+  self._inLayout = true
   local iw, ih, sp = self:GetAddonBarIconWidth(), self:GetAddonBarIconHeight(), self:GetAddonBarSpacing()
   local wanted = {}
+  local seenName = {}
   local x = sp
   for _, orig in ipairs(self:CollectFrames()) do
-    local n = orig:GetName()
-    local proxy = n and _G["ChukieUi_mmproxy_" .. self:ProxySanitizeName(n)]
-    if proxy then
-      wanted[proxy] = true
-      if proxy:GetParent() ~= self.bar then
-        proxy:SetParent(self.bar)
+    local n = readFrameName(orig)
+    if n and not seenName[n] and self:ShouldPlaceOnBar(orig) then
+      seenName[n] = true
+      local pname = "ChukieUi_mmproxy_" .. self:ProxySanitizeName(n)
+      local proxy = (self._proxies and self._proxies[pname]) or _G[pname]
+      if proxy and not wanted[proxy] then
+        wanted[proxy] = true
+        if proxy:GetParent() ~= self.bar then
+          proxy:SetParent(self.bar)
+        end
+        proxy:ClearAllPoints()
+        proxy:SetPoint("LEFT", self.bar, "LEFT", x, 0)
+        proxy:SetSize(iw, ih)
+        proxy:Show()
+        x = x + iw + sp
       end
-      proxy:ClearAllPoints()
-      proxy:SetPoint("LEFT", self.bar, "LEFT", x, 0)
-      proxy:SetSize(iw, ih)
-      proxy:Show()
-      x = x + iw + sp
     end
   end
   for _, f in ipairs(listFrameChildren(self.bar)) do
     if f.chukieIsMinimapProxy and not wanted[f] then
-      f:Hide()
+      self:ParkProxy(f)
+    end
+  end
+  if self._proxies then
+    for _, f in pairs(self._proxies) do
+      if f and f.chukieIsMinimapProxy and not wanted[f] then
+        self:ParkProxy(f)
+      end
     end
   end
   self.bar:SetWidth(math.max(x, iw + sp * 2))
   self.bar:SetHeight(ih + 4)
   self:PositionAddonBarCentered()
+  self._inLayout = false
 end
 
 function MB:EnsureBar()
@@ -2006,45 +2296,46 @@ function MB:EnsureLdbHooks()
     return
   end
   self.ldbHooks = true
-  LDBI.RegisterCallback(self.ldbHookHolder, "LibDBIcon_IconCreated", function(eventName, button, name)
-    if eventName == "LibDBIcon_IconCreated" and barOpts().enabled ~= false then
-      self:ScheduleRefresh()
-    end
-  end)
-  hooksecurefunc(LDBI, "Show", function(lib, name)
-    if not name then
+  local function resurface(lib, name)
+    if MB._inRefresh or isSecret(name) or type(name) ~= "string" then
       return
     end
     local btn = lib:GetMinimapButton(name)
-    if btn then
-      local nn = btn:GetName()
-      if nn and MB:GetFramePolicy(nn) == "hidden" then
-        btn:Hide()
-        MB:EnsureAddonPolicyHook(btn, nn)
-      end
+    if not btn then
+      return
     end
-    if barOpts().enabled ~= false and btn then
-      local nn = btn:GetName()
-      if nn and MB:ShouldPlaceOnBar(btn) then
-        self:ScheduleRefresh()
-      end
+    local nn = readFrameName(btn)
+    if not nn then
+      return
     end
+    MB:EnsureCaptureStableHook(btn, nn)
+    MB:OnCapturedButtonResurfaced(btn, nn)
+  end
+  LDBI.RegisterCallback(self.ldbHookHolder, "LibDBIcon_IconCreated", function(eventName, button)
+    if MB._inRefresh or eventName ~= "LibDBIcon_IconCreated" or barOpts().enabled == false then
+      return
+    end
+    if button and (MB:IsOwnerHidden(button) or MB:IsMapPinFrame(button)) then
+      return
+    end
+    self:ScheduleRefresh()
   end)
-  hooksecurefunc(LDBI, "Refresh", function(lib, name)
-    if barOpts().enabled ~= false and name then
-      local btn = lib:GetMinimapButton(name)
-      if btn then
-        local nn = btn:GetName()
-        if nn and MB:ShouldPlaceOnBar(btn) then
-          self:ScheduleRefresh()
-        end
-      end
+  hooksecurefunc(LDBI, "Show", resurface)
+  hooksecurefunc(LDBI, "Refresh", resurface)
+  hooksecurefunc(LDBI, "Hide", function(lib, name)
+    if MB._inRefresh or isSecret(name) or type(name) ~= "string" then
+      return
+    end
+    local btn = lib:GetMinimapButton(name)
+    local nn = btn and readFrameName(btn)
+    if nn and MB:ProxyIsPlaced(nn) then
+      MB:ScheduleRefresh()
     end
   end)
 end
 
 function MB:ScheduleRefresh()
-  if self.refreshPending then
+  if self._inRefresh or self.refreshPending then
     return
   end
   self.refreshPending = true
@@ -2055,11 +2346,25 @@ function MB:ScheduleRefresh()
 end
 
 function MB:Refresh()
+  if self._inRefresh then
+    return
+  end
+  self._inRefresh = true
+  local ok, err = pcall(self.RefreshInner, self)
+  self._inRefresh = false
+  self._inLayout = false
+  if not ok and type(geterrorhandler) == "function" then
+    geterrorhandler()(err)
+  end
+end
+
+function MB:RefreshInner()
   if ns.RightPanel and ns.RightPanel.SyncRightPanelTreeLayout then
     ns.RightPanel:SyncRightPanelTreeLayout()
   end
   self:MasqueStripMicromenu()
-  self:ReleaseAll()
+  local restoreLaunchers = (not prof().enabled) or (not Minimap) or barOpts().enabled == false
+  self:ReleaseAll(restoreLaunchers)
   self:UpdateDiscoveredOrder()
   if ns.AppendMinimapDiscoveryPolicyRows then
     ns.AppendMinimapDiscoveryPolicyRows()

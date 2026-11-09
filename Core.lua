@@ -573,6 +573,9 @@ function ns.OnProfileChanged()
   if ns.PartyGrid and ns.PartyGrid.Refresh then
     ns.PartyGrid:Refresh()
   end
+  if ns.ReconcileMinimapPins then
+    ns.ReconcileMinimapPins(true)
+  end
 end
 
 function ns.ApplyUiTweaks()

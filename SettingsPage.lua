@@ -294,6 +294,398 @@ end
 
 local addMinimapCaptureList
 
+--- Puntos del minimapa (nodos, hierbas, peces, tesoros).
+--- Forever 1.60.1: C_Minimap.GetNumTrackingTypes / GetTrackingInfo (tabla
+--- MinimapScriptTrackingInfo) / GetTrackingFilter / SetTracking(índice, bool).
+--- La clave guardada es el spellID o el filterID, nunca el índice de la lista.
+local HUNTER_SUBTYPE = 1
+local TOWNSFOLK_SUBTYPE = 2
+
+local UNIT_SPELLS = {
+  [1494] = true,
+  [19878] = true,
+  [19879] = true,
+  [19880] = true,
+  [19882] = true,
+  [19883] = true,
+  [19884] = true,
+  [19885] = true,
+  [5225] = true,
+  [5500] = true,
+  [5502] = true,
+}
+
+local function secret(v)
+  return issecretvalue and issecretvalue(v) or false
+end
+
+local function enumFilter(field, fallback)
+  local e = Enum and Enum.MinimapTrackingFilter
+  local v = type(e) == "table" and e[field] or nil
+  if secret(v) then
+    v = nil
+  end
+  if type(v) ~= "number" then
+    v = fallback
+  end
+  if type(v) ~= "number" then
+    return nil
+  end
+  return math.floor(v)
+end
+
+local function fillFilterSet(set, fields)
+  for i = 1, #fields do
+    local id = enumFilter(fields[i][1], fields[i][2])
+    if id then
+      set[id] = true
+    end
+  end
+end
+
+local unitFilters, removedFilters, alwaysOnFilters, objectFilters
+
+local function ensureFilterSets()
+  if unitFilters then
+    return
+  end
+  unitFilters, removedFilters, alwaysOnFilters, objectFilters = {}, {}, {}, {}
+  fillFilterSet(unitFilters, {
+    { "Target", 0x4000 },
+    { "Focus", 0x8000 },
+  })
+  fillFilterSet(removedFilters, {
+    { "VenderFood", 0x10 },
+    { "VendorReagent", 0x100 },
+    { "POI", 0x2000 },
+    { "Focus", 0x8000 },
+  })
+  fillFilterSet(alwaysOnFilters, {
+    { "QuestPoIs", 0x10000 },
+    { "QuestPOIs", 0x10000 },
+    { "TaxiNode", 0x8 },
+    { "Innkeeper", 0x20 },
+    { "ItemUpgrade", 0x80000 },
+    { "Battlemaster", 0x4 },
+    { "Stablemaster", 0x800 },
+  })
+  fillFilterSet(objectFilters, {
+    { "Digsites", 0x20000 },
+    { "Treasure", nil },
+    { "Treasures", nil },
+    { "TreasureChest", nil },
+  })
+end
+
+local function trackingCount()
+  if not (C_Minimap and C_Minimap.GetNumTrackingTypes) then
+    return 0
+  end
+  local ok, n = pcall(C_Minimap.GetNumTrackingTypes)
+  if not ok or secret(n) then
+    return 0
+  end
+  n = tonumber(n)
+  if not n or n < 1 then
+    return 0
+  end
+  return math.floor(n)
+end
+
+local function readTracking(index)
+  if not (C_Minimap and C_Minimap.GetTrackingInfo) then
+    return nil
+  end
+  local ok, a, b, c, d, e, f = pcall(C_Minimap.GetTrackingInfo, index)
+  if not ok or secret(a) then
+    return nil
+  end
+  local info
+  if type(a) == "table" then
+    info = a
+  else
+    info = { name = a, texture = b, active = c, type = d, subType = e, spellID = f }
+  end
+  local name = info.name
+  if secret(name) or type(name) ~= "string" then
+    return nil
+  end
+  if strtrim then
+    name = strtrim(name)
+  end
+  if name == "" then
+    return nil
+  end
+  if secret(info.active) then
+    return nil
+  end
+  local spellID = info.spellID
+  local kind = info.type
+  local subType = info.subType
+  if secret(spellID) then
+    spellID = nil
+  end
+  if secret(kind) then
+    kind = nil
+  end
+  if secret(subType) then
+    subType = nil
+  end
+  spellID = tonumber(spellID)
+  if spellID then
+    spellID = math.floor(spellID)
+  end
+  local filterID
+  if C_Minimap.GetTrackingFilter then
+    local fok, filter = pcall(C_Minimap.GetTrackingFilter, index)
+    if fok and type(filter) == "table" and not secret(filter) then
+      local fid = filter.filterID
+      local fsid = filter.spellID
+      if not secret(fid) then
+        fid = tonumber(fid)
+        if fid then
+          filterID = math.floor(fid)
+        end
+      end
+      if not spellID and not secret(fsid) then
+        fsid = tonumber(fsid)
+        if fsid then
+          spellID = math.floor(fsid)
+        end
+      end
+    end
+  end
+  local key
+  if spellID and spellID > 0 then
+    key = "spell:" .. tostring(spellID)
+  elseif filterID then
+    key = "filter:" .. tostring(filterID)
+  end
+  if not key then
+    return nil
+  end
+  return {
+    index = index,
+    key = key,
+    name = name,
+    active = info.active == true or info.active == 1,
+    kind = type(kind) == "string" and string.lower(kind) or "",
+    subType = tonumber(subType),
+    spellID = spellID,
+    filterID = filterID,
+  }
+end
+
+local function isObjectPin(pin)
+  ensureFilterSets()
+  if pin.subType == HUNTER_SUBTYPE or pin.subType == TOWNSFOLK_SUBTYPE then
+    return false
+  end
+  if pin.spellID and UNIT_SPELLS[pin.spellID] then
+    return false
+  end
+  if pin.filterID and unitFilters[pin.filterID] then
+    return false
+  end
+  if pin.kind == "unit" or pin.kind == "target" or pin.kind == "focus" or pin.kind == "hunter" then
+    return false
+  end
+  if pin.spellID and pin.spellID > 0 then
+    return true
+  end
+  if pin.filterID and (removedFilters[pin.filterID] or alwaysOnFilters[pin.filterID]) then
+    return false
+  end
+  if pin.filterID and objectFilters[pin.filterID] then
+    return true
+  end
+  if pin.kind == "object" or pin.kind == "gather" or pin.kind == "gathering" or pin.kind == "resource" or pin.kind == "treasure" or pin.kind == "mineral" or pin.kind == "herb" or pin.kind == "fish" or pin.kind == "digsite" then
+    return true
+  end
+  return false
+end
+
+local function collectObjectPins()
+  local pins = {}
+  local n = trackingCount()
+  for i = 1, n do
+    local pin = readTracking(i)
+    if pin and isObjectPin(pin) then
+      pins[#pins + 1] = pin
+    end
+  end
+  return pins
+end
+
+local function findObjectPin(key)
+  local pins = collectObjectPins()
+  for i = 1, #pins do
+    if pins[i].key == key then
+      return pins[i]
+    end
+  end
+  return nil
+end
+
+local function pinsSaved(create)
+  if not (ns.Profile and ns.Profile.GetActive) then
+    return nil
+  end
+  local profile = ns.Profile:GetActive()
+  if type(profile) ~= "table" then
+    return nil
+  end
+  if type(profile.minimapMapPins) ~= "table" then
+    if not create then
+      return nil
+    end
+    profile.minimapMapPins = {}
+  end
+  return profile.minimapMapPins
+end
+
+local function savedWant(db, key)
+  if not db or secret(db[key]) or db[key] == nil then
+    return nil
+  end
+  return db[key] == true or db[key] == 1
+end
+
+local function setTrackingAt(index, want)
+  want = want and true or false
+  if C_Minimap and C_Minimap.SetTracking then
+    local ok = pcall(C_Minimap.SetTracking, index, want)
+    if ok then
+      local again = readTracking(index)
+      if again and again.active == want then
+        return true
+      end
+    end
+  end
+  if type(MinimapUtil) == "table" and type(MinimapUtil.SetTrackingFilterByFilterIndex) == "function" then
+    local ok = pcall(MinimapUtil.SetTrackingFilterByFilterIndex, index, want)
+    if ok then
+      local again = readTracking(index)
+      if again and again.active == want then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+local function addMinimapPinHeader(layout)
+  if ns._minimapPinHeaderAdded or not layout then
+    return
+  end
+  addHeader(layout, "Puntos en el mapa")
+  ns._minimapPinHeaderAdded = true
+end
+
+local function addMinimapPinRow(category, pin)
+  ns._minimapPinRows = ns._minimapPinRows or {}
+  if ns._minimapPinRows[pin.key] then
+    return
+  end
+  local key = pin.key
+  local id = "ChukieUi_MMPin_" .. key:gsub("[^%w]", "_")
+  local setting
+  ns._minimapPinsRegistering = true
+  pcall(function()
+  setting = Settings.RegisterProxySetting(
+    category,
+    id,
+    Settings.VarType.Boolean,
+    pin.name,
+    pin.active and Settings.Default.True or Settings.Default.False,
+    function()
+      local db = pinsSaved(false)
+      local want = savedWant(db, key)
+      if want ~= nil then
+        return want
+      end
+      local current = findObjectPin(key)
+      return current and current.active or false
+    end,
+    function(v)
+      if ns._minimapPinsRegistering or ns._minimapPinsApplying then
+        return
+      end
+      local want = v == true or v == 1
+      local current = findObjectPin(key)
+      local db = pinsSaved(true)
+      if not db or not current then
+        return
+      end
+      if current.active == want then
+        db[key] = want
+        return
+      end
+      ns._minimapPinsApplying = true
+      local applied = setTrackingAt(current.index, want)
+      ns._minimapPinsApplying = false
+      if applied then
+        db[key] = want
+        return
+      end
+      if setting and setting.SetValue then
+        ns._minimapPinsApplying = true
+        pcall(setting.SetValue, setting, current.active and true or false)
+        ns._minimapPinsApplying = false
+      end
+    end
+  )
+  Settings.CreateCheckbox(category, setting, "Muestra este punto en el minimapa.")
+  end)
+  ns._minimapPinsRegistering = false
+  if setting then
+    ns._minimapPinRows[pin.key] = true
+  end
+end
+
+function ns.ReconcileMinimapPins(applySaved)
+  if ns._minimapPinsBusy then
+    return
+  end
+  if not (ns._minimapPinsCategory and Settings and Settings.RegisterProxySetting and Settings.CreateCheckbox) then
+    return
+  end
+  ns._minimapPinsBusy = true
+  pcall(function()
+    local pins = collectObjectPins()
+    ns._minimapPinsHaveList = #pins > 0
+    if #pins == 0 then
+      return
+    end
+    addMinimapPinHeader(ns._minimapPinsLayout)
+    for i = 1, #pins do
+      addMinimapPinRow(ns._minimapPinsCategory, pins[i])
+    end
+    local profile = ns.Profile and ns.Profile.GetActive and ns.Profile:GetActive()
+    if type(profile) ~= "table" then
+      return
+    end
+    local first = type(profile.minimapMapPins) ~= "table"
+    if first then
+      profile.minimapMapPins = {}
+      applySaved = false
+    end
+    local db = profile.minimapMapPins
+    ns._minimapPinsApplying = true
+    for i = 1, #pins do
+      local pin = pins[i]
+      local want = savedWant(db, pin.key)
+      if want == nil then
+        db[pin.key] = pin.active and true or false
+      elseif applySaved and pin.active ~= want then
+        setTrackingAt(pin.index, want)
+      end
+    end
+  end)
+  ns._minimapPinsApplying = false
+  ns._minimapPinsBusy = false
+end
+
 local function addRightPanel(category, layout)
   addHeader(layout, "Posición")
   rightSlider(
@@ -410,9 +802,7 @@ local function addRightPanel(category, layout)
     "AddonCompartmentFrame, el recuadro con el número de addons.",
     false
   )
-  if not (Settings.CreateDropdown and Settings.CreateControlTextContainer) then
-    return
-  end
+  if Settings.CreateDropdown and Settings.CreateControlTextContainer then
   local setting = Settings.RegisterProxySetting(
     category,
     "ChukieUi_MMPos_zoomPref",
@@ -485,6 +875,11 @@ local function addRightPanel(category, layout)
     keyChoices:GetData(),
     "Forever muestra el botón de llavero de Classic. Oculto lo apaga. Las otras dos lo dejan en el panel derecho, sin volver a la barra de bolsas."
   )
+  end
+  ns._minimapPinsCategory = category
+  ns._minimapPinsLayout = layout
+  addMinimapPinHeader(layout)
+  ns.ReconcileMinimapPins(false)
 end
 
 local POLICY_ON_MAP, POLICY_BAR, POLICY_HIDDEN = 0, 1, 2
@@ -1216,6 +1611,9 @@ function ns.RegisterConfigPanel()
 end
 
 function ns.OpenConfigPanel()
+  if ns.ReconcileMinimapPins then
+    ns.ReconcileMinimapPins(false)
+  end
   if not ns.settingsCategoryID or not (Settings and Settings.OpenToCategory) then
     return false
   end
@@ -1224,6 +1622,9 @@ function ns.OpenConfigPanel()
 end
 
 function ns.OpenMinimapConfigPanel()
+  if ns.ReconcileMinimapPins then
+    ns.ReconcileMinimapPins(false)
+  end
   if not ns.minimapCategoryID or not (Settings and Settings.OpenToCategory) then
     return false
   end
@@ -1234,9 +1635,25 @@ end
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
+ev:RegisterEvent("SPELLS_CHANGED")
 ev:SetScript("OnEvent", function(_, event, addon)
   if event == "ADDON_LOADED" and addon ~= ADDON_NAME then
     return
   end
+  if event == "SPELLS_CHANGED" then
+    local apply = ns._minimapPinsLoginApply == true
+    ns.ReconcileMinimapPins(apply)
+    if apply and ns._minimapPinsHaveList then
+      ns._minimapPinsLoginApply = false
+    end
+    return
+  end
   ns.RegisterConfigPanel()
+  if event == "PLAYER_LOGIN" then
+    ns._minimapPinsLoginApply = true
+    ns.ReconcileMinimapPins(true)
+    if ns._minimapPinsHaveList then
+      ns._minimapPinsLoginApply = false
+    end
+  end
 end)

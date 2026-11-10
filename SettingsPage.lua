@@ -294,38 +294,21 @@ end
 
 local addMinimapCaptureList
 
---- Puntos del minimapa (nodos, hierbas, peces, tesoros).
---- Forever 1.60.1: C_Minimap.GetNumTrackingTypes / GetTrackingInfo (tabla
---- MinimapScriptTrackingInfo) / GetTrackingFilter / SetTracking(índice, bool).
+--- Puntos del minimapa: nodos (hierbas, minerales, peces), correo y el resto
+--- del menú de rastreo. Forever 1.60.1 devuelve toda la lista en
+--- GetNumTrackingTypes; el menú de Blizzard esconde casi todo si
+--- minimapTrackingShowAll está apagado. Acá se listan igual.
+--- C_Minimap.GetTrackingInfo / GetTrackingFilter / SetTracking(índice, bool).
 --- La clave guardada es el spellID o el filterID, nunca el índice de la lista.
-local HUNTER_SUBTYPE = 1
-local TOWNSFOLK_SUBTYPE = 2
-
-local UNIT_SPELLS = {
-  [1494] = true,
-  [19878] = true,
-  [19879] = true,
-  [19880] = true,
-  [19882] = true,
-  [19883] = true,
-  [19884] = true,
-  [19885] = true,
-  [5225] = true,
-  [5500] = true,
-  [5502] = true,
-}
-
 local function secret(v)
   return issecretvalue and issecretvalue(v) or false
 end
 
-local function enumFilter(field, fallback)
+--- El blanco y el foco marcan unidades, no son puntos del mapa.
+local function skipFilterId(field, fallback)
   local e = Enum and Enum.MinimapTrackingFilter
   local v = type(e) == "table" and e[field] or nil
-  if secret(v) then
-    v = nil
-  end
-  if type(v) ~= "number" then
+  if secret(v) or type(v) ~= "number" then
     v = fallback
   end
   if type(v) ~= "number" then
@@ -334,47 +317,22 @@ local function enumFilter(field, fallback)
   return math.floor(v)
 end
 
-local function fillFilterSet(set, fields)
-  for i = 1, #fields do
-    local id = enumFilter(fields[i][1], fields[i][2])
-    if id then
-      set[id] = true
-    end
-  end
-end
+local skipFilters
 
-local unitFilters, removedFilters, alwaysOnFilters, objectFilters
-
-local function ensureFilterSets()
-  if unitFilters then
+local function ensureSkipFilters()
+  if skipFilters then
     return
   end
-  unitFilters, removedFilters, alwaysOnFilters, objectFilters = {}, {}, {}, {}
-  fillFilterSet(unitFilters, {
-    { "Target", 0x4000 },
-    { "Focus", 0x8000 },
-  })
-  fillFilterSet(removedFilters, {
-    { "VenderFood", 0x10 },
-    { "VendorReagent", 0x100 },
-    { "POI", 0x2000 },
-    { "Focus", 0x8000 },
-  })
-  fillFilterSet(alwaysOnFilters, {
-    { "QuestPoIs", 0x10000 },
-    { "QuestPOIs", 0x10000 },
-    { "TaxiNode", 0x8 },
-    { "Innkeeper", 0x20 },
-    { "ItemUpgrade", 0x80000 },
-    { "Battlemaster", 0x4 },
-    { "Stablemaster", 0x800 },
-  })
-  fillFilterSet(objectFilters, {
-    { "Digsites", 0x20000 },
-    { "Treasure", nil },
-    { "Treasures", nil },
-    { "TreasureChest", nil },
-  })
+  skipFilters = {}
+  local function add(field, fallback)
+    local id = skipFilterId(field, fallback)
+    if id then
+      skipFilters[id] = true
+    end
+  end
+  add("Target", 0x4000)
+  add("Focus", 0x8000)
+  add("Unfiltered", 0x0)
 end
 
 local function trackingCount()
@@ -416,8 +374,11 @@ local function readTracking(index)
   if name == "" then
     return nil
   end
+  local active
   if secret(info.active) then
-    return nil
+    active = nil
+  else
+    active = info.active == true or info.active == 1
   end
   local spellID = info.spellID
   local kind = info.type
@@ -468,7 +429,7 @@ local function readTracking(index)
     index = index,
     key = key,
     name = name,
-    active = info.active == true or info.active == 1,
+    active = active,
     kind = type(kind) == "string" and string.lower(kind) or "",
     subType = tonumber(subType),
     spellID = spellID,
@@ -476,33 +437,15 @@ local function readTracking(index)
   }
 end
 
-local function isObjectPin(pin)
-  ensureFilterSets()
-  if pin.subType == HUNTER_SUBTYPE or pin.subType == TOWNSFOLK_SUBTYPE then
-    return false
-  end
-  if pin.spellID and UNIT_SPELLS[pin.spellID] then
-    return false
-  end
-  if pin.filterID and unitFilters[pin.filterID] then
-    return false
-  end
-  if pin.kind == "unit" or pin.kind == "target" or pin.kind == "focus" or pin.kind == "hunter" then
-    return false
-  end
+local function isListedPin(pin)
+  ensureSkipFilters()
   if pin.spellID and pin.spellID > 0 then
     return true
   end
-  if pin.filterID and (removedFilters[pin.filterID] or alwaysOnFilters[pin.filterID]) then
+  if pin.filterID and skipFilters[pin.filterID] then
     return false
   end
-  if pin.filterID and objectFilters[pin.filterID] then
-    return true
-  end
-  if pin.kind == "object" or pin.kind == "gather" or pin.kind == "gathering" or pin.kind == "resource" or pin.kind == "treasure" or pin.kind == "mineral" or pin.kind == "herb" or pin.kind == "fish" or pin.kind == "digsite" then
-    return true
-  end
-  return false
+  return true
 end
 
 local function collectObjectPins()
@@ -510,7 +453,7 @@ local function collectObjectPins()
   local n = trackingCount()
   for i = 1, n do
     local pin = readTracking(i)
-    if pin and isObjectPin(pin) then
+    if pin and isListedPin(pin) then
       pins[#pins + 1] = pin
     end
   end
@@ -676,8 +619,10 @@ function ns.ReconcileMinimapPins(applySaved)
       local pin = pins[i]
       local want = savedWant(db, pin.key)
       if want == nil then
-        db[pin.key] = pin.active and true or false
-      elseif applySaved and pin.active ~= want then
+        if pin.active ~= nil then
+          db[pin.key] = pin.active and true or false
+        end
+      elseif applySaved and pin.active ~= nil and pin.active ~= want then
         setTrackingAt(pin.index, want)
       end
     end

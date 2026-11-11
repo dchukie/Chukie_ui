@@ -222,6 +222,26 @@ local TRAILING_MICROMENU_BUTTON_NAMES = {
   ExpansionLandingPageMinimapButton = true,
 }
 
+--- El tooltip clásico es "Spellbook (P)". No es PlayerSpellsMicroButton (Hechizos).
+local function isSpellbookMicroButton(f)
+  if not f then
+    return false
+  end
+  local n = f.GetName and f:GetName()
+  if n == "SpellbookMicroButton" then
+    return true
+  end
+  local tip = f.tooltipText
+  if type(tip) ~= "string" or tip == "" then
+    return false
+  end
+  local spell = _G.SPELLBOOK
+  if type(spell) == "string" and spell ~= "" and tip:find(spell, 1, true) == 1 then
+    return true
+  end
+  return tip:find("Spellbook", 1, true) == 1
+end
+
 --- Botones del micromenú de Blizzard (sufijo «MicroButton»). No deben tratarse como iconos LibDBIcon del minimapa.
 local function isBlizzardMicroMenuButtonName(name)
   if type(name) ~= "string" or name == "" then
@@ -259,15 +279,10 @@ function MB:GetMicroMenuButtonFrames()
       end
     end
   end
-  if #out == 0 then
-    local hasPlayerSpells = _G.PlayerSpellsMicroButton
-    for _, name in ipairs(MICRO_BUTTON_FALLBACK_NAMES) do
-      if name == "SpellbookMicroButton" and hasPlayerSpells then
-        --- Retail: hechizos y profesiones suelen ir en PlayerSpellsMicroButton.
-      else
-        pushFrame(_G[name])
-      end
-    end
+  --- Forever deja SpellbookMicroButton fuera de MICRO_BUTTONS. Sin esto el
+  --- escaneo de hijos lo agrega al final, y no es el mismo botón que Hechizos.
+  for _, name in ipairs(MICRO_BUTTON_FALLBACK_NAMES) do
+    pushFrame(_G[name])
   end
   -- Descubrimiento adicional: algunos parches agregan botones fuera de MICRO_BUTTONS.
   local visited = {}
@@ -300,7 +315,40 @@ function MB:GetMicroMenuButtonFrames()
       pushFrame(_G[name])
     end
   end
-  return out
+  --- El orden de Blizzard (y el del escaneo) deja a Spellbook al final.
+  --- Acá vuelve a su lugar: después de Personaje / Hechizos.
+  local byName = {}
+  local spellbook
+  for i = 1, #out do
+    local f = out[i]
+    local n = f.GetName and f:GetName()
+    if type(n) == "string" and n ~= "" and not byName[n] then
+      byName[n] = f
+    end
+    if not spellbook and isSpellbookMicroButton(f) then
+      spellbook = f
+    end
+  end
+  local ordered, used = {}, {}
+  local function take(f)
+    if not f or used[f] then
+      return
+    end
+    used[f] = true
+    ordered[#ordered + 1] = f
+  end
+  for i = 1, #MICRO_BUTTON_FALLBACK_NAMES do
+    local name = MICRO_BUTTON_FALLBACK_NAMES[i]
+    if name == "SpellbookMicroButton" then
+      take(byName[name] or spellbook)
+    else
+      take(byName[name])
+    end
+  end
+  for i = 1, #out do
+    take(out[i])
+  end
+  return ordered
 end
 
 --- Holder oculto: evita que MicroMenuContainer:Layout → GetEdgeButton compare nils
@@ -566,6 +614,20 @@ function MB:LayoutMicroMenuEmbedded()
       btn:SetScale(btn.chukieMicroSavedScale or 1)
       btn:ClearAllPoints()
       btn:Hide()
+      if not btn.chukieMicroHideHook and hooksecurefunc then
+        btn.chukieMicroHideHook = true
+        hooksecurefunc(btn, "Show", function(f)
+          if f._chukieForcingHide or not f.chukieMicroChukieOwned then
+            return
+          end
+          if MB:IsMinimenuButtonVisible(f:GetName() or "") then
+            return
+          end
+          f._chukieForcingHide = true
+          f:Hide()
+          f._chukieForcingHide = false
+        end)
+      end
     else
       btn:Show()
       btn:SetScale(1)
@@ -606,6 +668,9 @@ function MB:LayoutMicroMenuEmbedded()
   self:PositionMicromenuCentered()
   self:MasqueApplyMicromenu()
   self._layoutingMicroMenu = false
+  if ns.AppendMinimenuVisibilityRows then
+    ns.AppendMinimenuVisibilityRows()
+  end
 end
 
 --- Layout unificado: barras siempre centradas (sin offset manual separado).

@@ -1063,7 +1063,7 @@ end
 local MICRO_LABELS = {
   CharacterMicroButton = "Personaje",
   PlayerSpellsMicroButton = "Hechizos",
-  SpellbookMicroButton = "Libro de hechizos",
+  SpellbookMicroButton = "Spellbook",
   ProfessionMicroButton = "Profesiones",
   TalentMicroButton = "Talentos",
   AchievementMicroButton = "Logros",
@@ -1079,6 +1079,9 @@ local MICRO_LABELS = {
 local function microLabel(frameName)
   if MICRO_LABELS[frameName] then
     return MICRO_LABELS[frameName]
+  end
+  if type(frameName) == "string" and frameName:find("Spellbook", 1, true) then
+    return "Spellbook"
   end
   local s = tostring(frameName or ""):gsub("MicroButton$", "")
   if s == "" then
@@ -1097,7 +1100,11 @@ end
 
 local function addMicroVisible(category, frameName)
   local label = microLabel(frameName)
-  addCheckbox(category, microId(frameName), label, "Mostrar «" .. label .. "» en la fila del micromenú.", true, function()
+  local tip = "Mostrar «" .. label .. "» en la fila del micromenú."
+  if type(frameName) == "string" and frameName:find("Spellbook", 1, true) then
+    tip = "El botón Spellbook del micromenú, el del atajo P. No es Hechizos: ese se apaga aparte."
+  end
+  addCheckbox(category, microId(frameName), label, tip, true, function()
     local db = minimapBarModel()
     local t = db and db.minimenuVisibility
     if not t then
